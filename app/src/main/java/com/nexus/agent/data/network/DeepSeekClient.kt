@@ -27,7 +27,7 @@ class DeepSeekClient(
 
     override suspend fun complete(
         history: List<ChatMessage>,
-        model: String = DEFAULT_MODEL
+        model: String
     ): Result<String> {
         val key = apiKeyProvider()
             ?: return Result.failure(IllegalStateException("No DeepSeek API key configured"))
