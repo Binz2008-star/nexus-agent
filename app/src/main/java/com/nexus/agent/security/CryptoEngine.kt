@@ -12,7 +12,7 @@ import java.security.UnrecoverableKeyException
 class CryptoEngine(
     private val keyProvider: KeyProvider,
     private val cipher: AesGcmCipher = AesGcmCipher()
-) {
+) : SecretCipher {
     fun encrypt(plaintext: ByteArray): ByteArray = try {
         cipher.encrypt(plaintext, keyProvider.getOrCreateKey())
     } catch (e: CryptoException) {
@@ -37,10 +37,10 @@ class CryptoEngine(
         throw CryptoException("decryption failed: ${e.javaClass.simpleName} (${e.message})", e)
     }
 
-    fun encryptString(value: String): String =
+    override fun encryptString(value: String): String =
         Base64.encodeToString(encrypt(value.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
 
-    fun decryptString(value: String): String {
+    override fun decryptString(value: String): String {
         val bytes = try {
             Base64.decode(value, Base64.NO_WRAP)
         } catch (e: IllegalArgumentException) {
