@@ -1,0 +1,4 @@
+<resources>
+    <!-- Minimal theme for a Compose-only app; no Material Components XML dependency. -->
+    <style name="Theme.NexusAgent" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
