@@ -28,6 +28,19 @@ class DeepSeekClient(
     override suspend fun complete(
         history: List<ChatMessage>,
         model: String
+    ): Result<String> = completeInternal(history, model, stream = false, onDelta = null)
+
+    override suspend fun completeStream(
+        history: List<ChatMessage>,
+        model: String,
+        onDelta: suspend (String) -> Unit
+    ): Result<String> = completeInternal(history, model, stream = true, onDelta = onDelta)
+
+    private suspend fun completeInternal(
+        history: List<ChatMessage>,
+        model: String,
+        stream: Boolean,
+        onDelta: (suspend (String) -> Unit)?
     ): Result<String> {
         val key = apiKeyProvider()
             ?: return Result.failure(IllegalStateException("No DeepSeek API key configured"))
@@ -45,7 +58,8 @@ class DeepSeekClient(
         val requestBody = ChatCompletionRequest(
             model = model,
             messages = messages,
-            thinking = ThinkingConfig(type = "disabled") // prefer fast replies for chat UI
+            thinking = ThinkingConfig(type = "disabled"),
+            stream = stream
         )
 
         val bodyJson = json.encodeToString(requestBody)
@@ -58,16 +72,43 @@ class DeepSeekClient(
 
         return try {
             httpClient.newCall(request).execute().use { response ->
-                val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    return Result.failure(
-                        IOException("DeepSeek API error ${response.code}")
-                    )
+                    return Result.failure(IOException("DeepSeek API error ${response.code}"))
                 }
-                val parsed = json.decodeFromString<ChatCompletionResponse>(body)
-                val content = parsed.choices.firstOrNull()?.message?.content
-                    ?: return Result.failure(IOException("Empty completion from DeepSeek"))
-                Result.success(content)
+                val body = response.body ?: return Result.failure(IOException("Empty body"))
+                if (!stream) {
+                    val text = body.string()
+                    val parsed = json.decodeFromString<ChatCompletionResponse>(text)
+                    val content = parsed.choices.firstOrNull()?.message?.content
+                        ?: return Result.failure(IOException("Empty completion from DeepSeek"))
+                    return Result.success(content)
+                }
+
+                // Streaming (SSE)
+                val full = StringBuilder()
+                body.source().use { source ->
+                    while (!source.exhausted()) {
+                        val line = source.readUtf8Line() ?: break
+                        if (line.isBlank() || !line.startsWith("data:")) continue
+                        val data = line.removePrefix("data:").trim()
+                        if (data == "[DONE]") break
+                        try {
+                            val chunk = json.decodeFromString<ChatCompletionChunk>(data)
+                            val delta = chunk.choices.firstOrNull()?.delta?.content
+                            if (!delta.isNullOrEmpty()) {
+                                full.append(delta)
+                                onDelta?.invoke(delta)
+                            }
+                        } catch (_: Exception) {
+                            // ignore malformed chunk
+                        }
+                    }
+                }
+                if (full.isEmpty()) {
+                    Result.failure(IOException("Empty completion from DeepSeek"))
+                } else {
+                    Result.success(full.toString())
+                }
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -83,7 +124,7 @@ class DeepSeekClient(
 
         private fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
     }

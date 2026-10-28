@@ -26,11 +26,15 @@ class ChatRepository(
         }
 
     /**
-     * Persists the user message, then requests a completion. On success, persists the assistant reply.
-     * On failure, the user message remains; no assistant message is written.
-     * Does not claim the HTTP request survives process death.
+     * Persists the user message, then streams a completion.
+     * onDelta is called with each text fragment.
+     * The assistant message is persisted only after the full stream succeeds.
      */
-    suspend fun sendMessage(text: String, model: String): SendResult = withContext(Dispatchers.IO) {
+    suspend fun sendMessageStream(
+        text: String,
+        model: String,
+        onDelta: suspend (String) -> Unit
+    ): SendResult = withContext(Dispatchers.IO) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) {
             return@withContext SendResult.Failure("empty")
@@ -48,7 +52,7 @@ class ChatRepository(
         val history = messageDao.getAllChronologicalOnce().map { it.toDomain() }
 
         try {
-            val result = client.complete(history, model)
+            val result = client.completeStream(history, model, onDelta)
             result.fold(
                 onSuccess = { reply ->
                     val assistant = ChatMessage(ChatMessage.Role.ASSISTANT, reply)
@@ -68,10 +72,12 @@ class ChatRepository(
     }
 
     /**
-     * Attempts completion against the current persisted history (no new user message inserted).
-     * Used for retry after a failure so the user prompt is not duplicated.
+     * Streams a completion against existing history (no new user insert). Used for retry.
      */
-    suspend fun retryCompletion(model: String): SendResult = withContext(Dispatchers.IO) {
+    suspend fun retryCompletionStream(
+        model: String,
+        onDelta: suspend (String) -> Unit
+    ): SendResult = withContext(Dispatchers.IO) {
         val key = apiKeyProvider()
         if (key == null) {
             return@withContext SendResult.Failure("no_key")
@@ -81,7 +87,7 @@ class ChatRepository(
             return@withContext SendResult.Failure("nothing_to_retry")
         }
         try {
-            val result = client.complete(history, model)
+            val result = client.completeStream(history, model, onDelta)
             result.fold(
                 onSuccess = { reply ->
                     val assistant = ChatMessage(ChatMessage.Role.ASSISTANT, reply)
@@ -99,6 +105,13 @@ class ChatRepository(
             SendResult.Failure(safeErrorCode(e))
         }
     }
+
+    // Keep non-streaming versions for compatibility / tests
+    suspend fun sendMessage(text: String, model: String): SendResult =
+        sendMessageStream(text, model) { /* ignore deltas */ }
+
+    suspend fun retryCompletion(model: String): SendResult =
+        retryCompletionStream(model) { /* ignore deltas */ }
 
     private fun safeErrorCode(e: Throwable): String {
         // Return stable codes only — no raw bodies or keys

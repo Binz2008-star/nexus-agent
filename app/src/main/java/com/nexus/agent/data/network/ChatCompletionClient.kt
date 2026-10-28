@@ -7,4 +7,14 @@ import com.nexus.agent.domain.model.ChatMessage
  */
 interface ChatCompletionClient {
     suspend fun complete(history: List<ChatMessage>, model: String): Result<String>
+
+    /**
+     * Streaming completion. Calls onDelta with each text fragment.
+     * Returns the full accumulated text on success.
+     */
+    suspend fun completeStream(
+        history: List<ChatMessage>,
+        model: String,
+        onDelta: suspend (String) -> Unit
+    ): Result<String>
 }

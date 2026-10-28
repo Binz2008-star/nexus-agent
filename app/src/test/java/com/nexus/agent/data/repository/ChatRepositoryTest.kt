@@ -33,6 +33,15 @@ class ChatRepositoryTest {
             calls++
             return r
         }
+        override suspend fun completeStream(
+            history: List<ChatMessage>,
+            model: String,
+            onDelta: suspend (String) -> Unit
+        ): Result<String> {
+            val r = complete(history, model)
+            if (r.isSuccess) onDelta(r.getOrThrow())
+            return r
+        }
     }
 
     @Test

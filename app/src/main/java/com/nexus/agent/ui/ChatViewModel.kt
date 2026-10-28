@@ -29,6 +29,9 @@ class ChatViewModel(
     private val _selectedModel = MutableStateFlow("deepseek-flash")
     val selectedModel: StateFlow<String> = _selectedModel.asStateFlow()
 
+    private val _streamingText = MutableStateFlow("")
+    val streamingText: StateFlow<String> = _streamingText.asStateFlow()
+
     fun setModel(model: String) {
         _selectedModel.value = model
     }
@@ -38,10 +41,14 @@ class ChatViewModel(
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
-            when (val result = repository.sendMessage(text, _selectedModel.value)) {
-                is SendResult.Success -> { /* UI observes Flow */ }
+            _streamingText.value = ""
+            when (val result = repository.sendMessageStream(text, _selectedModel.value) { delta ->
+                _streamingText.value += delta
+            }) {
+                is SendResult.Success -> { /* UI observes Flow; clear streaming */ }
                 is SendResult.Failure -> _errorMessage.value = result.errorCode
             }
+            _streamingText.value = ""
             _isLoading.value = false
         }
     }
@@ -55,10 +62,14 @@ class ChatViewModel(
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
-            when (val result = repository.retryCompletion(_selectedModel.value)) {
+            _streamingText.value = ""
+            when (val result = repository.retryCompletionStream(_selectedModel.value) { delta ->
+                _streamingText.value += delta
+            }) {
                 is SendResult.Success -> { /* UI observes Flow */ }
                 is SendResult.Failure -> _errorMessage.value = result.errorCode
             }
+            _streamingText.value = ""
             _isLoading.value = false
         }
     }

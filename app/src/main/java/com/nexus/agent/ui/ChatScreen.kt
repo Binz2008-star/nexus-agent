@@ -85,6 +85,7 @@ fun ChatScreen() {
     val isLoading by viewModel.isLoading.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val selectedModel by viewModel.selectedModel.collectAsState()
+    val streamingText by viewModel.streamingText.collectAsState()
 
     var status by remember { mutableStateOf("") }
     var showKeyDialog by remember { mutableStateOf(false) }
@@ -153,7 +154,7 @@ fun ChatScreen() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = errorMessage!!,
+                            text = mapErrorCode(errorMessage!!),
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -191,11 +192,15 @@ fun ChatScreen() {
                     }
                     if (isLoading) {
                         item {
-                            Text(
-                                stringResource(R.string.thinking),
-                                modifier = Modifier.padding(8.dp),
-                                style = MaterialTheme.typography.bodySmall
-                            )
+                            if (streamingText.isNotEmpty()) {
+                                MessageBubble(ChatMessage(ChatMessage.Role.ASSISTANT, streamingText))
+                            } else {
+                                Text(
+                                    stringResource(R.string.thinking),
+                                    modifier = Modifier.padding(8.dp),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
                         }
                     }
                 }
