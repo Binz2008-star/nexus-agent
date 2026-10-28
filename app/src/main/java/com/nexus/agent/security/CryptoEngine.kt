@@ -22,7 +22,7 @@ class CryptoEngine(
     } catch (e: UnrecoverableKeyException) {
         throw KeyUnavailableException("key unrecoverable or invalidated during encryption", e)
     } catch (e: GeneralSecurityException) {
-        throw CryptoException("encryption failed", e)
+        throw CryptoException("encryption failed: ${e.javaClass.simpleName} (${e.message})", e)
     }
 
     fun decrypt(encoded: ByteArray): ByteArray = try {
@@ -34,7 +34,7 @@ class CryptoEngine(
     } catch (e: UnrecoverableKeyException) {
         throw KeyUnavailableException("key unrecoverable or invalidated during decryption", e)
     } catch (e: GeneralSecurityException) {
-        throw CryptoException("decryption failed", e)
+        throw CryptoException("decryption failed: ${e.javaClass.simpleName} (${e.message})", e)
     }
 
     fun encryptString(value: String): String =

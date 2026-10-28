@@ -16,7 +16,7 @@ class AndroidKeystoreKeyProvider(
 ) : KeyProvider {
 
     override fun getOrCreateKey(): SecretKey {
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null, null) }
         (keyStore.getKey(alias, null) as? SecretKey)?.let { return it }
 
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
