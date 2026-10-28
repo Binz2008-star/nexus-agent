@@ -13,14 +13,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-data class ChatUiState(
-    val messages: List<ChatMessage> = emptyList(),
-    val isLoading: Boolean = false,
-    val errorMessage: String? = null,
-    val status: String = "",
-    val selectedModel: String = "deepseek-flash"
-)
-
 class ChatViewModel(
     private val repository: ChatRepository
 ) : ViewModel() {
@@ -48,7 +40,7 @@ class ChatViewModel(
             _errorMessage.value = null
             when (val result = repository.sendMessage(text, _selectedModel.value)) {
                 is SendResult.Success -> { /* UI observes Flow */ }
-                is SendResult.Failure -> _errorMessage.value = result.userFacingMessage
+                is SendResult.Failure -> _errorMessage.value = result.errorCode
             }
             _isLoading.value = false
         }
@@ -65,7 +57,7 @@ class ChatViewModel(
             _errorMessage.value = null
             when (val result = repository.retryCompletion(_selectedModel.value)) {
                 is SendResult.Success -> { /* UI observes Flow */ }
-                is SendResult.Failure -> _errorMessage.value = result.userFacingMessage
+                is SendResult.Failure -> _errorMessage.value = result.errorCode
             }
             _isLoading.value = false
         }

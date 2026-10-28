@@ -18,5 +18,12 @@
     <string name="status_no_key">No API key — open Settings</string>
     <string name="status_corrupted">Stored key corrupted — re-enter</string>
     <string name="status_unavailable">Keystore key unavailable — re-enter</string>
+    <string name="status_key_saved">Key saved</string>
+    <string name="error_auth">Authentication failed. Check your API key.</string>
+    <string name="error_quota">Payment required or quota exceeded.</string>
+    <string name="error_rate">Rate limited. Try again later.</string>
+    <string name="error_no_key">No API key configured</string>
+    <string name="error_empty">Message cannot be empty</string>
+    <string name="error_nothing_to_retry">Nothing to retry</string>
     <string name="error_generic">Request failed. Please try again.</string>
 </resources>

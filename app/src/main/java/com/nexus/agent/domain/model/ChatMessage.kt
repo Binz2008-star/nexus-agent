@@ -6,7 +6,8 @@ package com.nexus.agent.domain.model
  */
 data class ChatMessage(
     val role: Role,
-    val text: String
+    val text: String,
+    val id: Long = 0L
 ) {
     enum class Role { USER, ASSISTANT }
 }

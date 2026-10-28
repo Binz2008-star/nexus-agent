@@ -18,7 +18,8 @@ data class MessageEntity(
             "ASSISTANT" -> ChatMessage.Role.ASSISTANT
             else -> throw IllegalArgumentException("Unknown role: $role")
         },
-        text = text
+        text = text,
+        id = id
     )
 
     companion object {

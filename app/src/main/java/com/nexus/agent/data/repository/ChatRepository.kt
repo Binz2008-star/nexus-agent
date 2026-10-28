@@ -12,7 +12,7 @@ import kotlinx.coroutines.withContext
 
 sealed class SendResult {
     data object Success : SendResult()
-    data class Failure(val userFacingMessage: String) : SendResult()
+    data class Failure(val errorCode: String) : SendResult()
 }
 
 class ChatRepository(
@@ -33,12 +33,12 @@ class ChatRepository(
     suspend fun sendMessage(text: String, model: String): SendResult = withContext(Dispatchers.IO) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) {
-            return@withContext SendResult.Failure("Message cannot be empty")
+            return@withContext SendResult.Failure("empty")
         }
 
         val key = apiKeyProvider()
         if (key == null) {
-            return@withContext SendResult.Failure("No API key configured")
+            return@withContext SendResult.Failure("no_key")
         }
 
         val userMessage = ChatMessage(ChatMessage.Role.USER, trimmed)
@@ -57,13 +57,13 @@ class ChatRepository(
                 },
                 onFailure = { e ->
                     if (e is CancellationException) throw e
-                    SendResult.Failure(safeErrorMessage(e))
+                    SendResult.Failure(safeErrorCode(e))
                 }
             )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            SendResult.Failure(safeErrorMessage(e))
+            SendResult.Failure(safeErrorCode(e))
         }
     }
 
@@ -74,11 +74,11 @@ class ChatRepository(
     suspend fun retryCompletion(model: String): SendResult = withContext(Dispatchers.IO) {
         val key = apiKeyProvider()
         if (key == null) {
-            return@withContext SendResult.Failure("No API key configured")
+            return@withContext SendResult.Failure("no_key")
         }
         val history = messageDao.getAllChronologicalOnce().map { it.toDomain() }
         if (history.isEmpty() || history.last().role != ChatMessage.Role.USER) {
-            return@withContext SendResult.Failure("Nothing to retry")
+            return@withContext SendResult.Failure("nothing_to_retry")
         }
         try {
             val result = client.complete(history, model)
@@ -90,25 +90,26 @@ class ChatRepository(
                 },
                 onFailure = { e ->
                     if (e is CancellationException) throw e
-                    SendResult.Failure(safeErrorMessage(e))
+                    SendResult.Failure(safeErrorCode(e))
                 }
             )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            SendResult.Failure(safeErrorMessage(e))
+            SendResult.Failure(safeErrorCode(e))
         }
     }
 
-    private fun safeErrorMessage(e: Throwable): String {
-        // Do not leak raw response bodies or keys
+    private fun safeErrorCode(e: Throwable): String {
+        // Return stable codes only — no raw bodies or keys
         return when {
-            e.message?.contains("401") == true -> "Authentication failed. Check your API key."
-            e.message?.contains("402") == true -> "Payment required or quota exceeded."
-            e.message?.contains("429") == true -> "Rate limited. Try again later."
-            e.message?.contains("No DeepSeek API key") == true -> "No API key configured"
-            else -> "Request failed. Please try again."
+            e.message?.contains("401") == true -> "auth"
+            e.message?.contains("402") == true -> "quota"
+            e.message?.contains("429") == true -> "rate"
+            e.message?.contains("No DeepSeek API key") == true -> "no_key"
+            else -> "generic"
         }
     }
 }
+
 

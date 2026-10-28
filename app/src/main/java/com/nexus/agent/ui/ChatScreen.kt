@@ -94,7 +94,7 @@ fun ChatScreen() {
     LaunchedEffect(selectedModel) {
         val result = withContext(Dispatchers.IO) { secrets.readApiKey() }
         status = when (result) {
-            is ApiKeyReadResult.Present -> context.getString(R.string.status_connected) + " · $selectedModel"
+            is ApiKeyReadResult.Present -> context.getString(R.string.status_key_saved) + " · $selectedModel"
             is ApiKeyReadResult.Missing -> context.getString(R.string.status_no_key)
             is ApiKeyReadResult.Corrupted -> context.getString(R.string.status_corrupted)
             is ApiKeyReadResult.KeyUnavailable -> context.getString(R.string.status_unavailable)
@@ -186,7 +186,7 @@ fun ChatScreen() {
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(messages, key = { "${it.role.name}-${it.text.hashCode()}" }) { message ->
+                    items(messages, key = { it.id }) { message ->
                         MessageBubble(message)
                     }
                     if (isLoading) {
@@ -245,7 +245,7 @@ fun ChatScreen() {
                     if (key.isNotEmpty()) {
                         scope.launch {
                             withContext(Dispatchers.IO) { secrets.saveApiKey(key) }
-                            status = context.getString(R.string.status_connected) + " · $selectedModel"
+                            status = context.getString(R.string.status_key_saved) + " · $selectedModel"
                             keyInput = ""
                             showKeyDialog = false
                         }
@@ -256,6 +256,19 @@ fun ChatScreen() {
                 TextButton(onClick = { showKeyDialog = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
+    }
+}
+
+@Composable
+private fun mapErrorCode(code: String): String {
+    return when (code) {
+        "auth" -> stringResource(R.string.error_auth)
+        "quota" -> stringResource(R.string.error_quota)
+        "rate" -> stringResource(R.string.error_rate)
+        "no_key" -> stringResource(R.string.error_no_key)
+        "empty" -> stringResource(R.string.error_empty)
+        "nothing_to_retry" -> stringResource(R.string.error_nothing_to_retry)
+        else -> stringResource(R.string.error_generic)
     }
 }
 

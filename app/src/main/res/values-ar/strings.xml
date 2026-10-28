@@ -18,5 +18,12 @@
     <string name="status_no_key">لا يوجد مفتاح — افتح الإعدادات</string>
     <string name="status_corrupted">المفتاح المخزن تالف — أعد الإدخال</string>
     <string name="status_unavailable">مفتاح Keystore غير متاح — أعد الإدخال</string>
+    <string name="status_key_saved">تم حفظ المفتاح</string>
+    <string name="error_auth">فشل المصادقة. تحقق من مفتاح API.</string>
+    <string name="error_quota">مطلوب دفع أو تجاوز الحصة.</string>
+    <string name="error_rate">تم تجاوز الحد. حاول لاحقاً.</string>
+    <string name="error_no_key">لا يوجد مفتاح API مُعد</string>
+    <string name="error_empty">الرسالة لا يمكن أن تكون فارغة</string>
+    <string name="error_nothing_to_retry">لا يوجد شيء لإعادة المحاولة</string>
     <string name="error_generic">فشل الطلب. يرجى المحاولة مرة أخرى.</string>
 </resources>

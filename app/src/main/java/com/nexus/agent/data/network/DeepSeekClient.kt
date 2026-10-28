@@ -61,7 +61,7 @@ class DeepSeekClient(
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     return Result.failure(
-                        IOException("DeepSeek API error ${response.code}: ${body.take(200)}")
+                        IOException("DeepSeek API error ${response.code}")
                     )
                 }
                 val parsed = json.decodeFromString<ChatCompletionResponse>(body)
