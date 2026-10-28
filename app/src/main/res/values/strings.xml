@@ -1,3 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NEXUS Agent</string>
+    <string name="set_key">Set Key</string>
+    <string name="model_flash">Flash</string>
+    <string name="model_pro">Pro</string>
+    <string name="type_message">Type a message…</string>
+    <string name="send">Send</string>
+    <string name="thinking">Thinking…</string>
+    <string name="empty_chat">Start a conversation</string>
+    <string name="api_key_title">DeepSeek API Key</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="retry">Retry</string>
+    <string name="settings">Settings</string>
+    <string name="status_checking">Checking API key…</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_no_key">No API key — open Settings</string>
+    <string name="status_corrupted">Stored key corrupted — re-enter</string>
+    <string name="status_unavailable">Keystore key unavailable — re-enter</string>
+    <string name="error_generic">Request failed. Please try again.</string>
 </resources>

@@ -23,9 +23,9 @@ class DeepSeekClient(
     private val apiKeyProvider: suspend () -> String?,
     private val httpClient: OkHttpClient = defaultClient(),
     private val json: Json = Json { ignoreUnknownKeys = true }
-) {
+) : ChatCompletionClient {
 
-    suspend fun complete(
+    override suspend fun complete(
         history: List<ChatMessage>,
         model: String = DEFAULT_MODEL
     ): Result<String> {

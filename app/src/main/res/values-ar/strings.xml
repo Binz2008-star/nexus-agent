@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">وكيل نيكسوس</string>
+    <string name="set_key">تعيين المفتاح</string>
+    <string name="model_flash">فلاش</string>
+    <string name="model_pro">برو</string>
+    <string name="type_message">اكتب رسالة…</string>
+    <string name="send">إرسال</string>
+    <string name="thinking">جارٍ التفكير…</string>
+    <string name="empty_chat">ابدأ محادثة</string>
+    <string name="api_key_title">مفتاح DeepSeek API</string>
+    <string name="save">حفظ</string>
+    <string name="cancel">إلغاء</string>
+    <string name="retry">إعادة المحاولة</string>
+    <string name="settings">الإعدادات</string>
+    <string name="status_checking">جارٍ التحقق من المفتاح…</string>
+    <string name="status_connected">متصل</string>
+    <string name="status_no_key">لا يوجد مفتاح — افتح الإعدادات</string>
+    <string name="status_corrupted">المفتاح المخزن تالف — أعد الإدخال</string>
+    <string name="status_unavailable">مفتاح Keystore غير متاح — أعد الإدخال</string>
+    <string name="error_generic">فشل الطلب. يرجى المحاولة مرة أخرى.</string>
+</resources>

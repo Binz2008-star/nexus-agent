@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -23,6 +24,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,9 +33,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.nexus.agent.R
+import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
 import com.nexus.agent.data.repository.ApiKeyReadResult
+import com.nexus.agent.data.repository.ChatRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.security.AndroidKeystoreKeyProvider
@@ -42,12 +49,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * Phase 2A chat screen.
- * - Reads encrypted DeepSeek API key from SecretStorageRepository
- * - Sends conversation history to DeepSeek Chat Completions (Bearer auth)
- * - Default model: deepseek-flash; can be switched to deepseek-v4-pro
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen() {
@@ -56,6 +57,7 @@ fun ChatScreen() {
 
     val crypto = remember { CryptoEngine(AndroidKeystoreKeyProvider()) }
     val secrets = remember { SecretStorageRepository.create(context, crypto) }
+    val db = remember { NexusDatabase.getInstance(context) }
     val client = remember {
         DeepSeekClient(apiKeyProvider = {
             when (val r = secrets.readApiKey()) {
@@ -64,38 +66,66 @@ fun ChatScreen() {
             }
         })
     }
+    val repository = remember {
+        ChatRepository(
+            messageDao = db.messageDao(),
+            client = client,
+            apiKeyProvider = {
+                when (val r = secrets.readApiKey()) {
+                    is ApiKeyReadResult.Present -> r.value
+                    else -> null
+                }
+            }
+        )
+    }
 
-    var messages by remember { mutableStateOf(listOf<ChatMessage>()) }
-    var input by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Checking API key…") }
+    val viewModel: ChatViewModel = viewModel(factory = ChatViewModel.Factory(repository))
+
+    val messages by viewModel.messages.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val errorMessage by viewModel.errorMessage.collectAsState()
+    val selectedModel by viewModel.selectedModel.collectAsState()
+
+    var status by remember { mutableStateOf("") }
     var showKeyDialog by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
-    var selectedModel by remember { mutableStateOf(DeepSeekClient.DEFAULT_MODEL) }
+    var input by remember { mutableStateOf("") }
 
-    LaunchedEffect(Unit) {
-        status = when (val result = withContext(Dispatchers.IO) { secrets.readApiKey() }) {
-            is ApiKeyReadResult.Present -> "Connected · ${selectedModel}"
-            is ApiKeyReadResult.Missing -> "No API key — tap Set Key"
-            is ApiKeyReadResult.Corrupted -> "Stored key corrupted — re-enter"
-            is ApiKeyReadResult.KeyUnavailable -> "Keystore key unavailable — re-enter"
+    LaunchedEffect(selectedModel) {
+        val result = withContext(Dispatchers.IO) { secrets.readApiKey() }
+        status = when (result) {
+            is ApiKeyReadResult.Present -> context.getString(R.string.status_connected) + " · $selectedModel"
+            is ApiKeyReadResult.Missing -> context.getString(R.string.status_no_key)
+            is ApiKeyReadResult.Corrupted -> context.getString(R.string.status_corrupted)
+            is ApiKeyReadResult.KeyUnavailable -> context.getString(R.string.status_unavailable)
+        }
+    }
+
+    val listState = rememberLazyListState()
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
         }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("NEXUS Agent") },
+                title = { Text(stringResource(R.string.app_name)) },
                 actions = {
                     TextButton(onClick = { showKeyDialog = true }) {
-                        Text("Set Key")
+                        Text(stringResource(R.string.settings))
                     }
                     TextButton(onClick = {
-                        selectedModel = if (selectedModel == DeepSeekClient.DEFAULT_MODEL)
+                        val next = if (selectedModel == DeepSeekClient.DEFAULT_MODEL)
                             DeepSeekClient.PRO_MODEL else DeepSeekClient.DEFAULT_MODEL
-                        status = "Connected · $selectedModel"
+                        viewModel.setModel(next)
                     }) {
-                        Text(if (selectedModel == DeepSeekClient.DEFAULT_MODEL) "Flash" else "Pro")
+                        Text(
+                            if (selectedModel == DeepSeekClient.DEFAULT_MODEL)
+                                stringResource(R.string.model_flash)
+                            else stringResource(R.string.model_pro)
+                        )
                     }
                 }
             )
@@ -113,21 +143,60 @@ fun ChatScreen() {
                 )
             }
 
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(messages) { message ->
-                    MessageBubble(message)
-                }
-                if (isLoading) {
-                    item {
+            if (errorMessage != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            "Thinking…",
-                            modifier = Modifier.padding(8.dp),
+                            text = errorMessage!!,
+                            modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodySmall
                         )
+                        TextButton(onClick = { viewModel.retryLast() }) {
+                            Text(stringResource(R.string.retry))
+                        }
+                        TextButton(onClick = { viewModel.clearError() }) {
+                            Text(stringResource(R.string.cancel))
+                        }
+                    }
+                }
+            }
+
+            if (messages.isEmpty() && !isLoading) {
+                Column(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = stringResource(R.string.empty_chat),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(messages, key = { "${it.role.name}-${it.text.hashCode()}" }) { message ->
+                        MessageBubble(message)
+                    }
+                    if (isLoading) {
+                        item {
+                            Text(
+                                stringResource(R.string.thinking),
+                                modifier = Modifier.padding(8.dp),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                 }
             }
@@ -140,42 +209,19 @@ fun ChatScreen() {
                     value = input,
                     onValueChange = { input = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Type a message…") },
+                    placeholder = { Text(stringResource(R.string.type_message)) },
                     singleLine = true,
                     enabled = !isLoading
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = {
-                        val text = input.trim()
-                        if (text.isEmpty() || isLoading) return@Button
-                        val userMsg = ChatMessage(ChatMessage.Role.USER, text)
-                        messages = messages + userMsg
+                        viewModel.sendMessage(input)
                         input = ""
-                        isLoading = true
-                        scope.launch {
-                            val result = withContext(Dispatchers.IO) {
-                                client.complete(messages, selectedModel)
-                            }
-                            isLoading = false
-                            result.fold(
-                                onSuccess = { reply ->
-                                    messages = messages + ChatMessage(ChatMessage.Role.ASSISTANT, reply)
-                                    status = "Connected · $selectedModel"
-                                },
-                                onFailure = { e ->
-                                    messages = messages + ChatMessage(
-                                        ChatMessage.Role.ASSISTANT,
-                                        "Error: ${e.message ?: "request failed"}"
-                                    )
-                                    status = "Request failed"
-                                }
-                            )
-                        }
                     },
                     enabled = input.isNotBlank() && !isLoading
                 ) {
-                    Text("Send")
+                    Text(stringResource(R.string.send))
                 }
             }
         }
@@ -184,7 +230,7 @@ fun ChatScreen() {
     if (showKeyDialog) {
         AlertDialog(
             onDismissRequest = { showKeyDialog = false },
-            title = { Text("DeepSeek API Key") },
+            title = { Text(stringResource(R.string.api_key_title)) },
             text = {
                 OutlinedTextField(
                     value = keyInput,
@@ -199,15 +245,15 @@ fun ChatScreen() {
                     if (key.isNotEmpty()) {
                         scope.launch {
                             withContext(Dispatchers.IO) { secrets.saveApiKey(key) }
-                            status = "Connected · $selectedModel"
+                            status = context.getString(R.string.status_connected) + " · $selectedModel"
                             keyInput = ""
                             showKeyDialog = false
                         }
                     }
-                }) { Text("Save") }
+                }) { Text(stringResource(R.string.save)) }
             },
             dismissButton = {
-                TextButton(onClick = { showKeyDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showKeyDialog = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }
