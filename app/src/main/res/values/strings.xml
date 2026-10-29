@@ -7,7 +7,8 @@
     <string name="type_message">Type a message…</string>
     <string name="send">Send</string>
     <string name="thinking">Thinking…</string>
-    <string name="empty_chat">Start a conversation</string>
+    <string name="system_prompt">System prompt</string>
+    <string name="empty_chat">Start a conversation. Set a system prompt in Settings for a custom persona.</string>
     <string name="api_key_title">DeepSeek API Key</string>
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>

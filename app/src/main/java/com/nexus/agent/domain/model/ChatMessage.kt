@@ -9,5 +9,5 @@ data class ChatMessage(
     val text: String,
     val id: Long = 0L
 ) {
-    enum class Role { USER, ASSISTANT }
+    enum class Role { USER, ASSISTANT, SYSTEM }
 }

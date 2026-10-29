@@ -50,6 +50,7 @@ class DeepSeekClient(
                 role = when (it.role) {
                     ChatMessage.Role.USER -> "user"
                     ChatMessage.Role.ASSISTANT -> "assistant"
+                    ChatMessage.Role.SYSTEM -> "system"
                 },
                 content = it.text
             )

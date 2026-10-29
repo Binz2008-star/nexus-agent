@@ -18,7 +18,8 @@ sealed class SendResult {
 class ChatRepository(
     private val messageDao: MessageDao,
     private val client: ChatCompletionClient,
-    private val apiKeyProvider: suspend () -> String?
+    private val apiKeyProvider: suspend () -> String?,
+    private val systemPromptProvider: suspend () -> String = { "" }
 ) {
     fun observeMessages(): Flow<List<ChatMessage>> =
         messageDao.getAllChronological().map { entities ->
@@ -50,9 +51,10 @@ class ChatRepository(
         messageDao.insert(userEntity)
 
         val history = messageDao.getAllChronologicalOnce().map { it.toDomain() }
+        val fullHistory = buildHistoryWithSystem(history)
 
         try {
-            val result = client.completeStream(history, model, onDelta)
+            val result = client.completeStream(fullHistory, model, onDelta)
             result.fold(
                 onSuccess = { reply ->
                     val assistant = ChatMessage(ChatMessage.Role.ASSISTANT, reply)
@@ -86,8 +88,9 @@ class ChatRepository(
         if (history.isEmpty() || history.last().role != ChatMessage.Role.USER) {
             return@withContext SendResult.Failure("nothing_to_retry")
         }
+        val fullHistory = buildHistoryWithSystem(history)
         try {
-            val result = client.completeStream(history, model, onDelta)
+            val result = client.completeStream(fullHistory, model, onDelta)
             result.fold(
                 onSuccess = { reply ->
                     val assistant = ChatMessage(ChatMessage.Role.ASSISTANT, reply)
@@ -112,6 +115,15 @@ class ChatRepository(
 
     suspend fun retryCompletion(model: String): SendResult =
         retryCompletionStream(model) { /* ignore deltas */ }
+
+    private suspend fun buildHistoryWithSystem(history: List<ChatMessage>): List<ChatMessage> {
+        val prompt = systemPromptProvider().trim()
+        return if (prompt.isEmpty()) {
+            history
+        } else {
+            listOf(ChatMessage(ChatMessage.Role.SYSTEM, prompt)) + history
+        }
+    }
 
     private fun safeErrorCode(e: Throwable): String {
         // Return stable codes only — no raw bodies or keys

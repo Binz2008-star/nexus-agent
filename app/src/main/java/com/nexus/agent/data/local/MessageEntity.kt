@@ -16,6 +16,7 @@ data class MessageEntity(
         role = when (role) {
             "USER" -> ChatMessage.Role.USER
             "ASSISTANT" -> ChatMessage.Role.ASSISTANT
+            "SYSTEM" -> ChatMessage.Role.SYSTEM
             else -> throw IllegalArgumentException("Unknown role: $role")
         },
         text = text,

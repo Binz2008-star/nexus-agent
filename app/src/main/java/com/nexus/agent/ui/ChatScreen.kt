@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -40,7 +41,9 @@ import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
 import com.nexus.agent.data.repository.ApiKeyReadResult
+import com.nexus.agent.data.repository.AppPreferencesRepository
 import com.nexus.agent.data.repository.ChatRepository
+import kotlinx.coroutines.flow.first
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.security.AndroidKeystoreKeyProvider
@@ -66,6 +69,7 @@ fun ChatScreen() {
             }
         })
     }
+    val preferences = remember { AppPreferencesRepository.create(context) }
     val repository = remember {
         ChatRepository(
             messageDao = db.messageDao(),
@@ -75,6 +79,9 @@ fun ChatScreen() {
                     is ApiKeyReadResult.Present -> r.value
                     else -> null
                 }
+            },
+            systemPromptProvider = {
+                preferences.systemPrompt.first()
             }
         )
     }
@@ -88,8 +95,9 @@ fun ChatScreen() {
     val streamingText by viewModel.streamingText.collectAsState()
 
     var status by remember { mutableStateOf("") }
-    var showKeyDialog by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
+    var systemPromptInput by remember { mutableStateOf("") }
     var input by remember { mutableStateOf("") }
 
     LaunchedEffect(selectedModel) {
@@ -232,33 +240,45 @@ fun ChatScreen() {
         }
     }
 
-    if (showKeyDialog) {
+    if (showSettings) {
         AlertDialog(
-            onDismissRequest = { showKeyDialog = false },
-            title = { Text(stringResource(R.string.api_key_title)) },
+            onDismissRequest = { showSettings = false },
+            title = { Text(stringResource(R.string.settings)) },
             text = {
-                OutlinedTextField(
-                    value = keyInput,
-                    onValueChange = { keyInput = it },
-                    label = { Text("sk-…") },
-                    singleLine = true
-                )
+                Column {
+                    OutlinedTextField(
+                        value = keyInput,
+                        onValueChange = { keyInput = it },
+                        label = { Text(stringResource(R.string.api_key_title)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = systemPromptInput,
+                        onValueChange = { systemPromptInput = it },
+                        label = { Text(stringResource(R.string.system_prompt)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 4
+                    )
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val key = keyInput.trim()
-                    if (key.isNotEmpty()) {
-                        scope.launch {
+                    scope.launch {
+                        val key = keyInput.trim()
+                        if (key.isNotEmpty()) {
                             withContext(Dispatchers.IO) { secrets.saveApiKey(key) }
                             status = context.getString(R.string.status_key_saved) + " · $selectedModel"
-                            keyInput = ""
-                            showKeyDialog = false
                         }
+                        withContext(Dispatchers.IO) { preferences.setSystemPrompt(systemPromptInput) }
+                        keyInput = ""
+                        showSettings = false
                     }
                 }) { Text(stringResource(R.string.save)) }
             },
             dismissButton = {
-                TextButton(onClick = { showKeyDialog = false }) { Text(stringResource(R.string.cancel)) }
+                TextButton(onClick = { showSettings = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }
