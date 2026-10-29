@@ -65,7 +65,9 @@ class ChatViewModel(
     }
 
     fun sendMessage(text: String) {
+        if (_isLoading.value || text.isBlank()) return
         val convId = _currentConversationId.value
+        _isLoading.value = true
         if (convId == null) {
             viewModelScope.launch {
                 val id = repository.createConversation()
@@ -74,7 +76,6 @@ class ChatViewModel(
             }
             return
         }
-        if (_isLoading.value || text.isBlank()) return
         viewModelScope.launch { doSend(convId, text) }
     }
 

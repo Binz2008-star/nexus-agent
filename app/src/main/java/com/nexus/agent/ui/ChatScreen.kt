@@ -159,10 +159,10 @@ fun ChatScreen() {
                 },
                 actions = {
                     IconButton(onClick = { showConversationList = true }) {
-                        Icon(Icons.Default.Menu, contentDescription = "Conversations")
+                        Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.conversations))
                     }
                     TextButton(onClick = { viewModel.createNewConversation() }) {
-                        Text("New")
+                        Text(stringResource(R.string.new_chat))
                     }
                     TextButton(onClick = {
                         val next = if (selectedModel == DeepSeekClient.DEFAULT_MODEL)
@@ -251,7 +251,7 @@ fun ChatScreen() {
     if (showConversationList) {
         AlertDialog(
             onDismissRequest = { showConversationList = false },
-            title = { Text("Conversations") },
+            title = { Text(stringResource(R.string.conversations)) },
             text = {
                 LazyColumn {
                     items(conversations) { conv ->
@@ -274,7 +274,7 @@ fun ChatScreen() {
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showConversationList = false }) { Text("Close") }
+                TextButton(onClick = { showConversationList = false }) { Text(stringResource(R.string.close)) }
             }
         )
     }

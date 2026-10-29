@@ -27,4 +27,7 @@
     <string name="error_empty">الرسالة لا يمكن أن تكون فارغة</string>
     <string name="error_nothing_to_retry">لا يوجد شيء لإعادة المحاولة</string>
     <string name="error_generic">فشل الطلب. يرجى المحاولة مرة أخرى.</string>
+    <string name="conversations">المحادثات</string>
+    <string name="new_chat">جديد</string>
+    <string name="close">إغلاق</string>
 </resources>

@@ -27,4 +27,7 @@
     <string name="error_empty">Message cannot be empty</string>
     <string name="error_nothing_to_retry">Nothing to retry</string>
     <string name="error_generic">Request failed. Please try again.</string>
+    <string name="conversations">Conversations</string>
+    <string name="new_chat">New</string>
+    <string name="close">Close</string>
 </resources>
