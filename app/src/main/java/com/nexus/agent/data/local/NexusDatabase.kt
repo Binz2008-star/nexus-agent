@@ -23,6 +23,7 @@ abstract class NexusDatabase : RoomDatabase() {
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
+                // 1. Create the conversations table.
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS conversations (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -31,9 +32,32 @@ abstract class NexusDatabase : RoomDatabase() {
                         updatedAt INTEGER NOT NULL
                     )
                 """.trimIndent())
-                db.execSQL("ALTER TABLE messages ADD COLUMN conversationId INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("INSERT INTO conversations (title, createdAt, updatedAt) VALUES ('Previous chat', ${System.currentTimeMillis()}, ${System.currentTimeMillis()})")
-                db.execSQL("UPDATE messages SET conversationId = (SELECT id FROM conversations LIMIT 1) WHERE conversationId = 0")
+
+                // 2. Seed a "Previous chat" conversation to hold pre-existing messages.
+                db.execSQL(
+                    "INSERT INTO conversations (title, createdAt, updatedAt) " +
+                        "VALUES ('Previous chat', ${System.currentTimeMillis()}, ${System.currentTimeMillis()})"
+                )
+
+                // 3. Recreate messages with the new conversationId column + FK + index.
+                //    (SQLite cannot add a NOT NULL FK column via ALTER TABLE.)
+                db.execSQL("""
+                    CREATE TABLE messages_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        conversationId INTEGER NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        role TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        FOREIGN KEY(conversationId) REFERENCES conversations(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL(
+                    "INSERT INTO messages_new (id, conversationId, timestamp, role, text) " +
+                        "SELECT id, (SELECT id FROM conversations LIMIT 1), timestamp, role, text FROM messages"
+                )
+                db.execSQL("DROP TABLE messages")
+                db.execSQL("ALTER TABLE messages_new RENAME TO messages")
+                db.execSQL("CREATE INDEX index_messages_conversationId ON messages(conversationId)")
             }
         }
 
