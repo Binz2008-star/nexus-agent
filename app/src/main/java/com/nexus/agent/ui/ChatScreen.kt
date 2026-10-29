@@ -110,6 +110,14 @@ fun ChatScreen() {
         }
     }
 
+    // Pre-populate the system-prompt field when settings opens, so saving does not
+    // silently erase an existing prompt (the field would otherwise start empty).
+    LaunchedEffect(showSettings) {
+        if (showSettings) {
+            systemPromptInput = withContext(Dispatchers.IO) { preferences.systemPrompt.first() }
+        }
+    }
+
     val listState = rememberLazyListState()
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
