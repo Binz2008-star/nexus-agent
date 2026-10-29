@@ -18,7 +18,20 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("nexusDebug") {
+            storeFile = rootProject.file("keystore/nexus-debug.p12")
+            storePassword = "nexusdebug"
+            keyAlias = "nexus"
+            keyPassword = "nexusdebug"
+            storeType = "PKCS12"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("nexusDebug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

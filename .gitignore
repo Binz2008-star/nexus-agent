@@ -25,6 +25,9 @@ keystore.properties
 signing.properties
 secrets.properties
 
+# Debug signing key (NOT a secret — committed so CI builds share one identity)
+!keystore/nexus-debug.p12
+
 # --- OS / editor ---
 .DS_Store
 Thumbs.db
