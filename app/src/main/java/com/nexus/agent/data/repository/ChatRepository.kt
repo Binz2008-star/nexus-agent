@@ -1,5 +1,7 @@
 package com.nexus.agent.data.repository
 
+import com.nexus.agent.data.local.ConversationDao
+import com.nexus.agent.data.local.ConversationEntity
 import com.nexus.agent.data.local.MessageDao
 import com.nexus.agent.data.local.MessageEntity
 import com.nexus.agent.data.network.ChatCompletionClient
@@ -17,14 +19,21 @@ sealed class SendResult {
 
 class ChatRepository(
     private val messageDao: MessageDao,
+    private val conversationDao: ConversationDao,
     private val client: ChatCompletionClient,
     private val apiKeyProvider: suspend () -> String?,
     private val systemPromptProvider: suspend () -> String = { "" }
 ) {
-    fun observeMessages(): Flow<List<ChatMessage>> =
-        messageDao.getAllChronological().map { entities ->
+    fun observeConversations(): Flow<List<ConversationEntity>> = conversationDao.getAll()
+
+    fun observeMessages(conversationId: Long): Flow<List<ChatMessage>> =
+        messageDao.getByConversation(conversationId).map { entities ->
             entities.map { it.toDomain() }
         }
+
+    suspend fun createConversation(title: String = "New chat"): Long = withContext(Dispatchers.IO) {
+        conversationDao.insert(ConversationEntity(title = title))
+    }
 
     /**
      * Persists the user message, then streams a completion.

@@ -10,9 +10,9 @@ interface MessageDao {
     @Insert
     suspend fun insert(message: MessageEntity): Long
 
-    @Query("SELECT * FROM messages ORDER BY timestamp ASC, id ASC")
-    fun getAllChronological(): Flow<List<MessageEntity>>
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp ASC, id ASC")
+    fun getByConversation(conversationId: Long): Flow<List<MessageEntity>>
 
-    @Query("SELECT * FROM messages ORDER BY timestamp ASC, id ASC")
-    suspend fun getAllChronologicalOnce(): List<MessageEntity>
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp ASC, id ASC")
+    suspend fun getByConversationOnce(conversationId: Long): List<MessageEntity>
 }
