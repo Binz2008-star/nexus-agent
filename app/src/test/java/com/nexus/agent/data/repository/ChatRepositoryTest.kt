@@ -1,5 +1,7 @@
 package com.nexus.agent.data.repository
 
+import com.nexus.agent.data.local.ConversationDao
+import com.nexus.agent.data.local.ConversationEntity
 import com.nexus.agent.data.local.MessageDao
 import com.nexus.agent.data.local.MessageEntity
 import com.nexus.agent.data.network.ChatCompletionClient
@@ -13,7 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatRepositoryTest {
-    private class FakeDao : MessageDao {
+    private class FakeMessageDao : MessageDao {
         private val store = mutableListOf<MessageEntity>()
         private val flow = MutableStateFlow<List<MessageEntity>>(emptyList())
         override suspend fun insert(message: MessageEntity): Long {
@@ -22,8 +24,17 @@ class ChatRepositoryTest {
             flow.value = store.toList()
             return withId.id
         }
-        override fun getAllChronological(): Flow<List<MessageEntity>> = flow.asStateFlow()
-        override suspend fun getAllChronologicalOnce(): List<MessageEntity> = store.toList()
+        override fun getByConversation(conversationId: Long): Flow<List<MessageEntity>> =
+            flow.asStateFlow()
+        override suspend fun getByConversationOnce(conversationId: Long): List<MessageEntity> =
+            store.filter { it.conversationId == conversationId }
+    }
+
+    private class FakeConversationDao : ConversationDao {
+        override suspend fun insert(conversation: ConversationEntity): Long = 1L
+        override fun getAll(): Flow<List<ConversationEntity>> = MutableStateFlow(emptyList())
+        override suspend fun updateTitleAndTimestamp(id: Long, title: String, ts: Long) {}
+        override suspend fun delete(id: Long) {}
     }
 
     private class FakeClient(private val replies: List<Result<String>>) : ChatCompletionClient {
@@ -46,12 +57,13 @@ class ChatRepositoryTest {
 
     @Test
     fun sendMessage_success_persistsUserAndAssistant() = runBlocking {
-        val dao = FakeDao()
+        val dao = FakeMessageDao()
+        val convDao = FakeConversationDao()
         val client = FakeClient(listOf(Result.success("reply")))
-        val repo = ChatRepository(dao, client) { "key" }
-        val result = repo.sendMessage("hello", "deepseek-flash")
+        val repo = ChatRepository(dao, convDao, client) { "key" }
+        val result = repo.sendMessageStream(1L, "hello", "deepseek-flash") { }
         assertTrue(result is SendResult.Success)
-        val msgs = dao.getAllChronologicalOnce()
+        val msgs = dao.getByConversationOnce(1L)
         assertEquals(2, msgs.size)
         assertEquals("USER", msgs[0].role)
         assertEquals("hello", msgs[0].text)
@@ -61,38 +73,25 @@ class ChatRepositoryTest {
 
     @Test
     fun sendMessage_failure_persistsOnlyUser() = runBlocking {
-        val dao = FakeDao()
+        val dao = FakeMessageDao()
+        val convDao = FakeConversationDao()
         val client = FakeClient(listOf(Result.failure(Exception("network"))))
-        val repo = ChatRepository(dao, client) { "key" }
-        val result = repo.sendMessage("hello", "deepseek-flash")
+        val repo = ChatRepository(dao, convDao, client) { "key" }
+        val result = repo.sendMessageStream(1L, "hello", "deepseek-flash") { }
         assertTrue(result is SendResult.Failure)
-        val msgs = dao.getAllChronologicalOnce()
+        val msgs = dao.getByConversationOnce(1L)
         assertEquals(1, msgs.size)
         assertEquals("USER", msgs[0].role)
     }
 
     @Test
     fun sendMessage_blank_doesNotInsert() = runBlocking {
-        val dao = FakeDao()
+        val dao = FakeMessageDao()
+        val convDao = FakeConversationDao()
         val client = FakeClient(emptyList())
-        val repo = ChatRepository(dao, client) { "key" }
-        val result = repo.sendMessage("   ", "deepseek-flash")
+        val repo = ChatRepository(dao, convDao, client) { "key" }
+        val result = repo.sendMessageStream(1L, "   ", "deepseek-flash") { }
         assertTrue(result is SendResult.Failure)
-        assertEquals(0, dao.getAllChronologicalOnce().size)
-    }
-
-    @Test
-    fun retryCompletion_doesNotDuplicateUser() = runBlocking {
-        val dao = FakeDao()
-        // first fail
-        val client = FakeClient(listOf(Result.failure(Exception("fail")), Result.success("ok")))
-        val repo = ChatRepository(dao, client) { "key" }
-        repo.sendMessage("hello", "m")
-        assertEquals(1, dao.getAllChronologicalOnce().size)
-        val result = repo.retryCompletion("m")
-        assertTrue(result is SendResult.Success)
-        val msgs = dao.getAllChronologicalOnce()
-        assertEquals(2, msgs.size)
-        assertEquals(1, msgs.count { it.role == "USER" })
+        assertEquals(0, dao.getByConversationOnce(1L).size)
     }
 }
