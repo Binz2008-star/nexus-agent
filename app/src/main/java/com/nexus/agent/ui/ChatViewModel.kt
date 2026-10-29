@@ -3,6 +3,7 @@ package com.nexus.agent.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.nexus.agent.data.local.ConversationEntity
 import com.nexus.agent.data.repository.ChatRepository
 import com.nexus.agent.data.repository.SendResult
 import com.nexus.agent.domain.model.ChatMessage
@@ -10,6 +11,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -17,7 +20,17 @@ class ChatViewModel(
     private val repository: ChatRepository
 ) : ViewModel() {
 
-    val messages: StateFlow<List<ChatMessage>> = repository.observeMessages()
+    val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _currentConversationId = MutableStateFlow<Long?>(null)
+    val currentConversationId: StateFlow<Long?> = _currentConversationId.asStateFlow()
+
+    val messages: StateFlow<List<ChatMessage>> = _currentConversationId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(emptyList())
+            else repository.observeMessages(id)
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _isLoading = MutableStateFlow(false)
@@ -36,21 +49,47 @@ class ChatViewModel(
         _selectedModel.value = model
     }
 
-    fun sendMessage(text: String) {
-        if (_isLoading.value || text.isBlank()) return
+    fun selectConversation(id: Long) {
+        _currentConversationId.value = id
+        _streamingText.value = ""
+        _errorMessage.value = null
+    }
+
+    fun createNewConversation() {
         viewModelScope.launch {
-            _isLoading.value = true
+            val id = repository.createConversation()
+            _currentConversationId.value = id
+            _streamingText.value = ""
             _errorMessage.value = null
-            _streamingText.value = ""
-            when (val result = repository.sendMessageStream(text, _selectedModel.value) { delta ->
-                _streamingText.value += delta
-            }) {
-                is SendResult.Success -> { /* UI observes Flow; clear streaming */ }
-                is SendResult.Failure -> _errorMessage.value = result.errorCode
-            }
-            _streamingText.value = ""
-            _isLoading.value = false
         }
+    }
+
+    fun sendMessage(text: String) {
+        val convId = _currentConversationId.value
+        if (convId == null) {
+            viewModelScope.launch {
+                val id = repository.createConversation()
+                _currentConversationId.value = id
+                doSend(id, text)
+            }
+            return
+        }
+        if (_isLoading.value || text.isBlank()) return
+        viewModelScope.launch { doSend(convId, text) }
+    }
+
+    private suspend fun doSend(conversationId: Long, text: String) {
+        _isLoading.value = true
+        _errorMessage.value = null
+        _streamingText.value = ""
+        when (val result = repository.sendMessageStream(conversationId, text, _selectedModel.value) { delta ->
+            _streamingText.value += delta
+        }) {
+            is SendResult.Success -> {}
+            is SendResult.Failure -> _errorMessage.value = result.errorCode
+        }
+        _streamingText.value = ""
+        _isLoading.value = false
     }
 
     fun clearError() {
@@ -58,15 +97,16 @@ class ChatViewModel(
     }
 
     fun retryLast() {
+        val convId = _currentConversationId.value ?: return
         if (_isLoading.value) return
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
             _streamingText.value = ""
-            when (val result = repository.retryCompletionStream(_selectedModel.value) { delta ->
+            when (val result = repository.retryCompletionStream(convId, _selectedModel.value) { delta ->
                 _streamingText.value += delta
             }) {
-                is SendResult.Success -> { /* UI observes Flow */ }
+                is SendResult.Success -> {}
                 is SendResult.Failure -> _errorMessage.value = result.errorCode
             }
             _streamingText.value = ""

@@ -41,33 +41,46 @@ class ChatRepository(
      * The assistant message is persisted only after the full stream succeeds.
      */
     suspend fun sendMessageStream(
+        conversationId: Long,
         text: String,
         model: String,
         onDelta: suspend (String) -> Unit
     ): SendResult = withContext(Dispatchers.IO) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) {
-            return@withContext SendResult.Failure("empty")
-        }
+        if (trimmed.isEmpty()) return@withContext SendResult.Failure("empty")
+        if (apiKeyProvider() == null) return@withContext SendResult.Failure("no_key")
 
-        val key = apiKeyProvider()
-        if (key == null) {
-            return@withContext SendResult.Failure("no_key")
-        }
-
-        val userMessage = ChatMessage(ChatMessage.Role.USER, trimmed)
-        val userEntity = MessageEntity.fromDomain(userMessage)
+        val userEntity = MessageEntity.fromDomain(
+            ChatMessage(ChatMessage.Role.USER, trimmed),
+            conversationId
+        )
         messageDao.insert(userEntity)
 
-        val history = messageDao.getAllChronologicalOnce().map { it.toDomain() }
+        val existing = messageDao.getByConversationOnce(conversationId)
+        if (existing.size == 1) {
+            val shortTitle = trimmed.take(36).let { if (trimmed.length > 36) "$it…" else it }
+            conversationDao.updateTitleAndTimestamp(conversationId, shortTitle, System.currentTimeMillis())
+        } else {
+            conversationDao.updateTitleAndTimestamp(
+                conversationId,
+                existing.firstOrNull()?.text?.take(36) ?: "Chat",
+                System.currentTimeMillis()
+            )
+        }
+
+        val history = messageDao.getByConversationOnce(conversationId).map { it.toDomain() }
         val fullHistory = buildHistoryWithSystem(history)
 
         try {
             val result = client.completeStream(fullHistory, model, onDelta)
             result.fold(
                 onSuccess = { reply ->
-                    val assistant = ChatMessage(ChatMessage.Role.ASSISTANT, reply)
-                    messageDao.insert(MessageEntity.fromDomain(assistant))
+                    messageDao.insert(
+                        MessageEntity.fromDomain(
+                            ChatMessage(ChatMessage.Role.ASSISTANT, reply),
+                            conversationId
+                        )
+                    )
                     SendResult.Success
                 },
                 onFailure = { e ->
@@ -82,18 +95,13 @@ class ChatRepository(
         }
     }
 
-    /**
-     * Streams a completion against existing history (no new user insert). Used for retry.
-     */
     suspend fun retryCompletionStream(
+        conversationId: Long,
         model: String,
         onDelta: suspend (String) -> Unit
     ): SendResult = withContext(Dispatchers.IO) {
-        val key = apiKeyProvider()
-        if (key == null) {
-            return@withContext SendResult.Failure("no_key")
-        }
-        val history = messageDao.getAllChronologicalOnce().map { it.toDomain() }
+        if (apiKeyProvider() == null) return@withContext SendResult.Failure("no_key")
+        val history = messageDao.getByConversationOnce(conversationId).map { it.toDomain() }
         if (history.isEmpty() || history.last().role != ChatMessage.Role.USER) {
             return@withContext SendResult.Failure("nothing_to_retry")
         }
@@ -102,8 +110,12 @@ class ChatRepository(
             val result = client.completeStream(fullHistory, model, onDelta)
             result.fold(
                 onSuccess = { reply ->
-                    val assistant = ChatMessage(ChatMessage.Role.ASSISTANT, reply)
-                    messageDao.insert(MessageEntity.fromDomain(assistant))
+                    messageDao.insert(
+                        MessageEntity.fromDomain(
+                            ChatMessage(ChatMessage.Role.ASSISTANT, reply),
+                            conversationId
+                        )
+                    )
                     SendResult.Success
                 },
                 onFailure = { e ->
@@ -118,12 +130,11 @@ class ChatRepository(
         }
     }
 
-    // Keep non-streaming versions for compatibility / tests
+    // Compatibility wrappers (used by older tests)
     suspend fun sendMessage(text: String, model: String): SendResult =
-        sendMessageStream(text, model) { /* ignore deltas */ }
-
+        sendMessageStream(0L, text, model) { }
     suspend fun retryCompletion(model: String): SendResult =
-        retryCompletionStream(model) { /* ignore deltas */ }
+        retryCompletionStream(0L, model) { }
 
     private suspend fun buildHistoryWithSystem(history: List<ChatMessage>): List<ChatMessage> {
         val prompt = systemPromptProvider().trim()

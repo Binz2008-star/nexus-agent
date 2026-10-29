@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.AutoAwesome
@@ -90,6 +91,7 @@ fun ChatScreen() {
     val repository = remember {
         ChatRepository(
             messageDao = db.messageDao(),
+            conversationDao = db.conversationDao(),
             client = client,
             apiKeyProvider = {
                 when (val r = secrets.readApiKey()) {
@@ -102,6 +104,10 @@ fun ChatScreen() {
     }
 
     val viewModel: ChatViewModel = viewModel(factory = ChatViewModel.Factory(repository))
+
+    val conversations by viewModel.conversations.collectAsState()
+    val currentConversationId by viewModel.currentConversationId.collectAsState()
+    var showConversationList by remember { mutableStateOf(false) }
 
     val messages by viewModel.messages.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -152,6 +158,12 @@ fun ChatScreen() {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showConversationList = true }) {
+                        Icon(Icons.Default.Menu, contentDescription = "Conversations")
+                    }
+                    TextButton(onClick = { viewModel.createNewConversation() }) {
+                        Text("New")
+                    }
                     TextButton(onClick = {
                         val next = if (selectedModel == DeepSeekClient.DEFAULT_MODEL)
                             DeepSeekClient.PRO_MODEL else DeepSeekClient.DEFAULT_MODEL
@@ -234,6 +246,37 @@ fun ChatScreen() {
                 }
             )
         }
+    }
+
+    if (showConversationList) {
+        AlertDialog(
+            onDismissRequest = { showConversationList = false },
+            title = { Text("Conversations") },
+            text = {
+                LazyColumn {
+                    items(conversations) { conv ->
+                        TextButton(
+                            onClick = {
+                                viewModel.selectConversation(conv.id)
+                                showConversationList = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                conv.title,
+                                color = if (conv.id == currentConversationId)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showConversationList = false }) { Text("Close") }
+            }
+        )
     }
 
     if (showSettings) {
