@@ -10,6 +10,8 @@ import com.nexus.agent.data.repository.SendResult
 import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.domain.tool.KnowledgeTool
+import com.nexus.agent.domain.tool.WebSearchOutcome
+import com.nexus.agent.domain.tool.WebSearchTool
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -23,7 +25,8 @@ import kotlinx.coroutines.launch
 class ChatViewModel(
     private val repository: ChatRepository,
     private val preferences: AppPreferencesRepository,
-    private val knowledgeTool: KnowledgeTool
+    private val knowledgeTool: KnowledgeTool,
+    private val webSearchTool: WebSearchTool
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -159,18 +162,50 @@ class ChatViewModel(
         _searchResults.value = null
     }
 
+    // ---- Web search (read-only) ----
+
+    private val _webQuery = MutableStateFlow("")
+    val webQuery: StateFlow<String> = _webQuery.asStateFlow()
+
+    private val _isWebSearching = MutableStateFlow(false)
+    val isWebSearching: StateFlow<Boolean> = _isWebSearching.asStateFlow()
+
+    private val _webResults = MutableStateFlow<WebSearchOutcome?>(null)
+    val webResults: StateFlow<WebSearchOutcome?> = _webResults.asStateFlow()
+
+    fun setWebQuery(query: String) {
+        _webQuery.value = query
+    }
+
+    fun searchWeb() {
+        val query = _webQuery.value.trim()
+        if (query.isEmpty() || _isWebSearching.value) return
+        viewModelScope.launch {
+            _isWebSearching.value = true
+            _webResults.value = webSearchTool.search(query, DEFAULT_COUNT)
+            _isWebSearching.value = false
+        }
+    }
+
+    fun clearWebSearch() {
+        _webQuery.value = ""
+        _webResults.value = null
+    }
+
     class Factory(
         private val repository: ChatRepository,
         private val preferences: AppPreferencesRepository,
-        private val knowledgeTool: KnowledgeTool
+        private val knowledgeTool: KnowledgeTool,
+        private val webSearchTool: WebSearchTool
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return ChatViewModel(repository, preferences, knowledgeTool) as T
+            return ChatViewModel(repository, preferences, knowledgeTool, webSearchTool) as T
         }
     }
 
     companion object {
         private const val DEFAULT_TOP_K = 8
+        private const val DEFAULT_COUNT = 10
     }
 }

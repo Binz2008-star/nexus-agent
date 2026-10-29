@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
@@ -61,14 +62,18 @@ import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
 import com.nexus.agent.data.remote.KnowledgeApiClient
+import com.nexus.agent.data.remote.WebSearchApiClient
 import com.nexus.agent.data.repository.ApiKeyReadResult
 import com.nexus.agent.data.repository.AppPreferencesRepository
 import com.nexus.agent.data.repository.ChatRepository
 import com.nexus.agent.data.repository.KnowledgeRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
+import com.nexus.agent.data.repository.WebSearchRepository
 import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.model.KnowledgeResult
+import com.nexus.agent.domain.model.WebSearchResult
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
+import com.nexus.agent.domain.tool.WebSearchOutcome
 import com.nexus.agent.security.AndroidKeystoreKeyProvider
 import com.nexus.agent.security.CryptoEngine
 import kotlinx.coroutines.Dispatchers
@@ -113,8 +118,17 @@ fun ChatScreen() {
         val api = KnowledgeApiClient(baseUrlProvider = { preferences.knowledgeBaseUrl.first() })
         KnowledgeRepository(searchApi = { q, k -> api.search(q, k) })
     }
+    val webSearchTool = remember {
+        val api = WebSearchApiClient(apiKeyProvider = {
+            when (val r = secrets.readApiKey()) {
+                is ApiKeyReadResult.Present -> r.value
+                else -> null
+            }
+        })
+        WebSearchRepository(searchApi = { q, c -> api.search(q, c) })
+    }
 
-    val viewModel: ChatViewModel = viewModel(factory = ChatViewModel.Factory(repository, preferences, knowledgeTool))
+    val viewModel: ChatViewModel = viewModel(factory = ChatViewModel.Factory(repository, preferences, knowledgeTool, webSearchTool))
 
     val conversations by viewModel.conversations.collectAsState()
     val currentConversationId by viewModel.currentConversationId.collectAsState()
@@ -129,6 +143,10 @@ fun ChatScreen() {
     val isSearching by viewModel.isSearching.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
     var showSearch by remember { mutableStateOf(false) }
+    val webQuery by viewModel.webQuery.collectAsState()
+    val isWebSearching by viewModel.isWebSearching.collectAsState()
+    val webResults by viewModel.webResults.collectAsState()
+    var showWebSearch by remember { mutableStateOf(false) }
 
     var status by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
@@ -191,6 +209,9 @@ fun ChatScreen() {
                                 stringResource(R.string.model_flash)
                             else stringResource(R.string.model_pro)
                         )
+                    }
+                    IconButton(onClick = { showWebSearch = true }) {
+                        Icon(Icons.Default.Public, contentDescription = stringResource(R.string.web_search))
                     }
                     IconButton(onClick = { showSearch = true }) {
                         Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search))
@@ -309,6 +330,20 @@ fun ChatScreen() {
             onDismiss = {
                 showSearch = false
                 viewModel.clearSearch()
+            }
+        )
+    }
+
+    if (showWebSearch) {
+        WebSearchDialog(
+            query = webQuery,
+            onQueryChange = viewModel::setWebQuery,
+            isSearching = isWebSearching,
+            results = webResults,
+            onSearch = viewModel::searchWeb,
+            onDismiss = {
+                showWebSearch = false
+                viewModel.clearWebSearch()
             }
         )
     }
@@ -614,6 +649,96 @@ private fun SearchResultItem(result: KnowledgeResult) {
 private fun mapSearchError(code: String): String = when (code) {
     "empty" -> stringResource(R.string.search_empty)
     "no_url" -> stringResource(R.string.search_no_url)
+    "network" -> stringResource(R.string.search_network)
+    "timeout" -> stringResource(R.string.search_timeout)
+    "server" -> stringResource(R.string.search_server)
+    "malformed" -> stringResource(R.string.search_malformed)
+    else -> stringResource(R.string.search_error)
+}
+
+@Composable
+private fun WebSearchDialog(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    isSearching: Boolean,
+    results: WebSearchOutcome?,
+    onSearch: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.web_search)) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    label = { Text(stringResource(R.string.web_search_placeholder)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+                when (val r = results) {
+                    is WebSearchOutcome.Failure ->
+                        Text(mapWebSearchError(r.errorCode), color = MaterialTheme.colorScheme.error)
+                    is WebSearchOutcome.Success ->
+                        if (r.results.isEmpty()) {
+                            Text(stringResource(R.string.search_no_results))
+                        } else {
+                            LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                                items(r.results) { item -> WebSearchResultItem(item) }
+                            }
+                        }
+                    null -> if (isSearching) Text(stringResource(R.string.thinking))
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onSearch, enabled = query.isNotBlank() && !isSearching) {
+                Text(stringResource(R.string.web_search))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+        }
+    )
+}
+
+@Composable
+private fun WebSearchResultItem(result: WebSearchResult) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Text(
+            text = result.title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = result.url,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = result.snippet.ifBlank { result.summary },
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 3
+        )
+        if (result.siteName != null) {
+            Text(
+                text = result.siteName,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun mapWebSearchError(code: String): String = when (code) {
+    "empty" -> stringResource(R.string.search_empty)
+    "no_key" -> stringResource(R.string.error_no_key)
+    "auth" -> stringResource(R.string.error_auth)
+    "quota" -> stringResource(R.string.error_quota)
+    "rate" -> stringResource(R.string.error_rate)
     "network" -> stringResource(R.string.search_network)
     "timeout" -> stringResource(R.string.search_timeout)
     "server" -> stringResource(R.string.search_server)
