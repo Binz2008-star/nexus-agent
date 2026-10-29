@@ -1,0 +1,4 @@
+<resources>
+    <!-- Dark window background before Compose draws (matches the Compose dark theme). -->
+    <style name="Theme.NexusAgent" parent="android:Theme.Material.NoActionBar" />
+</resources>
