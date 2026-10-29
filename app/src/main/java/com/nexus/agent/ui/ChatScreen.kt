@@ -477,13 +477,18 @@ private fun SettingsDialog(
 
 @Composable
 private fun mapErrorCode(code: String): String {
-    return when (code) {
-        "auth" -> stringResource(R.string.error_auth)
-        "quota" -> stringResource(R.string.error_quota)
-        "rate" -> stringResource(R.string.error_rate)
-        "no_key" -> stringResource(R.string.error_no_key)
-        "empty" -> stringResource(R.string.error_empty)
-        "nothing_to_retry" -> stringResource(R.string.error_nothing_to_retry)
+    return when {
+        code == "auth" -> stringResource(R.string.error_auth)
+        code == "quota" -> stringResource(R.string.error_quota)
+        code == "rate" -> stringResource(R.string.error_rate)
+        code == "no_key" -> stringResource(R.string.error_no_key)
+        code == "empty" -> stringResource(R.string.error_empty)
+        code == "nothing_to_retry" -> stringResource(R.string.error_nothing_to_retry)
+        code == "empty_response" -> "Empty response from server"
+        code == "timeout" -> "Request timed out"
+        code == "network" -> "Network error. Check your connection."
+        code.startsWith("api_") -> "API error ${code.removePrefix("api_")}"
+        code.startsWith("generic:") -> "Request failed (${code.removePrefix("generic:")})"
         else -> stringResource(R.string.error_generic)
     }
 }

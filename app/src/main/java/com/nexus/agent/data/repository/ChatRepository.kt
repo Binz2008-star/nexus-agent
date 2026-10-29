@@ -146,13 +146,17 @@ class ChatRepository(
     }
 
     private fun safeErrorCode(e: Throwable): String {
-        // Return stable codes only — no raw bodies or keys
+        val msg = e.message.orEmpty()
         return when {
-            e.message?.contains("401") == true -> "auth"
-            e.message?.contains("402") == true -> "quota"
-            e.message?.contains("429") == true -> "rate"
-            e.message?.contains("No DeepSeek API key") == true -> "no_key"
-            else -> "generic"
+            msg.contains("401") -> "auth"
+            msg.contains("402") -> "quota"
+            msg.contains("429") -> "rate"
+            msg.contains("No DeepSeek API key") -> "no_key"
+            msg.contains("Empty completion") || msg.contains("Empty body") -> "empty_response"
+            msg.contains("timeout", ignoreCase = true) || msg.contains("timed out", ignoreCase = true) -> "timeout"
+            msg.contains("Unable to resolve host") || msg.contains("Failed to connect") || msg.contains("Network") -> "network"
+            msg.contains("DeepSeek API error") -> "api_${msg.filter { it.isDigit() }.take(3)}"
+            else -> "generic:${e.javaClass.simpleName}"
         }
     }
 }
