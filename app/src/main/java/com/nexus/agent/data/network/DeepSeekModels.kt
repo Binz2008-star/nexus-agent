@@ -15,7 +15,7 @@ data class ChatCompletionRequest(
 
 @Serializable
 data class ThinkingConfig(
-    val type: String = "disabled" // "enabled" | "disabled"
+    val type: String // "enabled" | "disabled" — no default so it is always serialized
 )
 
 @Serializable
