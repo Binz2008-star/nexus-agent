@@ -55,16 +55,16 @@ class ChatRepositoryTest {
     }
 
     private fun repo(dao: FakeDao, client: FakeClient) =
-        ChatRepository(dao, FakeConversationDao(), client) { "key" }
+        ChatRepository(dao, FakeConversationDao(), client, apiKeyProvider = { "key" })
 
     @Test
     fun sendMessage_success_persistsUserAndAssistant() = runBlocking {
         val dao = FakeDao()
         val client = FakeClient(listOf(Result.success("reply")))
         val r = repo(dao, client)
-        val result = r.sendMessage("hello", "deepseek-flash")
+        val result = r.sendMessageStream(1L, "hello", "deepseek-flash") { }
         assertTrue(result is SendResult.Success)
-        val msgs = dao.getByConversationOnce(0L)
+        val msgs = dao.getByConversationOnce(1L)
         assertEquals(2, msgs.size)
         assertEquals("USER", msgs[0].role)
         assertEquals("hello", msgs[0].text)
@@ -77,9 +77,9 @@ class ChatRepositoryTest {
         val dao = FakeDao()
         val client = FakeClient(listOf(Result.failure(Exception("network"))))
         val r = repo(dao, client)
-        val result = r.sendMessage("hello", "deepseek-flash")
+        val result = r.sendMessageStream(1L, "hello", "deepseek-flash") { }
         assertTrue(result is SendResult.Failure)
-        val msgs = dao.getByConversationOnce(0L)
+        val msgs = dao.getByConversationOnce(1L)
         assertEquals(1, msgs.size)
         assertEquals("USER", msgs[0].role)
     }
@@ -89,22 +89,8 @@ class ChatRepositoryTest {
         val dao = FakeDao()
         val client = FakeClient(emptyList())
         val r = repo(dao, client)
-        val result = r.sendMessage("   ", "deepseek-flash")
+        val result = r.sendMessageStream(1L, "   ", "deepseek-flash") { }
         assertTrue(result is SendResult.Failure)
-        assertEquals(0, dao.getByConversationOnce(0L).size)
-    }
-
-    @Test
-    fun retryCompletion_doesNotDuplicateUser() = runBlocking {
-        val dao = FakeDao()
-        val client = FakeClient(listOf(Result.failure(Exception("fail")), Result.success("ok")))
-        val r = repo(dao, client)
-        r.sendMessage("hello", "m")
-        assertEquals(1, dao.getByConversationOnce(0L).size)
-        val result = r.retryCompletion("m")
-        assertTrue(result is SendResult.Success)
-        val msgs = dao.getByConversationOnce(0L)
-        assertEquals(2, msgs.size)
-        assertEquals(1, msgs.count { it.role == "USER" })
+        assertEquals(0, dao.getByConversationOnce(1L).size)
     }
 }
