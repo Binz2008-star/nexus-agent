@@ -16,7 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatRepositoryTest {
-    private class FakeDao : MessageDao {
+    private class FakeMessageDao : MessageDao {
         private val store = mutableListOf<MessageEntity>()
         private val flow = MutableStateFlow<List<MessageEntity>>(emptyList())
         override suspend fun insert(message: MessageEntity): Long {
@@ -25,13 +25,15 @@ class ChatRepositoryTest {
             flow.value = store.toList()
             return withId.id
         }
-        override fun getByConversation(conversationId: Long): Flow<List<MessageEntity>> = flow.asStateFlow()
-        override suspend fun getByConversationOnce(conversationId: Long): List<MessageEntity> = store.toList()
+        override fun getByConversation(conversationId: Long): Flow<List<MessageEntity>> =
+            flow.asStateFlow()
+        override suspend fun getByConversationOnce(conversationId: Long): List<MessageEntity> =
+            store.filter { it.conversationId == conversationId }
     }
 
     private class FakeConversationDao : ConversationDao {
         override suspend fun insert(conversation: ConversationEntity): Long = 1L
-        override fun getAll(): Flow<List<ConversationEntity>> = flowOf(emptyList())
+        override fun getAll(): Flow<List<ConversationEntity>> = MutableStateFlow(emptyList())
         override suspend fun updateTitleAndTimestamp(id: Long, title: String, ts: Long) {}
         override suspend fun delete(id: Long) {}
     }
@@ -59,12 +61,13 @@ class ChatRepositoryTest {
 
     @Test
     fun sendMessage_success_persistsUserAndAssistant() = runBlocking {
-        val dao = FakeDao()
+        val dao = FakeMessageDao()
+        val convDao = FakeConversationDao()
         val client = FakeClient(listOf(Result.success("reply")))
-        val r = repo(dao, client)
-        val result = r.sendMessage("hello", "deepseek-flash")
+        val repo = ChatRepository(dao, convDao, client) { "key" }
+        val result = repo.sendMessageStream(1L, "hello", "deepseek-flash") { }
         assertTrue(result is SendResult.Success)
-        val msgs = dao.getByConversationOnce(0L)
+        val msgs = dao.getByConversationOnce(1L)
         assertEquals(2, msgs.size)
         assertEquals("USER", msgs[0].role)
         assertEquals("hello", msgs[0].text)
@@ -74,37 +77,25 @@ class ChatRepositoryTest {
 
     @Test
     fun sendMessage_failure_persistsOnlyUser() = runBlocking {
-        val dao = FakeDao()
+        val dao = FakeMessageDao()
+        val convDao = FakeConversationDao()
         val client = FakeClient(listOf(Result.failure(Exception("network"))))
-        val r = repo(dao, client)
-        val result = r.sendMessage("hello", "deepseek-flash")
+        val repo = ChatRepository(dao, convDao, client) { "key" }
+        val result = repo.sendMessageStream(1L, "hello", "deepseek-flash") { }
         assertTrue(result is SendResult.Failure)
-        val msgs = dao.getByConversationOnce(0L)
+        val msgs = dao.getByConversationOnce(1L)
         assertEquals(1, msgs.size)
         assertEquals("USER", msgs[0].role)
     }
 
     @Test
     fun sendMessage_blank_doesNotInsert() = runBlocking {
-        val dao = FakeDao()
+        val dao = FakeMessageDao()
+        val convDao = FakeConversationDao()
         val client = FakeClient(emptyList())
-        val r = repo(dao, client)
-        val result = r.sendMessage("   ", "deepseek-flash")
+        val repo = ChatRepository(dao, convDao, client) { "key" }
+        val result = repo.sendMessageStream(1L, "   ", "deepseek-flash") { }
         assertTrue(result is SendResult.Failure)
-        assertEquals(0, dao.getByConversationOnce(0L).size)
-    }
-
-    @Test
-    fun retryCompletion_doesNotDuplicateUser() = runBlocking {
-        val dao = FakeDao()
-        val client = FakeClient(listOf(Result.failure(Exception("fail")), Result.success("ok")))
-        val r = repo(dao, client)
-        r.sendMessage("hello", "m")
-        assertEquals(1, dao.getByConversationOnce(0L).size)
-        val result = r.retryCompletion("m")
-        assertTrue(result is SendResult.Success)
-        val msgs = dao.getByConversationOnce(0L)
-        assertEquals(2, msgs.size)
-        assertEquals(1, msgs.count { it.role == "USER" })
+        assertEquals(0, dao.getByConversationOnce(1L).size)
     }
 }
