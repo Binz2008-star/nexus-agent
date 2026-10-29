@@ -30,4 +30,15 @@
     <string name="conversations">المحادثات</string>
     <string name="new_chat">جديد</string>
     <string name="close">إغلاق</string>
+    <string name="search">بحث</string>
+    <string name="search_placeholder">ابحث في قاعدة معرفتك…</string>
+    <string name="search_no_results">لا توجد نتائج</string>
+    <string name="search_empty">أدخل نص البحث</string>
+    <string name="search_no_url">لم يتم إعداد رابط قاعدة المعرفة</string>
+    <string name="search_network">خطأ في الشبكة. تحقق من اتصالك.</string>
+    <string name="search_timeout">انتهت مهلة الطلب</string>
+    <string name="search_server">خطأ في قاعدة المعرفة</string>
+    <string name="search_malformed">استجابة غير صالحة من قاعدة المعرفة</string>
+    <string name="search_error">فشل البحث</string>
+    <string name="knowledge_base_url">رابط قاعدة المعرفة</string>
 </resources>

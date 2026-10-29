@@ -30,4 +30,15 @@
     <string name="conversations">Conversations</string>
     <string name="new_chat">New</string>
     <string name="close">Close</string>
+    <string name="search">Search</string>
+    <string name="search_placeholder">Search your knowledge base…</string>
+    <string name="search_no_results">No results found</string>
+    <string name="search_empty">Enter a search query</string>
+    <string name="search_no_url">Knowledge base URL not configured</string>
+    <string name="search_network">Network error. Check your connection.</string>
+    <string name="search_timeout">Request timed out</string>
+    <string name="search_server">Knowledge base error</string>
+    <string name="search_malformed">Invalid response from knowledge base</string>
+    <string name="search_error">Search failed</string>
+    <string name="knowledge_base_url">Knowledge base URL</string>
 </resources>

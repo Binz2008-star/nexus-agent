@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.AutoAwesome
@@ -58,11 +60,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
+import com.nexus.agent.data.remote.KnowledgeApiClient
 import com.nexus.agent.data.repository.ApiKeyReadResult
 import com.nexus.agent.data.repository.AppPreferencesRepository
 import com.nexus.agent.data.repository.ChatRepository
+import com.nexus.agent.data.repository.KnowledgeRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.model.KnowledgeResult
+import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.security.AndroidKeystoreKeyProvider
 import com.nexus.agent.security.CryptoEngine
 import kotlinx.coroutines.Dispatchers
@@ -103,7 +109,12 @@ fun ChatScreen() {
         )
     }
 
-    val viewModel: ChatViewModel = viewModel(factory = ChatViewModel.Factory(repository, preferences))
+    val knowledgeTool = remember {
+        val api = KnowledgeApiClient(baseUrlProvider = { preferences.knowledgeBaseUrl.first() })
+        KnowledgeRepository(searchApi = { q, k -> api.search(q, k) })
+    }
+
+    val viewModel: ChatViewModel = viewModel(factory = ChatViewModel.Factory(repository, preferences, knowledgeTool))
 
     val conversations by viewModel.conversations.collectAsState()
     val currentConversationId by viewModel.currentConversationId.collectAsState()
@@ -114,11 +125,16 @@ fun ChatScreen() {
     val errorMessage by viewModel.errorMessage.collectAsState()
     val selectedModel by viewModel.selectedModel.collectAsState()
     val streamingText by viewModel.streamingText.collectAsState()
+    val searchQuery by viewModel.searchQuery.collectAsState()
+    val isSearching by viewModel.isSearching.collectAsState()
+    val searchResults by viewModel.searchResults.collectAsState()
+    var showSearch by remember { mutableStateOf(false) }
 
     var status by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
     var systemPromptInput by remember { mutableStateOf("") }
+    var knowledgeBaseUrlInput by remember { mutableStateOf("") }
     var input by remember { mutableStateOf("") }
 
     LaunchedEffect(selectedModel) {
@@ -134,6 +150,7 @@ fun ChatScreen() {
     LaunchedEffect(showSettings) {
         if (showSettings) {
             systemPromptInput = withContext(Dispatchers.IO) { preferences.systemPrompt.first() }
+            knowledgeBaseUrlInput = withContext(Dispatchers.IO) { preferences.knowledgeBaseUrl.first() }
         }
     }
 
@@ -174,6 +191,9 @@ fun ChatScreen() {
                                 stringResource(R.string.model_flash)
                             else stringResource(R.string.model_pro)
                         )
+                    }
+                    IconButton(onClick = { showSearch = true }) {
+                        Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search))
                     }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
@@ -279,12 +299,28 @@ fun ChatScreen() {
         )
     }
 
+    if (showSearch) {
+        SearchDialog(
+            query = searchQuery,
+            onQueryChange = viewModel::setSearchQuery,
+            isSearching = isSearching,
+            results = searchResults,
+            onSearch = viewModel::searchKnowledge,
+            onDismiss = {
+                showSearch = false
+                viewModel.clearSearch()
+            }
+        )
+    }
+
     if (showSettings) {
         SettingsDialog(
             keyInput = keyInput,
             onKeyChange = { keyInput = it },
             systemPrompt = systemPromptInput,
             onSystemPromptChange = { systemPromptInput = it },
+            knowledgeBaseUrl = knowledgeBaseUrlInput,
+            onKnowledgeBaseUrlChange = { knowledgeBaseUrlInput = it },
             onDismiss = { showSettings = false },
             onSave = {
                 scope.launch {
@@ -294,6 +330,7 @@ fun ChatScreen() {
                         status = context.getString(R.string.status_key_saved) + " · $selectedModel"
                     }
                     withContext(Dispatchers.IO) { preferences.setSystemPrompt(systemPromptInput) }
+                    withContext(Dispatchers.IO) { preferences.setKnowledgeBaseUrl(knowledgeBaseUrlInput) }
                     keyInput = ""
                     showSettings = false
                 }
@@ -439,6 +476,8 @@ private fun SettingsDialog(
     onKeyChange: (String) -> Unit,
     systemPrompt: String,
     onSystemPromptChange: (String) -> Unit,
+    knowledgeBaseUrl: String,
+    onKnowledgeBaseUrlChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
@@ -462,6 +501,15 @@ private fun SettingsDialog(
                     label = { Text(stringResource(R.string.system_prompt)) },
                     modifier = Modifier.fillMaxWidth(),
                     maxLines = 5,
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = knowledgeBaseUrl,
+                    onValueChange = onKnowledgeBaseUrlChange,
+                    label = { Text(stringResource(R.string.knowledge_base_url)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
             }
@@ -491,4 +539,84 @@ private fun mapErrorCode(code: String): String {
         code.startsWith("generic:") -> "Request failed (${code.removePrefix("generic:")})"
         else -> stringResource(R.string.error_generic)
     }
+}
+
+@Composable
+private fun SearchDialog(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    isSearching: Boolean,
+    results: KnowledgeSearchResult?,
+    onSearch: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.search)) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    label = { Text(stringResource(R.string.search_placeholder)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+                when (val r = results) {
+                    is KnowledgeSearchResult.Failure ->
+                        Text(mapSearchError(r.errorCode), color = MaterialTheme.colorScheme.error)
+                    is KnowledgeSearchResult.Success ->
+                        if (r.results.isEmpty()) {
+                            Text(stringResource(R.string.search_no_results))
+                        } else {
+                            LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
+                                items(r.results) { item -> SearchResultItem(item) }
+                            }
+                        }
+                    null -> if (isSearching) Text(stringResource(R.string.thinking))
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onSearch, enabled = query.isNotBlank() && !isSearching) {
+                Text(stringResource(R.string.search))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+        }
+    )
+}
+
+@Composable
+private fun SearchResultItem(result: KnowledgeResult) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Text(
+            text = listOfNotNull(result.file, result.chunk).joinToString(" · "),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = result.content,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 3
+        )
+        Text(
+            text = "${result.project} · ${"%.2f".format(result.score)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun mapSearchError(code: String): String = when (code) {
+    "empty" -> stringResource(R.string.search_empty)
+    "no_url" -> stringResource(R.string.search_no_url)
+    "network" -> stringResource(R.string.search_network)
+    "timeout" -> stringResource(R.string.search_timeout)
+    "server" -> stringResource(R.string.search_server)
+    "malformed" -> stringResource(R.string.search_malformed)
+    else -> stringResource(R.string.search_error)
 }

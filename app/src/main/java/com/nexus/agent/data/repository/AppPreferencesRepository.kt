@@ -22,9 +22,11 @@ class AppPreferencesRepository(
 ) {
     private val systemPromptKey = stringPreferencesKey("system_prompt")
     private val lastModelKey = stringPreferencesKey("last_model")
+    private val knowledgeBaseUrlKey = stringPreferencesKey("knowledge_base_url")
 
     val systemPrompt: Flow<String> = dataStore.data.map { it[systemPromptKey] ?: "" }
     val lastModel: Flow<String> = dataStore.data.map { it[lastModelKey] ?: "deepseek-flash" }
+    val knowledgeBaseUrl: Flow<String> = dataStore.data.map { it[knowledgeBaseUrlKey] ?: "" }
 
     suspend fun setSystemPrompt(prompt: String) {
         dataStore.edit { prefs ->
@@ -38,6 +40,16 @@ class AppPreferencesRepository(
 
     suspend fun setLastModel(model: String) {
         dataStore.edit { it[lastModelKey] = model }
+    }
+
+    suspend fun setKnowledgeBaseUrl(url: String) {
+        dataStore.edit { prefs ->
+            if (url.isBlank()) {
+                prefs.remove(knowledgeBaseUrlKey)
+            } else {
+                prefs[knowledgeBaseUrlKey] = url.trim()
+            }
+        }
     }
 
     companion object {
