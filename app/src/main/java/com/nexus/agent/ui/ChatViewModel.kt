@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.nexus.agent.data.local.ConversationEntity
+import com.nexus.agent.data.repository.AppPreferencesRepository
 import com.nexus.agent.data.repository.ChatRepository
 import com.nexus.agent.data.repository.SendResult
 import com.nexus.agent.domain.model.ChatMessage
@@ -12,12 +13,14 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class ChatViewModel(
-    private val repository: ChatRepository
+    private val repository: ChatRepository,
+    private val preferences: AppPreferencesRepository
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -45,8 +48,16 @@ class ChatViewModel(
     private val _streamingText = MutableStateFlow("")
     val streamingText: StateFlow<String> = _streamingText.asStateFlow()
 
+    init {
+        // Restore the last-used model across restarts.
+        viewModelScope.launch {
+            _selectedModel.value = preferences.lastModel.first()
+        }
+    }
+
     fun setModel(model: String) {
         _selectedModel.value = model
+        viewModelScope.launch { preferences.setLastModel(model) }
     }
 
     fun selectConversation(id: Long) {
@@ -115,10 +126,13 @@ class ChatViewModel(
         }
     }
 
-    class Factory(private val repository: ChatRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: ChatRepository,
+        private val preferences: AppPreferencesRepository
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return ChatViewModel(repository) as T
+            return ChatViewModel(repository, preferences) as T
         }
     }
 }

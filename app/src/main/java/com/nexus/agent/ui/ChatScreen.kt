@@ -103,7 +103,7 @@ fun ChatScreen() {
         )
     }
 
-    val viewModel: ChatViewModel = viewModel(factory = ChatViewModel.Factory(repository))
+    val viewModel: ChatViewModel = viewModel(factory = ChatViewModel.Factory(repository, preferences))
 
     val conversations by viewModel.conversations.collectAsState()
     val currentConversationId by viewModel.currentConversationId.collectAsState()
