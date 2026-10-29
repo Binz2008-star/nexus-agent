@@ -130,7 +130,7 @@ fun ChatScreen() {
             TopAppBar(
                 title = { Text(stringResource(R.string.app_name)) },
                 actions = {
-                    TextButton(onClick = { showKeyDialog = true }) {
+                    TextButton(onClick = { showSettings = true }) {
                         Text(stringResource(R.string.settings))
                     }
                     TextButton(onClick = {
