@@ -24,16 +24,32 @@ class ToolOrchestrator(private val tools: Map<String, Tool>) {
         // Task-execution/mutation tools are explicitly blocked (never registered, never run).
         if (toolName in BLOCKED_TOOLS) return ToolResult.Blocked("Blocked tool: $toolName")
         val tool = tools[toolName] ?: return ToolResult.Failure("unknown_tool")
+        // Default-deny: COMMIT-level tools require an explicit approval receipt, which is not
+        // wired yet — refuse them outright rather than execute without authorization.
+        if (tool.riskLevel == RiskLevel.COMMIT) {
+            return ToolResult.Blocked("Tool '$toolName' requires explicit approval (COMMIT)")
+        }
         return tool.execute(input)
     }
 
     fun toolNames(): Set<String> = tools.keys
+
+    /** Capability declarations, so callers can introspect risk/scopes without executing. */
+    fun capabilities(): List<ToolCapability> =
+        tools.values.map { ToolCapability(it.name, it.riskLevel, it.requiredScopes) }
 
     companion object {
         /** Tools that must never execute, even if the model requests them. */
         val BLOCKED_TOOLS = setOf("agent_task", "apply_patch", "replace_block", "shell")
     }
 }
+
+/** A tool's declared capability metadata (risk level + required scopes). */
+data class ToolCapability(
+    val name: String,
+    val riskLevel: RiskLevel,
+    val requiredScopes: List<String>
+)
 
 /**
  * Builds the system prompt that instructs the model to ground its answer in the given

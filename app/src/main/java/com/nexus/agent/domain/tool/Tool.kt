@@ -19,11 +19,25 @@ sealed class ToolResult {
 }
 
 /**
- * A single read-only tool. Future tools (file_search, web_search, calendar, …) all
- * implement this same interface. `input` is a JSON object so tools can evolve their
- * arguments without changing the orchestrator.
+ * Consequence level of a tool, enforced by the orchestrator. COMMIT tools must never run
+ * without an explicit approval receipt (none are registered yet, so they are default-denied).
+ */
+enum class RiskLevel { READ, ANALYZE, PREPARE, COMMIT }
+
+/**
+ * A capability. [riskLevel] and [requiredScopes] form the minimal default-deny policy: every
+ * tool declares what it may do and which permissions it needs, and the orchestrator refuses
+ * anything beyond READ unless policy explicitly allows it. `input` is a JSON object so tools
+ * can evolve their arguments without changing the orchestrator.
  */
 interface Tool {
     val name: String
+
+    /** Consequence level. Defaults to READ — new tools are safe by default. */
+    val riskLevel: RiskLevel get() = RiskLevel.READ
+
+    /** OAuth/account scopes required to run (e.g. "gmail.readonly"). Empty = none. */
+    val requiredScopes: List<String> get() = emptyList()
+
     suspend fun execute(input: JsonObject): ToolResult
 }

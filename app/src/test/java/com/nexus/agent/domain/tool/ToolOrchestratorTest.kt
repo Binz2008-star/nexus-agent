@@ -12,7 +12,9 @@ class ToolOrchestratorTest {
 
     private class FakeTool(
         override val name: String = "fake",
-        private val result: ToolResult
+        private val result: ToolResult,
+        override val riskLevel: RiskLevel = RiskLevel.READ,
+        override val requiredScopes: List<String> = emptyList()
     ) : Tool {
         var calls = 0
         override suspend fun execute(input: JsonObject): ToolResult {
@@ -56,6 +58,25 @@ class ToolOrchestratorTest {
     fun listsToolNames() {
         val orch = ToolOrchestrator(mapOf("a" to FakeTool("a", ToolResult.Success("x"))))
         assertTrue(orch.toolNames().contains("a"))
+    }
+
+    @Test
+    fun commitLevelToolIsDefaultDenied() = runBlocking {
+        val tool = FakeTool(result = ToolResult.Success("x"), riskLevel = RiskLevel.COMMIT)
+        val orch = ToolOrchestrator(mapOf("commit_tool" to tool))
+        val result = orch.execute("commit_tool", buildJsonObject { })
+        assertTrue(result is ToolResult.Blocked)
+        assertEquals(0, tool.calls)
+    }
+
+    @Test
+    fun capabilitiesExposeRiskAndScopes() {
+        val read = FakeTool("read", ToolResult.Success("x"))
+        val gmail = FakeTool("gmail", ToolResult.Success("x"), requiredScopes = listOf("gmail.readonly"))
+        val orch = ToolOrchestrator(mapOf("read" to read, "gmail" to gmail))
+        val caps = orch.capabilities().associateBy { it.name }
+        assertEquals(RiskLevel.READ, caps["read"]?.riskLevel)
+        assertEquals(listOf("gmail.readonly"), caps["gmail"]?.requiredScopes)
     }
 
     @Test

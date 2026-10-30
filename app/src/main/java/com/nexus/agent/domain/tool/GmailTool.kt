@@ -25,6 +25,8 @@ class GmailSearchTool(private val gmail: GmailTool) : Tool {
 
     override val name: String = "gmail_search"
 
+    override val requiredScopes: List<String> get() = listOf(GMAIL_READONLY_SCOPE)
+
     override suspend fun execute(input: JsonObject): ToolResult {
         val query = (input["query"] as? JsonPrimitive)
             ?.takeIf { it.isString }?.content?.trim().orEmpty()
@@ -48,3 +50,6 @@ class GmailSearchTool(private val gmail: GmailTool) : Tool {
         url = null
     )
 }
+
+/** Gmail read-only scope required by [GmailSearchTool]. */
+const val GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
