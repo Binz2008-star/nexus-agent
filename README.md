@@ -44,7 +44,7 @@ which decrypts on demand and returns explicit states (`Present` / `Missing` / `C
 | Android Gradle Plugin | 8.5.2 |
 | Gradle wrapper | 8.7 |
 | JDK | 17 |
-| compileSdk / targetSdk / minSdk | 34 / 34 / 24 |
+| compileSdk / targetSdk / minSdk | 34 / 34 / 26 |
 | Jetpack Compose | BOM 2024.06.00, Material 3 |
 | Room | 2.6.1 (KSP 1.9.24-1.0.20) |
 | OkHttp | 4.12.0 |
