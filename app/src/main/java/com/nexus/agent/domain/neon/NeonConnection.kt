@@ -86,6 +86,13 @@ object NeonConnectionParser {
     private fun hasHost(url: String): Boolean =
         url.substringAfter("://", "").substringBefore('/').substringBefore('?').isNotBlank()
 
+    /**
+     * Masks the credential portion of a JDBC URL for safe display/logging — the password is
+     * replaced with a placeholder so decrypted credentials never appear in the UI or logs.
+     */
+    fun maskCredentials(url: String): String =
+        url.replace(Regex("(password=)[^&]*", RegexOption.IGNORE_CASE), "$1••••••")
+
     private fun extractHost(url: String): String? =
         url.substringAfter("://", "").substringBefore('/').substringBefore('?')
             .takeIf { it.isNotBlank() }

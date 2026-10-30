@@ -57,4 +57,5 @@
     <string name="gmail_connected">Connected</string>
     <string name="gmail_connected_as">Connected as %1$s</string>
     <string name="oauth_client_missing">Google OAuth client ID not configured yet</string>
+    <string name="mirror_enabled">Mirror conversations to Neon (cloud backup)</string>
 </resources>

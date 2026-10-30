@@ -51,6 +51,26 @@ class NeonRepositoryTest {
     }
 
     @Test
+    fun sec001_noEmbeddedCredentialFallback() = runTest {
+        // SEC-001 regression: with no runtime-configured Neon URL, every Neon operation must
+        // degrade to a failure WITHOUT touching the JDBC layer — there is no compiled-in
+        // credential fallback (the BuildConfig injection was removed).
+        val jdbc = FakeJdbc()
+        val r = repo(jdbc, read = { null }, write = { null })
+
+        val search = r.search("hello", 8)
+        assertEquals("no_connection", (search as KnowledgeSearchResult.Failure).errorCode)
+
+        assertTrue(r.saveConversationMessage("s", "user", "hi").isFailure)
+        assertTrue(r.saveMemory("fact", "x").isFailure)
+        assertTrue(r.loadMemory().isFailure)
+
+        // No JDBC call may have been attempted — proving there is no silent fallback.
+        assertTrue(jdbc.queries.isEmpty())
+        assertTrue(jdbc.executions.isEmpty())
+    }
+
+    @Test
     fun searchMergesChunksAndMemorySortedByScore() = runTest {
         val jdbc = FakeJdbc(
             mapOf(

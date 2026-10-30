@@ -40,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -69,6 +70,7 @@ import com.nexus.agent.data.remote.WebSearchApiClient
 import com.nexus.agent.data.repository.ApiKeyReadResult
 import com.nexus.agent.data.repository.AppPreferencesRepository
 import com.nexus.agent.data.repository.ChatRepository
+import com.nexus.agent.data.repository.ConversationMirror
 import com.nexus.agent.data.repository.NeonRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.data.repository.WebSearchRepository
@@ -155,13 +157,13 @@ fun ChatScreen(
             readUrlProvider = {
                 when (val r = secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF)) {
                     is ApiKeyReadResult.Present -> r.value
-                    else -> BuildConfig.NEON_READ_URL_DEFAULT.ifBlank { null }
+                    else -> null
                 }
             },
             writeUrlProvider = {
                 when (val r = secrets.readSecret(SecretStorageRepository.NEON_WRITE_URL_PREF)) {
                     is ApiKeyReadResult.Present -> r.value
-                    else -> BuildConfig.NEON_WRITE_URL_DEFAULT.ifBlank { null }
+                    else -> null
                 }
             },
             jdbc = NeonJdbcClient()
@@ -182,7 +184,14 @@ fun ChatScreen(
             systemPromptProvider = { preferences.systemPrompt.first() },
             router = router,
             personaProvider = { personaInstruction },
-            mirror = neonRepository
+            mirror = object : ConversationMirror {
+                override suspend fun mirror(sessionId: String, role: String, content: String) {
+                    // Opt-in gate: never mirror transcripts unless the user enabled it.
+                    if (preferences.mirrorEnabled.first()) {
+                        neonRepository.mirror(sessionId, role, content)
+                    }
+                }
+            }
         )
     }
 
@@ -229,13 +238,18 @@ fun ChatScreen(
     val taskStatus by viewModel.taskStatus.collectAsState()
     val gmailConnected by gmailConnector.isConnected.collectAsState()
     val gmailEmail by gmailConnector.email.collectAsState()
+    val mirrorEnabled by preferences.mirrorEnabled.collectAsState(initial = false)
 
     var showSettings by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
     var systemPromptInput by remember { mutableStateOf("") }
     var knowledgeBaseUrlInput by remember { mutableStateOf("") }
+    // Neon fields show only a MASKED value (password hidden). The dirty flags track whether the
+    // user actually edited them, so a masked value is never written back as real credentials.
     var neonReadUrlInput by remember { mutableStateOf("") }
     var neonWriteUrlInput by remember { mutableStateOf("") }
+    var neonReadDirty by remember { mutableStateOf(false) }
+    var neonWriteDirty by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
 
     LaunchedEffect(showSettings) {
@@ -244,16 +258,18 @@ fun ChatScreen(
             knowledgeBaseUrlInput = withContext(Dispatchers.IO) { preferences.knowledgeBaseUrl.first() }
             neonReadUrlInput = withContext(Dispatchers.IO) {
                 when (val r = secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF)) {
-                    is ApiKeyReadResult.Present -> r.value
+                    is ApiKeyReadResult.Present -> NeonConnectionParser.maskCredentials(r.value)
                     else -> ""
                 }
             }
             neonWriteUrlInput = withContext(Dispatchers.IO) {
                 when (val r = secrets.readSecret(SecretStorageRepository.NEON_WRITE_URL_PREF)) {
-                    is ApiKeyReadResult.Present -> r.value
+                    is ApiKeyReadResult.Present -> NeonConnectionParser.maskCredentials(r.value)
                     else -> ""
                 }
             }
+            neonReadDirty = false
+            neonWriteDirty = false
         }
     }
 
@@ -365,9 +381,9 @@ fun ChatScreen(
             knowledgeBaseUrl = knowledgeBaseUrlInput,
             onKnowledgeBaseUrlChange = { knowledgeBaseUrlInput = it },
             neonReadUrl = neonReadUrlInput,
-            onNeonReadUrlChange = { neonReadUrlInput = it },
+            onNeonReadUrlChange = { neonReadUrlInput = it; neonReadDirty = true },
             neonWriteUrl = neonWriteUrlInput,
-            onNeonWriteUrlChange = { neonWriteUrlInput = it },
+            onNeonWriteUrlChange = { neonWriteUrlInput = it; neonWriteDirty = true },
             gmailConnected = gmailConnected,
             gmailEmail = gmailEmail,
             onConnectGmail = {
@@ -378,6 +394,8 @@ fun ChatScreen(
                 }
             },
             onDisconnectGmail = { scope.launch { gmailConnector.disconnect() } },
+            mirrorEnabled = mirrorEnabled,
+            onMirrorEnabledChange = { scope.launch { preferences.setMirrorEnabled(it) } },
             onDismiss = { showSettings = false },
             onSave = {
                 scope.launch {
@@ -389,8 +407,14 @@ fun ChatScreen(
                         withContext(Dispatchers.IO) { preferences.setSystemPrompt(systemPromptInput) }
                         withContext(Dispatchers.IO) { preferences.setKnowledgeBaseUrl(knowledgeBaseUrlInput) }
                         withContext(Dispatchers.IO) {
-                            saveNeonUrl(secrets, neonReadUrlInput, SecretStorageRepository.NEON_READ_URL_PREF)
-                            saveNeonUrl(secrets, neonWriteUrlInput, SecretStorageRepository.NEON_WRITE_URL_PREF)
+                            // Only persist when the user actually edited a field — otherwise the
+                            // masked placeholder would be written back and destroy the real URL.
+                            if (neonReadDirty) {
+                                saveNeonUrl(secrets, neonReadUrlInput, SecretStorageRepository.NEON_READ_URL_PREF)
+                            }
+                            if (neonWriteDirty) {
+                                saveNeonUrl(secrets, neonWriteUrlInput, SecretStorageRepository.NEON_WRITE_URL_PREF)
+                            }
                         }
                         keyInput = ""
                         showSettings = false
@@ -579,6 +603,8 @@ private fun SettingsDialog(
     gmailEmail: String?,
     onConnectGmail: () -> Unit,
     onDisconnectGmail: () -> Unit,
+    mirrorEnabled: Boolean,
+    onMirrorEnabledChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
@@ -662,6 +688,21 @@ private fun SettingsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.mirror_enabled),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Switch(
+                        checked = mirrorEnabled,
+                        onCheckedChange = onMirrorEnabledChange
+                    )
+                }
             }
         },
         confirmButton = {

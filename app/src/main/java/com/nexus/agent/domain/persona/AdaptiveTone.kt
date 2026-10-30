@@ -59,10 +59,12 @@ enum class Tone(val id: String, val arabicLabel: String) {
 object AdaptiveTone {
 
     fun buildRewriteInstruction(dialect: Dialect, tone: Tone): String =
-        "تحدث باللهجة ${dialect.arabicLabel} وبأسلوب ${tone.arabicLabel} في ردودك، " +
-            "مع الحفاظ على المعنى الأصلي وعدم إضافة معلومات جديدة."
+        "أجب دائمًا بنفس لغة المستخدم. إذا كان المستخدم يتحدث العربية، استخدم اللهجة " +
+            "${dialect.arabicLabel} وبأسلوب ${tone.arabicLabel}. كن موجزًا وطبيعيًا في ردودك، " +
+            "ولا تشرح أو تضيف معلومات غير مطلوبة ما لم يطلبها المستخدم."
 
     fun buildRewriteInstructionEnglish(dialect: Dialect, tone: Tone): String =
-        "Respond in ${dialect.id} dialect with a ${tone.id} tone, " +
-            "preserving the original meaning and not adding new information."
+        "Always answer in the user's language. If the user writes Arabic, respond in " +
+            "${dialect.id} dialect with a ${tone.id} tone. Be concise and natural; do not explain " +
+            "or add unrequested information unless the user asks for it."
 }

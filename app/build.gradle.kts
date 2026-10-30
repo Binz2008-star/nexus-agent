@@ -19,13 +19,9 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Neon connection defaults, injected at CI build time from GitHub Actions secrets so
-        // the credentials never live in git. Empty when not provided (local builds).
-        buildConfigField("String", "NEON_READ_URL_DEFAULT", "\"${System.getenv("NEON_READ_URL") ?: ""}\"")
-        buildConfigField("String", "NEON_WRITE_URL_DEFAULT", "\"${System.getenv("NEON_WRITE_URL") ?: ""}\"")
-
-        // Google OAuth client id for the connectors (Gmail/Drive). Injected at CI build time;
-        // empty placeholder means the connectors won't start authorization until set.
+        // Google OAuth client id for the connectors (Gmail). Injected at CI build time; a client
+        // id is public (not a secret). Neon connection URLs are deliberately NOT baked in — they
+        // contain credentials and are user-supplied + stored encrypted at rest (Settings).
         buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"${System.getenv("GOOGLE_OAUTH_CLIENT_ID") ?: ""}\"")
 
         // AppAuth's manifest declares a redirect receiver using this placeholder.

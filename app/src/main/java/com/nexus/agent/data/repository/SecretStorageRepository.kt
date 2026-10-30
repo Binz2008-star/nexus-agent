@@ -4,8 +4,10 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.nexus.agent.domain.connectors.PendingOAuthSession
 import com.nexus.agent.security.CryptoException
 import com.nexus.agent.security.KeyUnavailableException
 import com.nexus.agent.security.SecretCipher
@@ -97,12 +99,43 @@ class SecretStorageRepository(
         dataStore.edit { it.remove(stringPreferencesKey(GOOGLE_EMAIL_PREF)) }
     }
 
+    // ---- Pending OAuth authorization (cold-start redirect recovery) ----
+
+    /**
+     * Persists an in-flight OAuth authorization (CSRF state + PKCE verifier + creation time)
+     * so a redirect that arrives after process death can still be validated and exchanged.
+     */
+    suspend fun savePendingOAuth(state: String, verifier: String, createdAtMs: Long) {
+        saveSecret(PENDING_OAUTH_STATE_PREF, state)
+        saveSecret(PENDING_OAUTH_VERIFIER_PREF, verifier)
+        dataStore.edit { it[longPreferencesKey(PENDING_OAUTH_CREATED_AT_PREF)] = createdAtMs }
+    }
+
+    suspend fun readPendingOAuth(): PendingOAuthSession? {
+        val state = (readSecret(PENDING_OAUTH_STATE_PREF) as? ApiKeyReadResult.Present)?.value
+            ?: return null
+        val verifier = (readSecret(PENDING_OAUTH_VERIFIER_PREF) as? ApiKeyReadResult.Present)?.value
+            ?: return null
+        val createdAt = dataStore.data.map { it[longPreferencesKey(PENDING_OAUTH_CREATED_AT_PREF)] }.first()
+            ?: return null
+        return PendingOAuthSession(state, verifier, createdAt)
+    }
+
+    suspend fun clearPendingOAuth() {
+        clearSecret(PENDING_OAUTH_STATE_PREF)
+        clearSecret(PENDING_OAUTH_VERIFIER_PREF)
+        dataStore.edit { it.remove(longPreferencesKey(PENDING_OAUTH_CREATED_AT_PREF)) }
+    }
+
     companion object {
         const val API_KEY_PREF_NAME = "encrypted_deepseek_api_key"
         const val NEON_READ_URL_PREF = "encrypted_neon_read_url"
         const val NEON_WRITE_URL_PREF = "encrypted_neon_write_url"
         const val GOOGLE_REFRESH_TOKEN_PREF = "encrypted_google_refresh_token"
         const val GOOGLE_EMAIL_PREF = "google_email"
+        const val PENDING_OAUTH_STATE_PREF = "encrypted_pending_oauth_state"
+        const val PENDING_OAUTH_VERIFIER_PREF = "encrypted_pending_oauth_verifier"
+        const val PENDING_OAUTH_CREATED_AT_PREF = "pending_oauth_created_at"
 
         fun create(context: Context, cipher: SecretCipher): SecretStorageRepository =
             SecretStorageRepository(context.nexusSecretsDataStore, cipher)

@@ -76,7 +76,7 @@ class ToolOrchestratorTest {
     @Test
     fun buildContextPromptEmptySourcesHasNoSourceLines() {
         val prompt = buildContextPrompt(emptyList())
-        assertTrue(prompt.contains("excerpts"))
+        assertTrue(prompt.contains("references"))
         assertTrue(!prompt.contains("Source:"))
     }
 

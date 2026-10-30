@@ -9,6 +9,7 @@ import com.nexus.agent.BuildConfig
 import com.nexus.agent.data.repository.ApiKeyReadResult
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.domain.connectors.GoogleAuthSession
+import com.nexus.agent.domain.connectors.PendingOAuthSession
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +42,8 @@ private data class TokenResponseDto(
     @SerialName("refresh_token") val refreshToken: String? = null,
     @SerialName("id_token") val idToken: String? = null,
     @SerialName("expires_in") val expiresIn: Long = 0,
-    @SerialName("token_type") val tokenType: String = ""
+    @SerialName("token_type") val tokenType: String = "",
+    @SerialName("scope") val scope: String? = null
 )
 
 /**
@@ -83,12 +85,6 @@ class GoogleAuthManager(
     private val _email = MutableStateFlow<String?>(null)
     override val email: StateFlow<String?> = _email.asStateFlow()
 
-    // In-flight PKCE verifier (memory only; never persisted).
-    @Volatile private var pendingVerifier: String? = null
-
-    // In-flight CSRF `state` binding the redirect to the request (memory only).
-    @Volatile private var pendingState: String? = null
-
     // In-memory access-token cache; refreshed from the stored refresh token when expired.
     @Volatile private var cachedAccessToken: String? = null
     @Volatile private var cachedExpiryMs: Long = 0L
@@ -106,8 +102,11 @@ class GoogleAuthManager(
         val verifier = CodeVerifierUtil.generateRandomCodeVerifier()
         val challenge = CodeVerifierUtil.deriveCodeVerifierChallenge(verifier)
         val state = UUID.randomUUID().toString()
-        pendingVerifier = verifier
-        pendingState = state
+        // Persist the in-flight session so a cold-start redirect (process death while the
+        // Custom Tab is open) can still be validated and exchanged.
+        scope.launch {
+            secretStorage.savePendingOAuth(state, verifier, System.currentTimeMillis())
+        }
 
         val allScopes = (listOf("openid", "email") + scopes).distinct()
         val request = AuthorizationRequest.Builder(
@@ -126,16 +125,25 @@ class GoogleAuthManager(
 
     /**
      * Called from the Activity's `onNewIntent`/`onCreate` with the redirect intent for
-     * [REDIRECT_URI]. Verifies the CSRF [state], then extracts the authorization code and
-     * exchanges it in the background.
+     * [REDIRECT_URI]. Validates the CSRF [state] against the persisted session (recovering
+     * after process death), enforces one-time use + expiry, then exchanges the code.
      */
     fun handleAuthorizationResponse(intent: Intent) {
         val data = intent.data ?: return
-        val state = data.getQueryParameter("state")
-        if (state == null || state != pendingState) return
-        pendingState = null
+        val incomingState = data.getQueryParameter("state")
         val code = data.getQueryParameter("code") ?: return
-        scope.launch { exchangeCode(code) }
+        scope.launch {
+            val session = secretStorage.readPendingOAuth() ?: return@launch
+            // CSRF + replay protection: the state must match and must not have expired.
+            if (!session.matchesState(incomingState)) return@launch
+            if (session.isExpired(System.currentTimeMillis(), PENDING_OAUTH_TTL_MS)) {
+                secretStorage.clearPendingOAuth()
+                return@launch
+            }
+            // One-time use: clear before exchanging so the code/verifier can't be replayed.
+            secretStorage.clearPendingOAuth()
+            exchangeCode(code, session.verifier)
+        }
     }
 
     override suspend fun accessToken(): String? = tokenMutex.withLock {
@@ -162,15 +170,14 @@ class GoogleAuthManager(
     override suspend fun disconnect() {
         secretStorage.clearGoogleRefreshToken()
         secretStorage.clearGoogleEmail()
+        secretStorage.clearPendingOAuth()
         cachedAccessToken = null
         cachedExpiryMs = 0L
         _isConnected.value = false
         _email.value = null
     }
 
-    private suspend fun exchangeCode(code: String) {
-        val verifier = pendingVerifier ?: return
-        pendingVerifier = null
+    private suspend fun exchangeCode(code: String, verifier: String) {
         val resp = postToken(
             FormBody.Builder()
                 .add("code", code)
@@ -182,8 +189,17 @@ class GoogleAuthManager(
         ) ?: return
 
         try {
-            resp.refreshToken?.let { secretStorage.saveGoogleRefreshToken(it) }
             val email = resp.idToken?.let { emailFromIdToken(it) }
+            // Account isolation: if a different Google account is authorized, drop the previous
+            // account's token so it is never mixed into the new session.
+            val existingEmail = secretStorage.readGoogleEmail()
+            if (existingEmail != null && email != null && existingEmail != email) {
+                secretStorage.clearGoogleRefreshToken()
+                secretStorage.clearGoogleEmail()
+                cachedAccessToken = null
+                cachedExpiryMs = 0L
+            }
+            resp.refreshToken?.let { secretStorage.saveGoogleRefreshToken(it) }
             email?.let { secretStorage.saveGoogleEmail(it) }
 
             cachedAccessToken = resp.accessToken
@@ -257,6 +273,9 @@ class GoogleAuthManager(
         const val REDIRECT_URI = "com.nexus.agent:/oauth2redirect"
         const val AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
         const val TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+
+        /** A redirect is only accepted within this window (replay protection). */
+        const val PENDING_OAUTH_TTL_MS = 10 * 60 * 1000L
 
         private fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)

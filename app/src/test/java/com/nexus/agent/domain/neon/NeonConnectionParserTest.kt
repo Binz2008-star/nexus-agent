@@ -49,4 +49,24 @@ class NeonConnectionParserTest {
     @Test
     fun rejectsMissingDatabase() =
         assertNull(NeonConnectionParser.parse("jdbc:postgresql://host?sslmode=require"))
+
+    @Test
+    fun maskCredentialsHidesPassword() {
+        val masked = NeonConnectionParser.maskCredentials(
+            "jdbc:postgresql://host/neondb?sslmode=require&user=nexus&password=Secret123"
+        )
+        assertTrue(masked.contains("password=••••••"))
+        assertFalse(masked.contains("Secret123"))
+        assertTrue(masked.contains("host/neondb"))
+    }
+
+    @Test
+    fun maskCredentialsLeavesNonPasswordParts() {
+        val masked = NeonConnectionParser.maskCredentials(
+            "jdbc:postgresql://host:5432/neondb?sslmode=require&user=nexus&password=pw"
+        )
+        assertTrue(masked.startsWith("jdbc:postgresql://host:5432/neondb?"))
+        assertTrue(masked.contains("user=nexus"))
+        assertFalse(masked.contains("password=pw"))
+    }
 }

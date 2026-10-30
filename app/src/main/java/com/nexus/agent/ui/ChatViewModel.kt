@@ -11,18 +11,18 @@ import com.nexus.agent.data.repository.SendResult
 import com.nexus.agent.data.work.BackgroundTaskRunner
 import com.nexus.agent.domain.cognitive.CognitiveLoadDecision
 import com.nexus.agent.domain.cognitive.CognitiveLoadManager
-import com.nexus.agent.domain.emotion.EmotionAnalysis
 import com.nexus.agent.domain.emotion.EmotionAnalyzer
 import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.culture.CultureContext
 import com.nexus.agent.domain.commands.Command
 import com.nexus.agent.domain.commands.CommandDetector
+import com.nexus.agent.domain.commands.GreetingDetector
 import com.nexus.agent.domain.memory.RememberCommandDetector
 import com.nexus.agent.domain.persona.EmotionPoetry
 import com.nexus.agent.domain.persona.Sentiment
 import com.nexus.agent.domain.persona.SentimentAnalyzer
 import com.nexus.agent.domain.safety.IntentEvaluator
-import com.nexus.agent.domain.safety.SensitiveTopicDetector
+import com.nexus.agent.domain.safety.SafetyPolicy
 import com.nexus.agent.domain.safety.UserBehaviorGuard
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.domain.tool.KnowledgeTool
@@ -108,6 +108,11 @@ class ChatViewModel(
     private val behaviorGuard = UserBehaviorGuard()
     private val intentEvaluator = IntentEvaluator(behaviorGuard)
 
+    // Single safety policy (block + harm + sensitive-topic) applied to EVERY message before it
+    // reaches the model/tool layer — no execution path bypasses it.
+    private val safetyPolicy =
+        SafetyPolicy(emotionAnalyzer, behaviorGuard, intentEvaluator, cultureContext, BLOCKED_MESSAGE)
+
     init {
         // Restore the last-used model across restarts.
         viewModelScope.launch {
@@ -142,34 +147,11 @@ class ChatViewModel(
         }
     }
 
-    fun sendMessage(text: String) {
-        if (_isLoading.value || text.isBlank()) return
-        val convId = _currentConversationId.value
-        _isLoading.value = true
-        if (convId == null) {
-            viewModelScope.launch {
-                val id = repository.createConversation()
-                _currentConversationId.value = id
-                doSend(id, text)
-            }
-            return
-        }
-        viewModelScope.launch { doSend(convId, text) }
-    }
-
-    private suspend fun doSend(conversationId: Long, text: String) {
-        _isLoading.value = true
-        _errorMessage.value = null
-        _streamingText.value = ""
-        when (val result = repository.sendMessageStream(conversationId, text, _selectedModel.value) { delta ->
-            _streamingText.value += delta
-        }) {
-            is SendResult.Success -> {}
-            is SendResult.Failure -> _errorMessage.value = result.errorCode
-        }
-        _streamingText.value = ""
-        _isLoading.value = false
-    }
+    /**
+     * Legacy entry point kept for API compatibility. Delegates to the agentic path so every
+     * message goes through the same safety gates — this path can no longer bypass them.
+     */
+    fun sendMessage(text: String) = sendMessageWithAgent(text)
 
     fun clearError() {
         _errorMessage.value = null
@@ -202,39 +184,21 @@ class ChatViewModel(
                     CognitiveLoadDecision.Allowed -> Unit
                 }
 
-                // 2) Emotion / intent safety gate — blocks harmful requests locally and aborts the
-                //    network request, surfacing the refusal as an assistant message.
-                when (val analysis = emotionAnalyzer.analyze(text.trim())) {
-                    is EmotionAnalysis.Blocked -> {
+                // 2) Safety policy — active block + harmful-intent + sensitive-topic, enforced
+                //    uniformly for every message before it reaches the model/tool layer.
+                when (val decision = safetyPolicy.evaluate(SESSION_ID, text.trim())) {
+                    is SafetyPolicy.Decision.Reject -> {
                         val convId = _currentConversationId.value ?: repository.createConversation().also {
                             _currentConversationId.value = it
                         }
                         repository.persistUserMessage(convId, text.trim())
-                        // Escalate repeated violations; block the session after the threshold.
-                        val reply = when (val decision = behaviorGuard.registerBadIntent(SESSION_ID)) {
-                            is UserBehaviorGuard.BehaviorDecision.Blocked -> BLOCKED_MESSAGE
-                            else -> analysis.localResponse
-                        }
-                        repository.persistAssistantMessage(convId, reply)
+                        repository.persistAssistantMessage(convId, decision.reply)
                         return@launch
                     }
-                    EmotionAnalysis.Passed -> Unit
+                    SafetyPolicy.Decision.Allow -> Unit
                 }
 
-                // 2b) Sensitive-topic gate — religion/provocation/personal questions get a
-                //     culturally-adapted neutral reply + escalation (instead of an answer).
-                SensitiveTopicDetector.detect(text.trim())?.let { category ->
-                    val convId = _currentConversationId.value ?: repository.createConversation().also {
-                        _currentConversationId.value = it
-                    }
-                    repository.persistUserMessage(convId, text.trim())
-                    val result = intentEvaluator.handleSensitiveContent(SESSION_ID, category, cultureContext)
-                    val reply = if (result.blocked) BLOCKED_MESSAGE else result.reply
-                    repository.persistAssistantMessage(convId, reply)
-                    return@launch
-                }
-
-                // 2c) "remember …" instruction → persist the fact to Neon memory + acknowledge.
+                // 2b) "remember …" instruction → persist the fact to Neon memory + acknowledge.
                 RememberCommandDetector.detect(text.trim())?.let { remembered ->
                     val convId = _currentConversationId.value ?: repository.createConversation().also {
                         _currentConversationId.value = it
@@ -244,25 +208,31 @@ class ChatViewModel(
                     return@launch
                 }
 
-                // 3) Commands (poetry / breathing) or the normal agentic flow.
+                // 3) Greeting/small talk → direct concise answer; commands → dedicated flow;
+                //    otherwise the agentic (grounded) flow.
                 val convId = _currentConversationId.value ?: repository.createConversation().also {
                     _currentConversationId.value = it
                 }
-                when (CommandDetector.detect(text)) {
-                    Command.Poetry -> {
+                val command = CommandDetector.detect(text)
+                when {
+                    command == Command.Poetry -> {
                         launchPromptTask(convId, text, EmotionPoetry.buildPoetryPrompt(CommandDetector.poetryEmotion(text)), generation)
                         handedOffToTask = true
                     }
-                    Command.Breathing -> {
+                    command == Command.Breathing -> {
                         repository.persistUserMessage(convId, text.trim())
                         repository.persistAssistantMessage(convId, breathingGuideText())
                         return@launch
                     }
-                    Command.Email -> {
+                    command == Command.Email -> {
                         launchGmailTask(convId, text, generation)
                         handedOffToTask = true
                     }
-                    null -> {
+                    GreetingDetector.isConversational(text) -> {
+                        launchConversationalTask(convId, text, generation)
+                        handedOffToTask = true
+                    }
+                    else -> {
                         launchAgentTask(convId, text, generation)
                         handedOffToTask = true
                     }
@@ -368,6 +338,35 @@ class ChatViewModel(
     }
 
     /**
+     * Streams a direct, un-grounded answer for casual conversation (greetings/small talk).
+     * No web/knowledge search, so "hi" gets a natural short greeting instead of a dictionary
+     * explanation. Same lifecycle/cancel semantics as [launchAgentTask].
+     */
+    private fun launchConversationalTask(conversationId: Long, text: String, generation: Long) {
+        _streamingText.value = ""
+        _errorMessage.value = null
+        taskRunner.run { update ->
+            try {
+                update(TaskStatus.Running(System.currentTimeMillis(), "thinking"))
+                repository.persistUserMessage(conversationId, text)
+                val result = repository.completeWithContext(
+                    conversationId, _selectedModel.value, null
+                ) { delta -> _streamingText.value += delta }
+                _streamingText.value = ""
+                when (result) {
+                    is SendResult.Success -> update(TaskStatus.Completed(emptyList()))
+                    is SendResult.Failure -> {
+                        _errorMessage.value = result.errorCode
+                        update(TaskStatus.Failed(result.errorCode))
+                    }
+                }
+            } finally {
+                if (generation == taskGeneration) _agentBusy.value = false
+            }
+        }
+    }
+
+    /**
      * Runs a read-only Gmail inbox search and streams an answer grounded in the matching
      * messages. Same lifecycle/cancel semantics as [launchAgentTask]. A failed search (e.g. not
      * connected) contributes no sources and falls back to a direct answer.
@@ -448,6 +447,11 @@ class ChatViewModel(
         val convId = _currentConversationId.value ?: return
         if (_isLoading.value || taskStatus.value is TaskStatus.Running) return
         viewModelScope.launch {
+            // Enforce the same safety policy: a blocked session cannot retry.
+            if (behaviorGuard.isUserBlocked(SESSION_ID)) {
+                repository.persistAssistantMessage(convId, BLOCKED_MESSAGE)
+                return@launch
+            }
             _isLoading.value = true
             _errorMessage.value = null
             _streamingText.value = ""

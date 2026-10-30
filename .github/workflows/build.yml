@@ -34,8 +34,6 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
         env:
-          NEON_READ_URL: ${{ secrets.NEON_READ_URL }}
-          NEON_WRITE_URL: ${{ secrets.NEON_WRITE_URL }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
 
       - name: Upload debug APK
