@@ -60,7 +60,10 @@ class ChatRepository(
     ): SendResult {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return SendResult.Failure("empty")
-        if (apiKeyProvider() == null) return SendResult.Failure("no_key")
+        // Decrypt the key off the caller's thread — Keystore access is blocking I/O.
+        if (withContext(Dispatchers.IO) { apiKeyProvider() } == null) {
+            return SendResult.Failure("no_key")
+        }
         persistUserMessage(conversationId, trimmed)
         return completeWithContext(conversationId, model, context, onDelta)
     }

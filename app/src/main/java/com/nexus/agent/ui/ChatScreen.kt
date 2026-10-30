@@ -357,19 +357,23 @@ fun ChatScreen() {
             onDismiss = { showSettings = false },
             onSave = {
                 scope.launch {
-                    val key = keyInput.trim()
-                    if (key.isNotEmpty()) {
-                        withContext(Dispatchers.IO) { secrets.saveApiKey(key) }
+                    try {
+                        val key = keyInput.trim()
+                        if (key.isNotEmpty()) {
+                            withContext(Dispatchers.IO) { secrets.saveApiKey(key) }
+                        }
+                        withContext(Dispatchers.IO) { preferences.setSystemPrompt(systemPromptInput) }
+                        withContext(Dispatchers.IO) { preferences.setKnowledgeBaseUrl(knowledgeBaseUrlInput) }
+                        withContext(Dispatchers.IO) {
+                            saveNeonUrl(secrets, neonReadUrlInput, SecretStorageRepository.NEON_READ_URL_PREF)
+                            saveNeonUrl(secrets, neonWriteUrlInput, SecretStorageRepository.NEON_WRITE_URL_PREF)
+                        }
+                        keyInput = ""
+                        showSettings = false
+                        context.showToast(context.getString(R.string.saved))
+                    } catch (e: Exception) {
+                        context.showToast(context.getString(R.string.error_generic))
                     }
-                    withContext(Dispatchers.IO) { preferences.setSystemPrompt(systemPromptInput) }
-                    withContext(Dispatchers.IO) { preferences.setKnowledgeBaseUrl(knowledgeBaseUrlInput) }
-                    withContext(Dispatchers.IO) {
-                        saveNeonUrl(secrets, neonReadUrlInput, SecretStorageRepository.NEON_READ_URL_PREF)
-                        saveNeonUrl(secrets, neonWriteUrlInput, SecretStorageRepository.NEON_WRITE_URL_PREF)
-                    }
-                    keyInput = ""
-                    showSettings = false
-                    context.showToast(context.getString(R.string.saved))
                 }
             }
         )
@@ -382,10 +386,14 @@ private suspend fun saveNeonUrl(
     prefName: String
 ) {
     val trimmed = raw.trim()
-    if (trimmed.isNotEmpty() && NeonConnectionParser.parse(trimmed) != null) {
-        secrets.saveSecret(prefName, trimmed)
-    } else {
-        secrets.clearSecret(prefName)
+    val parsed = NeonConnectionParser.parse(trimmed)
+    when {
+        // Store the NORMALIZED jdbc:postgresql:// URL so pgjdbc's acceptsURL() recognizes it —
+        // the raw Neon-console URI form (postgresql://…) would otherwise fail to connect.
+        parsed != null -> secrets.saveSecret(prefName, parsed.jdbcUrl)
+        // Only a truly blank field clears the secret; invalid input leaves the old value intact.
+        trimmed.isEmpty() -> secrets.clearSecret(prefName)
+        else -> Unit
     }
 }
 

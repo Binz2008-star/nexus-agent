@@ -5,6 +5,7 @@ import com.nexus.agent.domain.neon.NeonMemoryItem
 import com.nexus.agent.domain.neon.SecondBrainSql
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.domain.tool.KnowledgeTool
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -43,6 +44,8 @@ class NeonRepository(
                 )
                 val merged = (chunks + memory).sortedByDescending { it.score }.take(clamped)
                 KnowledgeSearchResult.Success(trimmed, merged)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 KnowledgeSearchResult.Failure(SecondBrainSql.errorCode(e))
             }
@@ -55,6 +58,8 @@ class NeonRepository(
                 val url = writeUrl() ?: return@withContext Result.failure(notConfigured())
                 jdbc.execute(url, SecondBrainSql.INSERT_CONVERSATION_SQL, listOf(sessionId, role, content))
                 Result.success(Unit)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -69,6 +74,8 @@ class NeonRepository(
                     listOf(type, content, SecondBrainSql.tagsLiteral(tags))
                 )
                 Result.success(Unit)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -81,6 +88,8 @@ class NeonRepository(
                 val clamped = limit.coerceIn(1, 200)
                 val rows = jdbc.query(url, SecondBrainSql.SELECT_MEMORY_SQL, listOf(clamped), SecondBrainSql::mapMemoryItemRow)
                 Result.success(rows)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }
