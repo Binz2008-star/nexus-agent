@@ -38,6 +38,7 @@ class ChatRepositoryTest {
 
     private class FakeClient(private val replies: List<Result<String>>) : ChatCompletionClient {
         var calls = 0
+        var lastHistory: List<ChatMessage> = emptyList()
         override suspend fun complete(history: List<ChatMessage>, model: String): Result<String> {
             val r = replies.getOrElse(calls) { Result.failure(Exception("no more")) }
             calls++
@@ -48,6 +49,7 @@ class ChatRepositoryTest {
             model: String,
             onDelta: suspend (String) -> Unit
         ): Result<String> {
+            lastHistory = history
             val r = complete(history, model)
             if (r.isSuccess) onDelta(r.getOrThrow())
             return r
@@ -92,5 +94,32 @@ class ChatRepositoryTest {
         val result = r.sendMessageStream(1L, "   ", "deepseek-flash") { }
         assertTrue(result is SendResult.Failure)
         assertEquals(0, dao.getByConversationOnce(1L).size)
+    }
+
+    @Test
+    fun nameSafetyPromptIsAlwaysInjectedFirst() = runBlocking {
+        val dao = FakeDao()
+        val client = FakeClient(listOf(Result.success("ok")))
+        val r = repo(dao, client)
+        r.sendMessageStream(1L, "what's my name?", "deepseek-flash") { }
+        val history = client.lastHistory
+        assertTrue(history.isNotEmpty())
+        assertEquals(ChatMessage.Role.SYSTEM, history.first().role)
+        assertTrue(history.first().text.contains("Do not assume"))
+        assertTrue(history.first().text.contains("لا تفترض"))
+    }
+
+    @Test
+    fun customPromptIsIncludedAfterNameSafety() = runBlocking {
+        val dao = FakeDao()
+        val client = FakeClient(listOf(Result.success("ok")))
+        val r = ChatRepository(dao, FakeConversationDao(), client, { "key" }, { "custom prompt" })
+        r.sendMessageStream(1L, "hi", "deepseek-flash") { }
+        val history = client.lastHistory
+        assertTrue(history.size >= 2)
+        assertEquals(ChatMessage.Role.SYSTEM, history[0].role)
+        assertTrue(history[0].text.contains("Do not assume"))
+        assertEquals(ChatMessage.Role.SYSTEM, history[1].role)
+        assertEquals("custom prompt", history[1].text)
     }
 }

@@ -137,12 +137,14 @@ class ChatRepository(
         retryCompletionStream(0L, model) { }
 
     private suspend fun buildHistoryWithSystem(history: List<ChatMessage>): List<ChatMessage> {
-        val prompt = systemPromptProvider().trim()
-        return if (prompt.isEmpty()) {
-            history
-        } else {
-            listOf(ChatMessage(ChatMessage.Role.SYSTEM, prompt)) + history
+        val customPrompt = systemPromptProvider().trim()
+        val systemMessages = buildList {
+            add(ChatMessage(ChatMessage.Role.SYSTEM, NAME_SAFETY_PROMPT))
+            if (customPrompt.isNotEmpty()) {
+                add(ChatMessage(ChatMessage.Role.SYSTEM, customPrompt))
+            }
         }
+        return systemMessages + history
     }
 
     private fun safeErrorCode(e: Throwable): String {
@@ -158,6 +160,22 @@ class ChatRepository(
             msg.contains("DeepSeek API error") -> "api_${msg.filter { it.isDigit() }.take(3)}"
             else -> "generic:${e.javaClass.simpleName}"
         }
+    }
+
+    companion object {
+        /**
+         * Mandatory system instruction injected on every request. Prevents the model from
+         * hallucinating or reusing a user name it was never explicitly given in the current
+         * conversation.
+         */
+        const val NAME_SAFETY_PROMPT =
+            "CRITICAL: Do not assume the user's name, gender, or location. If you do not " +
+                "know the user's name, do not use any name. If the user corrects you, " +
+                "immediately apologize, forget the old name, and continue without that name " +
+                "unless the user gives you a new one.\n\n" +
+                "حرج: لا تفترض اسم المستخدم أو جنسه أو موقعه. إذا كنت لا تعرف اسم المستخدم، لا " +
+                "تستخدم أي اسم. إذا صحّحك المستخدم، اعتذر فورًا، وانسَ الاسم القديم، وتابع " +
+                "دون هذا الاسم إلا إذا أعطاك المستخدم اسمًا جديدًا."
     }
 }
 
