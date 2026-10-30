@@ -44,32 +44,60 @@ class ChatRepository(
         conversationId: Long,
         text: String,
         model: String,
+        onDelta: suspend (String) -> Unit,
+        context: String? = null
+    ): SendResult {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return SendResult.Failure("empty")
+        if (apiKeyProvider() == null) return SendResult.Failure("no_key")
+        persistUserMessage(conversationId, trimmed)
+        return completeWithContext(conversationId, model, context, onDelta)
+    }
+
+    /**
+     * Persists the user message immediately so it appears in the UI before any slow tool
+     * step runs. Used by the agentic flow, which separates "persist user message" from
+     * "run tool, then stream an answer grounded in the excerpts".
+     */
+    suspend fun persistUserMessage(conversationId: Long, text: String) {
+        withContext(Dispatchers.IO) {
+            val trimmed = text.trim()
+            if (trimmed.isEmpty()) return@withContext
+
+            val userEntity = MessageEntity.fromDomain(
+                ChatMessage(ChatMessage.Role.USER, trimmed),
+                conversationId
+            )
+            messageDao.insert(userEntity)
+
+            val existing = messageDao.getByConversationOnce(conversationId)
+            if (existing.size == 1) {
+                val shortTitle = trimmed.take(36).let { if (trimmed.length > 36) "$it…" else it }
+                conversationDao.updateTitleAndTimestamp(conversationId, shortTitle, System.currentTimeMillis())
+            } else {
+                conversationDao.updateTitleAndTimestamp(
+                    conversationId,
+                    existing.firstOrNull()?.text?.take(36) ?: "Chat",
+                    System.currentTimeMillis()
+                )
+            }
+        }
+    }
+
+    /**
+     * Streams a completion against the existing conversation history (which must already
+     * include the user message), optionally grounding the answer in [context] (tool excerpts).
+     */
+    suspend fun completeWithContext(
+        conversationId: Long,
+        model: String,
+        context: String?,
         onDelta: suspend (String) -> Unit
     ): SendResult = withContext(Dispatchers.IO) {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) return@withContext SendResult.Failure("empty")
         if (apiKeyProvider() == null) return@withContext SendResult.Failure("no_key")
 
-        val userEntity = MessageEntity.fromDomain(
-            ChatMessage(ChatMessage.Role.USER, trimmed),
-            conversationId
-        )
-        messageDao.insert(userEntity)
-
-        val existing = messageDao.getByConversationOnce(conversationId)
-        if (existing.size == 1) {
-            val shortTitle = trimmed.take(36).let { if (trimmed.length > 36) "$it…" else it }
-            conversationDao.updateTitleAndTimestamp(conversationId, shortTitle, System.currentTimeMillis())
-        } else {
-            conversationDao.updateTitleAndTimestamp(
-                conversationId,
-                existing.firstOrNull()?.text?.take(36) ?: "Chat",
-                System.currentTimeMillis()
-            )
-        }
-
         val history = messageDao.getByConversationOnce(conversationId).map { it.toDomain() }
-        val fullHistory = buildHistoryWithSystem(history)
+        val fullHistory = buildHistoryWithSystem(history, context)
 
         try {
             val result = client.completeStream(fullHistory, model, onDelta)
@@ -136,12 +164,18 @@ class ChatRepository(
     suspend fun retryCompletion(model: String): SendResult =
         retryCompletionStream(0L, model) { }
 
-    private suspend fun buildHistoryWithSystem(history: List<ChatMessage>): List<ChatMessage> {
+    private suspend fun buildHistoryWithSystem(
+        history: List<ChatMessage>,
+        context: String? = null
+    ): List<ChatMessage> {
         val customPrompt = systemPromptProvider().trim()
         val systemMessages = buildList {
             add(ChatMessage(ChatMessage.Role.SYSTEM, NAME_SAFETY_PROMPT))
             if (customPrompt.isNotEmpty()) {
                 add(ChatMessage(ChatMessage.Role.SYSTEM, customPrompt))
+            }
+            if (!context.isNullOrBlank()) {
+                add(ChatMessage(ChatMessage.Role.SYSTEM, context))
             }
         }
         return systemMessages + history

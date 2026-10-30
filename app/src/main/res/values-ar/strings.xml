@@ -43,4 +43,7 @@
     <string name="knowledge_base_url">رابط قاعدة المعرفة</string>
     <string name="web_search">بحث الويب</string>
     <string name="web_search_placeholder">ابحث في الويب…</string>
+    <string name="working_for">يعمل منذ %1$d ثانية</string>
+    <string name="stage_searching">جارٍ البحث…</string>
+    <string name="sources">المصادر</string>
 </resources>

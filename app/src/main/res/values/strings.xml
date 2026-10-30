@@ -43,4 +43,7 @@
     <string name="knowledge_base_url">Knowledge base URL</string>
     <string name="web_search">Web search</string>
     <string name="web_search_placeholder">Search the web…</string>
+    <string name="working_for">Working for %1$ds</string>
+    <string name="stage_searching">Searching…</string>
+    <string name="sources">Sources</string>
 </resources>

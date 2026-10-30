@@ -1,6 +1,8 @@
 package com.nexus.agent.data.network
 
 import com.nexus.agent.domain.model.ChatMessage
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -89,6 +91,7 @@ class DeepSeekClient(
                 val full = StringBuilder()
                 body.source().use { source ->
                     while (!source.exhausted()) {
+                        currentCoroutineContext().ensureActive()
                         val line = source.readUtf8Line() ?: break
                         if (line.isBlank() || !line.startsWith("data:")) continue
                         val data = line.removePrefix("data:").trim()
