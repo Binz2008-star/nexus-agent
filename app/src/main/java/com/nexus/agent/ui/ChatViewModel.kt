@@ -13,6 +13,9 @@ import com.nexus.agent.domain.cognitive.CognitiveLoadManager
 import com.nexus.agent.domain.emotion.EmotionAnalysis
 import com.nexus.agent.domain.emotion.EmotionAnalyzer
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.persona.Emotion
+import com.nexus.agent.domain.persona.EmotionPoetry
+import com.nexus.agent.domain.safety.UserBehaviorGuard
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.domain.tool.KnowledgeTool
 import com.nexus.agent.domain.tool.TaskStatus
@@ -21,6 +24,8 @@ import com.nexus.agent.domain.tool.ToolResult
 import com.nexus.agent.domain.tool.WebSearchOutcome
 import com.nexus.agent.domain.tool.WebSearchTool
 import com.nexus.agent.domain.tool.buildContextPrompt
+import com.nexus.agent.domain.wellness.BreathingCompanion
+import com.nexus.agent.domain.wellness.BreathingPattern
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -81,6 +86,9 @@ class ChatViewModel(
     // "retry" re-grounds instead of silently falling back to a direct answer.
     @Volatile
     private var lastContext: String? = null
+
+    // Escalating safety guard: blocks the session after repeated policy violations.
+    private val behaviorGuard = UserBehaviorGuard()
 
     init {
         // Restore the last-used model across restarts.
@@ -181,18 +189,36 @@ class ChatViewModel(
                             _currentConversationId.value = it
                         }
                         repository.persistUserMessage(convId, text.trim())
-                        repository.persistAssistantMessage(convId, analysis.localResponse)
+                        // Escalate repeated violations; block the session after the threshold.
+                        val reply = when (val decision = behaviorGuard.registerBadIntent(SESSION_ID)) {
+                            is UserBehaviorGuard.BehaviorDecision.Blocked -> BLOCKED_MESSAGE
+                            else -> analysis.localResponse
+                        }
+                        repository.persistAssistantMessage(convId, reply)
                         return@launch
                     }
                     EmotionAnalysis.Passed -> Unit
                 }
 
-                // 3) Normal agentic flow (persist → search → grounded answer via the router).
+                // 3) Commands (poetry / breathing) or the normal agentic flow.
                 val convId = _currentConversationId.value ?: repository.createConversation().also {
                     _currentConversationId.value = it
                 }
-                launchAgentTask(convId, text)
-                handedOffToTask = true
+                when (detectCommand(text)) {
+                    Command.Poetry -> {
+                        launchPromptTask(convId, text, EmotionPoetry.buildPoetryPrompt(Emotion.NEUTRAL))
+                        handedOffToTask = true
+                    }
+                    Command.Breathing -> {
+                        repository.persistUserMessage(convId, text.trim())
+                        repository.persistAssistantMessage(convId, breathingGuideText())
+                        return@launch
+                    }
+                    null -> {
+                        launchAgentTask(convId, text)
+                        handedOffToTask = true
+                    }
+                }
             } finally {
                 // Clear the re-entry guard on every path that did NOT hand off to the
                 // BackgroundTaskRunner (whose own finally clears it). This also covers
@@ -248,6 +274,56 @@ class ChatViewModel(
             } finally {
                 _agentBusy.value = false
             }
+        }
+    }
+
+    /**
+     * Streams an answer using a fixed instruction [prompt] (e.g. poetry) instead of web search.
+     * Same lifecycle/cancel semantics as [launchAgentTask].
+     */
+    private fun launchPromptTask(conversationId: Long, text: String, prompt: String) {
+        _streamingText.value = ""
+        _errorMessage.value = null
+        taskRunner.run { update ->
+            try {
+                update(TaskStatus.Running(System.currentTimeMillis(), "thinking"))
+                repository.persistUserMessage(conversationId, text)
+                val result = repository.completeWithContext(
+                    conversationId, _selectedModel.value, prompt
+                ) { delta -> _streamingText.value += delta }
+                _streamingText.value = ""
+                when (result) {
+                    is SendResult.Success -> update(TaskStatus.Completed(emptyList()))
+                    is SendResult.Failure -> {
+                        _errorMessage.value = result.errorCode
+                        update(TaskStatus.Failed(result.errorCode))
+                    }
+                }
+            } finally {
+                _agentBusy.value = false
+            }
+        }
+    }
+
+    private enum class Command { Poetry, Breathing }
+
+    private fun detectCommand(text: String): Command? {
+        val t = text.trim().lowercase()
+        return when {
+            t.contains("قصيدة") || t.contains("شعر") || t.contains("poem") || t.contains("poetry") -> Command.Poetry
+            t.contains("تنفس") || t.contains("تنفّس") || t.contains("breathe") || t.contains("breathing") -> Command.Breathing
+            else -> null
+        }
+    }
+
+    private fun breathingGuideText(): String {
+        val guide = BreathingCompanion.buildGuide(BreathingPattern.RELAXING, "ar")
+        return buildString {
+            appendLine(guide.startInstruction)
+            for (phase in guide.phases) {
+                appendLine("${phase.instruction} (${phase.durationSeconds} ثوانٍ)")
+            }
+            append(guide.completeInstruction)
         }
     }
 
@@ -351,5 +427,9 @@ class ChatViewModel(
         private const val DEFAULT_TOP_K = 8
         private const val DEFAULT_COUNT = 10
         private const val TOOL_WEB_SEARCH = "web_search"
+        // Single-user app: a fixed session id scopes the behavior guard to this install.
+        private const val SESSION_ID = "default"
+        private const val BLOCKED_MESSAGE =
+            "تم تجاوز الحد المسموح من المحاولات المخالفة. تم إيقاف الردود مؤقتًا، حاول لاحقًا."
     }
 }
