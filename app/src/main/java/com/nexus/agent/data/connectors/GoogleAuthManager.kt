@@ -227,16 +227,21 @@ class GoogleAuthManager(
         }
 
     /** Extracts the `email` claim from an OIDC id_token (JWT payload is not signature-verified here). */
-    private fun emailFromIdToken(idToken: String): String? = try {
-        val parts = idToken.split(".")
-        if (parts.size < 2) return null
-        val payload = String(
-            Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP),
-            Charsets.UTF_8
-        )
-        json.parseToJsonElement(payload).jsonObject["email"]?.jsonPrimitive?.content
-    } catch (e: Exception) {
-        null
+    private fun emailFromIdToken(idToken: String): String? {
+        return try {
+            val parts = idToken.split(".")
+            if (parts.size < 2) {
+                null
+            } else {
+                val payload = String(
+                    Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP),
+                    Charsets.UTF_8
+                )
+                json.parseToJsonElement(payload).jsonObject["email"]?.jsonPrimitive?.content
+            }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private val serviceConfig: AuthorizationServiceConfiguration by lazy {
