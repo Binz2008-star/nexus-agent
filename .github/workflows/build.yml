@@ -33,6 +33,9 @@ jobs:
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
+        env:
+          NEON_READ_URL: ${{ secrets.NEON_READ_URL }}
+          NEON_WRITE_URL: ${{ secrets.NEON_WRITE_URL }}
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

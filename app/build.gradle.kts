@@ -18,6 +18,11 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Neon connection defaults, injected at CI build time from GitHub Actions secrets so
+        // the credentials never live in git. Empty when not provided (local builds).
+        buildConfigField("String", "NEON_READ_URL_DEFAULT", "\"${System.getenv("NEON_READ_URL") ?: ""}\"")
+        buildConfigField("String", "NEON_WRITE_URL_DEFAULT", "\"${System.getenv("NEON_WRITE_URL") ?: ""}\"")
     }
 
     signingConfigs {
@@ -54,6 +59,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {

@@ -60,6 +60,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.nexus.agent.BuildConfig
 import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
@@ -150,13 +151,13 @@ fun ChatScreen() {
             readUrlProvider = {
                 when (val r = secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF)) {
                     is ApiKeyReadResult.Present -> r.value
-                    else -> null
+                    else -> BuildConfig.NEON_READ_URL_DEFAULT.ifBlank { null }
                 }
             },
             writeUrlProvider = {
                 when (val r = secrets.readSecret(SecretStorageRepository.NEON_WRITE_URL_PREF)) {
                     is ApiKeyReadResult.Present -> r.value
-                    else -> null
+                    else -> BuildConfig.NEON_WRITE_URL_DEFAULT.ifBlank { null }
                 }
             },
             jdbc = NeonJdbcClient()
