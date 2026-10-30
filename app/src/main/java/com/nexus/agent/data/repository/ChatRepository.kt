@@ -207,6 +207,7 @@ class ChatRepository(
         val persona = personaProvider()?.trim()
         val systemMessages = buildList {
             add(ChatMessage(ChatMessage.Role.SYSTEM, NAME_SAFETY_PROMPT))
+            add(ChatMessage(ChatMessage.Role.SYSTEM, IDENTITY_PROMPT))
             if (customPrompt.isNotEmpty()) {
                 add(ChatMessage(ChatMessage.Role.SYSTEM, customPrompt))
             }
@@ -249,6 +250,23 @@ class ChatRepository(
                 "حرج: لا تفترض اسم المستخدم أو جنسه أو موقعه. إذا كنت لا تعرف اسم المستخدم، لا " +
                 "تستخدم أي اسم. إذا صحّحك المستخدم، اعتذر فورًا، وانسَ الاسم القديم، وتابع " +
                 "دون هذا الاسم إلا إذا أعطاك المستخدم اسمًا جديدًا."
+
+        /**
+         * NEXUS identity + capabilities. Injected on every request so the model answers as
+         * NEXUS Agent (a local assistant with specific tools) instead of a generic assistant.
+         */
+        const val IDENTITY_PROMPT =
+            "أنت NEXUS Agent، مساعد ذكي محلي يعمل على جهاز المستخدم. قدراتك:\n" +
+                "- البحث في الويب للإجابة بمعلومات حديثة مع ذكر المصادر.\n" +
+                "- توليد شعر عاطفي عند طلب المستخدم.\n" +
+                "- توجيه تمارين التنفس والاسترخاء.\n" +
+                "- التحدث باللهجات العربية المختلفة وبأسلوب ودود ومتعاطف.\n" +
+                "أنت لست مساعدًا عامًا؛ أجب بثقة كمساعد NEXUS عند سؤالك عن هويتك أو خدماتك.\n\n" +
+                "You are NEXUS Agent, a local intelligent assistant running on the user's device. " +
+                "Your capabilities: search the web with cited sources, generate emotional poetry, " +
+                "guide breathing and relaxation exercises, and speak various Arabic dialects in a " +
+                "friendly, empathetic tone. Answer confidently as NEXUS Agent when asked about " +
+                "your identity or services."
     }
 }
 

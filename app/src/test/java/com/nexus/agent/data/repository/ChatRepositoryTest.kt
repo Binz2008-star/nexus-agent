@@ -110,17 +110,29 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun identityPromptIsInjectedAfterNameSafety() = runBlocking {
+        val dao = FakeDao()
+        val client = FakeClient(listOf(Result.success("ok")))
+        val r = repo(dao, client)
+        r.sendMessageStream(1L, "hi", "deepseek-flash") { }
+        val history = client.lastHistory
+        assertTrue(history.size >= 2)
+        assertEquals(ChatMessage.Role.SYSTEM, history[1].role)
+        assertTrue(history[1].text.contains("NEXUS Agent"))
+    }
+
+    @Test
     fun customPromptIsIncludedAfterNameSafety() = runBlocking {
         val dao = FakeDao()
         val client = FakeClient(listOf(Result.success("ok")))
         val r = ChatRepository(dao, FakeConversationDao(), client, { "key" }, { "custom prompt" })
         r.sendMessageStream(1L, "hi", "deepseek-flash") { }
         val history = client.lastHistory
-        assertTrue(history.size >= 2)
+        assertTrue(history.size >= 3)
         assertEquals(ChatMessage.Role.SYSTEM, history[0].role)
         assertTrue(history[0].text.contains("Do not assume"))
-        assertEquals(ChatMessage.Role.SYSTEM, history[1].role)
-        assertEquals("custom prompt", history[1].text)
+        assertEquals(ChatMessage.Role.SYSTEM, history[2].role)
+        assertEquals("custom prompt", history[2].text)
     }
 
     @Test
@@ -133,11 +145,13 @@ class ChatRepositoryTest {
         assertEquals(ChatMessage.Role.SYSTEM, history[0].role)
         assertTrue(history[0].text.contains("Do not assume"))
         assertEquals(ChatMessage.Role.SYSTEM, history[1].role)
-        assertEquals("custom prompt", history[1].text)
+        assertTrue(history[1].text.contains("NEXUS Agent"))
         assertEquals(ChatMessage.Role.SYSTEM, history[2].role)
-        assertEquals("grounding-excerpts", history[2].text)
-        assertEquals(ChatMessage.Role.USER, history[3].role)
-        assertEquals("hi", history[3].text)
+        assertEquals("custom prompt", history[2].text)
+        assertEquals(ChatMessage.Role.SYSTEM, history[3].role)
+        assertEquals("grounding-excerpts", history[3].text)
+        assertEquals(ChatMessage.Role.USER, history[4].role)
+        assertEquals("hi", history[4].text)
     }
 
     @Test
@@ -152,8 +166,8 @@ class ChatRepositoryTest {
         val history = client.lastHistory
         assertEquals(ChatMessage.Role.SYSTEM, history[0].role)
         assertTrue(history[0].text.contains("Do not assume"))
-        assertEquals("custom prompt", history[1].text)
-        assertEquals("respond in Gulf Arabic with a friendly tone", history[2].text)
-        assertEquals(ChatMessage.Role.USER, history[3].role)
+        assertEquals("custom prompt", history[2].text)
+        assertEquals("respond in Gulf Arabic with a friendly tone", history[3].text)
+        assertEquals(ChatMessage.Role.USER, history[4].role)
     }
 }
