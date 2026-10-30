@@ -26,7 +26,7 @@ class IntentRule(
     val category: String,
     val response: String,
     keywords: List<String> = emptyList(),
-    patterns: List<Regex> = emptyList()
+    val patterns: List<Regex> = emptyList()
 ) {
     private val keywordMatcher: Regex? = buildKeywordRegex(keywords)
 
