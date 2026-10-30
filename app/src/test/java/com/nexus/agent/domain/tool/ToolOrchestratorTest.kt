@@ -41,6 +41,18 @@ class ToolOrchestratorTest {
     }
 
     @Test
+    fun blockedToolsReturnBlocked() = runBlocking {
+        val tool = FakeTool(result = ToolResult.Success("x"))
+        val orch = ToolOrchestrator(mapOf("shell" to tool, "fake" to tool))
+        for (blocked in ToolOrchestrator.BLOCKED_TOOLS) {
+            val result = orch.execute(blocked, buildJsonObject { })
+            assertTrue("$blocked should be Blocked", result is ToolResult.Blocked)
+        }
+        // Even if a blocked tool name is somehow registered, it must never execute.
+        assertEquals(0, tool.calls)
+    }
+
+    @Test
     fun listsToolNames() {
         val orch = ToolOrchestrator(mapOf("a" to FakeTool("a", ToolResult.Success("x"))))
         assertTrue(orch.toolNames().contains("a"))

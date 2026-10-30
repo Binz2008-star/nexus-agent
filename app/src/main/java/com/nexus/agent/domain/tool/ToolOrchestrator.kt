@@ -21,11 +21,18 @@ sealed interface TaskStatus {
 class ToolOrchestrator(private val tools: Map<String, Tool>) {
 
     suspend fun execute(toolName: String, input: JsonObject): ToolResult {
+        // Task-execution/mutation tools are explicitly blocked (never registered, never run).
+        if (toolName in BLOCKED_TOOLS) return ToolResult.Blocked("Blocked tool: $toolName")
         val tool = tools[toolName] ?: return ToolResult.Failure("unknown_tool")
         return tool.execute(input)
     }
 
     fun toolNames(): Set<String> = tools.keys
+
+    companion object {
+        /** Tools that must never execute, even if the model requests them. */
+        val BLOCKED_TOOLS = setOf("agent_task", "apply_patch", "replace_block", "shell")
+    }
 }
 
 /**
