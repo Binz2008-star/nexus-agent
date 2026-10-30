@@ -45,7 +45,8 @@ object SensitiveTopicDetector {
             .filter { it.isNotEmpty() }
             .map { keyword ->
                 val escaped = Regex.escape(keyword)
-                "(?<![\\p{L}\\p{N}_])(?:$escaped)(?![\\p{L}\\p{N}_])"
+                // Allow the Arabic definite article (ال and its proclitic forms) before the keyword.
+                "(?<![\\p{L}\\p{N}_])(?:ال|بال|وال|فال|كال|لل)?(?:$escaped)(?![\\p{L}\\p{N}_])"
             }
             .distinct()
             .toList()
