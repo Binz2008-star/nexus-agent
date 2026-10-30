@@ -122,4 +122,21 @@ class ChatRepositoryTest {
         assertEquals(ChatMessage.Role.SYSTEM, history[1].role)
         assertEquals("custom prompt", history[1].text)
     }
+
+    @Test
+    fun contextIsInjectedAfterCustomPromptBeforeUserMessage() = runBlocking {
+        val dao = FakeDao()
+        val client = FakeClient(listOf(Result.success("ok")))
+        val r = ChatRepository(dao, FakeConversationDao(), client, { "key" }, { "custom prompt" })
+        r.sendMessageStream(1L, "hi", "deepseek-flash", "grounding-excerpts") { }
+        val history = client.lastHistory
+        assertEquals(ChatMessage.Role.SYSTEM, history[0].role)
+        assertTrue(history[0].text.contains("Do not assume"))
+        assertEquals(ChatMessage.Role.SYSTEM, history[1].role)
+        assertEquals("custom prompt", history[1].text)
+        assertEquals(ChatMessage.Role.SYSTEM, history[2].role)
+        assertEquals("grounding-excerpts", history[2].text)
+        assertEquals(ChatMessage.Role.USER, history[3].role)
+        assertEquals("hi", history[3].text)
+    }
 }

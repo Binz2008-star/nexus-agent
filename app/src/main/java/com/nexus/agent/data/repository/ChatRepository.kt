@@ -126,6 +126,7 @@ class ChatRepository(
     suspend fun retryCompletionStream(
         conversationId: Long,
         model: String,
+        context: String? = null,
         onDelta: suspend (String) -> Unit
     ): SendResult = withContext(Dispatchers.IO) {
         if (apiKeyProvider() == null) return@withContext SendResult.Failure("no_key")
@@ -133,7 +134,7 @@ class ChatRepository(
         if (history.isEmpty() || history.last().role != ChatMessage.Role.USER) {
             return@withContext SendResult.Failure("nothing_to_retry")
         }
-        val fullHistory = buildHistoryWithSystem(history)
+        val fullHistory = buildHistoryWithSystem(history, context)
         try {
             val result = client.completeStream(fullHistory, model, onDelta)
             result.fold(

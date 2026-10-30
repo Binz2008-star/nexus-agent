@@ -45,4 +45,26 @@ class ToolOrchestratorTest {
         val orch = ToolOrchestrator(mapOf("a" to FakeTool("a", ToolResult.Success("x"))))
         assertTrue(orch.toolNames().contains("a"))
     }
+
+    @Test
+    fun buildContextPromptIncludesEachSourceTitleAndSnippet() {
+        val prompt = buildContextPrompt(
+            listOf(
+                ToolSource("a.md", snippet = "excerpt A"),
+                ToolSource("b.md", snippet = "excerpt B")
+            )
+        )
+        assertTrue(prompt.contains("Source: a.md"))
+        assertTrue(prompt.contains("excerpt A"))
+        assertTrue(prompt.contains("Source: b.md"))
+        assertTrue(prompt.contains("excerpt B"))
+        assertTrue(prompt.contains("Cite sources"))
+    }
+
+    @Test
+    fun buildContextPromptEmptySourcesHasNoSourceLines() {
+        val prompt = buildContextPrompt(emptyList())
+        assertTrue(prompt.contains("excerpts"))
+        assertTrue(!prompt.contains("Source:"))
+    }
 }

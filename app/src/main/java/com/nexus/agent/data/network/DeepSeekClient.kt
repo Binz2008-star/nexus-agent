@@ -1,6 +1,7 @@
 package com.nexus.agent.data.network
 
 import com.nexus.agent.domain.model.ChatMessage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.encodeToString
@@ -114,6 +115,8 @@ class DeepSeekClient(
                     Result.success(full.toString())
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }

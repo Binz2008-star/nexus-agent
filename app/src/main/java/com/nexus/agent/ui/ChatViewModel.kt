@@ -67,6 +67,15 @@ class ChatViewModel(
     private val taskRunner = BackgroundTaskRunner()
     val taskStatus: StateFlow<TaskStatus> = taskRunner.status
 
+    // Re-entry guard so a rapid second send can't create a second conversation while
+    // the first is still creating its own. Set atomically on the UI thread, cleared on task end.
+    private val _agentBusy = MutableStateFlow(false)
+
+    // Last grounding context (tool excerpts) used by the most recent agentic answer, so
+    // "retry" re-grounds instead of silently falling back to a direct answer.
+    @Volatile
+    private var lastContext: String? = null
+
     init {
         // Restore the last-used model across restarts.
         viewModelScope.launch {
@@ -140,57 +149,60 @@ class ChatViewModel(
      */
     fun sendMessageWithAgent(text: String) {
         if (text.isBlank()) return
-        val convId = _currentConversationId.value
-        if (convId == null) {
-            viewModelScope.launch {
-                val id = repository.createConversation()
-                _currentConversationId.value = id
-                launchAgentTask(id, text)
+        if (!_agentBusy.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            val convId = _currentConversationId.value ?: repository.createConversation().also {
+                _currentConversationId.value = it
             }
-            return
+            launchAgentTask(convId, text)
         }
-        launchAgentTask(convId, text)
     }
 
     fun cancelTask() {
         taskRunner.cancel()
         _streamingText.value = ""
+        _agentBusy.value = false
     }
 
     private fun launchAgentTask(conversationId: Long, text: String) {
         _streamingText.value = ""
         _errorMessage.value = null
         taskRunner.run { update ->
-            val startedAt = System.currentTimeMillis()
-            update(TaskStatus.Running(startedAt, "searching"))
-            repository.persistUserMessage(conversationId, text)
+            try {
+                val startedAt = System.currentTimeMillis()
+                update(TaskStatus.Running(startedAt, "searching"))
+                repository.persistUserMessage(conversationId, text)
 
-            val input = buildJsonObject {
-                put("query", JsonPrimitive(text.trim()))
-                put("top_k", JsonPrimitive("5"))
-            }
-            val toolResult = toolOrchestrator.execute(TOOL_KNOWLEDGE_SEARCH, input)
-            if (toolResult is ToolResult.Blocked) {
-                _errorMessage.value = toolResult.reason
-                update(TaskStatus.Failed("blocked"))
-                return@run
-            }
-
-            val sources = (toolResult as? ToolResult.Success)?.sources.orEmpty()
-            val context = if (sources.isEmpty()) null else buildContextPrompt(sources)
-
-            update(TaskStatus.Running(startedAt, "thinking"))
-            val result = repository.completeWithContext(
-                conversationId, _selectedModel.value, context
-            ) { delta -> _streamingText.value += delta }
-            _streamingText.value = ""
-
-            when (result) {
-                is SendResult.Success -> update(TaskStatus.Completed(sources))
-                is SendResult.Failure -> {
-                    _errorMessage.value = result.errorCode
-                    update(TaskStatus.Failed(result.errorCode))
+                val input = buildJsonObject {
+                    put("query", JsonPrimitive(text.trim()))
+                    put("top_k", JsonPrimitive("5"))
                 }
+                val toolResult = toolOrchestrator.execute(TOOL_KNOWLEDGE_SEARCH, input)
+                if (toolResult is ToolResult.Blocked) {
+                    _errorMessage.value = toolResult.reason
+                    update(TaskStatus.Failed("blocked"))
+                    return@run
+                }
+
+                val sources = (toolResult as? ToolResult.Success)?.sources.orEmpty()
+                val context = if (sources.isEmpty()) null else buildContextPrompt(sources)
+                lastContext = context
+
+                update(TaskStatus.Running(startedAt, "thinking"))
+                val result = repository.completeWithContext(
+                    conversationId, _selectedModel.value, context
+                ) { delta -> _streamingText.value += delta }
+                _streamingText.value = ""
+
+                when (result) {
+                    is SendResult.Success -> update(TaskStatus.Completed(sources))
+                    is SendResult.Failure -> {
+                        _errorMessage.value = result.errorCode
+                        update(TaskStatus.Failed(result.errorCode))
+                    }
+                }
+            } finally {
+                _agentBusy.value = false
             }
         }
     }
@@ -202,7 +214,7 @@ class ChatViewModel(
             _isLoading.value = true
             _errorMessage.value = null
             _streamingText.value = ""
-            when (val result = repository.retryCompletionStream(convId, _selectedModel.value) { delta ->
+            when (val result = repository.retryCompletionStream(convId, _selectedModel.value, lastContext) { delta ->
                 _streamingText.value += delta
             }) {
                 is SendResult.Success -> {}
