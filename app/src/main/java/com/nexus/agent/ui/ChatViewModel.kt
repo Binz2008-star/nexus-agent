@@ -13,8 +13,11 @@ import com.nexus.agent.domain.cognitive.CognitiveLoadManager
 import com.nexus.agent.domain.emotion.EmotionAnalysis
 import com.nexus.agent.domain.emotion.EmotionAnalyzer
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.culture.CultureContext
 import com.nexus.agent.domain.persona.Emotion
 import com.nexus.agent.domain.persona.EmotionPoetry
+import com.nexus.agent.domain.safety.IntentEvaluator
+import com.nexus.agent.domain.safety.SensitiveTopicDetector
 import com.nexus.agent.domain.safety.UserBehaviorGuard
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.domain.tool.KnowledgeTool
@@ -89,6 +92,7 @@ class ChatViewModel(
 
     // Escalating safety guard: blocks the session after repeated policy violations.
     private val behaviorGuard = UserBehaviorGuard()
+    private val intentEvaluator = IntentEvaluator(behaviorGuard)
 
     init {
         // Restore the last-used model across restarts.
@@ -198,6 +202,18 @@ class ChatViewModel(
                         return@launch
                     }
                     EmotionAnalysis.Passed -> Unit
+                }
+
+                // 2b) Sensitive-topic gate — religion/provocation/personal questions get a
+                //     culturally-adapted neutral reply + escalation (instead of an answer).
+                SensitiveTopicDetector.detect(text.trim())?.let { category ->
+                    val convId = _currentConversationId.value ?: repository.createConversation().also {
+                        _currentConversationId.value = it
+                    }
+                    repository.persistUserMessage(convId, text.trim())
+                    val result = intentEvaluator.handleSensitiveContent(SESSION_ID, category, CultureContext())
+                    repository.persistAssistantMessage(convId, result.reply)
+                    return@launch
                 }
 
                 // 3) Commands (poetry / breathing) or the normal agentic flow.
