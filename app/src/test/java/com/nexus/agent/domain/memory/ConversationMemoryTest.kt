@@ -46,7 +46,8 @@ class ConversationMemoryTest {
         val prompt = ConversationMemory.formatContextForAi(entries, maxEntries = 3)
         assertTrue(prompt.contains("رسالة 18"))
         assertTrue(prompt.contains("رسالة 20"))
-        assertTrue(!prompt.contains("رسالة 1"))
+        // 17 is before the last 3 and is not a substring of "رسالة 18".
+        assertTrue(!prompt.contains("رسالة 17"))
     }
 
     @Test
