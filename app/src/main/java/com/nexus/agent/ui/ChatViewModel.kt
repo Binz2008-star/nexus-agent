@@ -16,6 +16,8 @@ import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.culture.CultureContext
 import com.nexus.agent.domain.persona.Emotion
 import com.nexus.agent.domain.persona.EmotionPoetry
+import com.nexus.agent.domain.persona.Sentiment
+import com.nexus.agent.domain.persona.SentimentAnalyzer
 import com.nexus.agent.domain.safety.IntentEvaluator
 import com.nexus.agent.domain.safety.SensitiveTopicDetector
 import com.nexus.agent.domain.safety.UserBehaviorGuard
@@ -271,7 +273,10 @@ class ChatViewModel(
                 }
 
                 val sources = (toolResult as? ToolResult.Success)?.sources.orEmpty()
-                val context = if (sources.isEmpty()) null else buildContextPrompt(sources)
+                val context = buildList {
+                    if (sources.isNotEmpty()) add(buildContextPrompt(sources))
+                    empatheticNote(text)?.let { add(it) }
+                }.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
                 lastContext = context
 
                 update(TaskStatus.Running(startedAt, "thinking"))
@@ -304,8 +309,12 @@ class ChatViewModel(
             try {
                 update(TaskStatus.Running(System.currentTimeMillis(), "thinking"))
                 repository.persistUserMessage(conversationId, text)
+                val fullPrompt = buildList {
+                    add(prompt)
+                    empatheticNote(text)?.let { add(it) }
+                }.joinToString("\n\n")
                 val result = repository.completeWithContext(
-                    conversationId, _selectedModel.value, prompt
+                    conversationId, _selectedModel.value, fullPrompt
                 ) { delta -> _streamingText.value += delta }
                 _streamingText.value = ""
                 when (result) {
@@ -342,6 +351,10 @@ class ChatViewModel(
             append(guide.completeInstruction)
         }
     }
+
+    /** Returns an empathetic directive when the user's message reads negative, else null. */
+    private fun empatheticNote(text: String): String? =
+        if (SentimentAnalyzer.analyze(text) == Sentiment.NEGATIVE) EMPATHETIC_NOTE else null
 
     fun retryLast() {
         val convId = _currentConversationId.value ?: return
@@ -447,5 +460,7 @@ class ChatViewModel(
         private const val SESSION_ID = "default"
         private const val BLOCKED_MESSAGE =
             "تم تجاوز الحد المسموح من المحاولات المخالفة. تم إيقاف الردود مؤقتًا، حاول لاحقًا."
+        private const val EMPATHETIC_NOTE =
+            "المستخدم يبدو متضايقًا، كن متعاطفًا ولطيفًا في ردك."
     }
 }
