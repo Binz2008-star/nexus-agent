@@ -14,7 +14,8 @@ import com.nexus.agent.domain.emotion.EmotionAnalysis
 import com.nexus.agent.domain.emotion.EmotionAnalyzer
 import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.culture.CultureContext
-import com.nexus.agent.domain.persona.Emotion
+import com.nexus.agent.domain.commands.Command
+import com.nexus.agent.domain.commands.CommandDetector
 import com.nexus.agent.domain.persona.EmotionPoetry
 import com.nexus.agent.domain.persona.Sentiment
 import com.nexus.agent.domain.persona.SentimentAnalyzer
@@ -232,9 +233,9 @@ class ChatViewModel(
                 val convId = _currentConversationId.value ?: repository.createConversation().also {
                     _currentConversationId.value = it
                 }
-                when (detectCommand(text)) {
+                when (CommandDetector.detect(text)) {
                     Command.Poetry -> {
-                        launchPromptTask(convId, text, EmotionPoetry.buildPoetryPrompt(detectPoetryEmotion(text)), generation)
+                        launchPromptTask(convId, text, EmotionPoetry.buildPoetryPrompt(CommandDetector.poetryEmotion(text)), generation)
                         handedOffToTask = true
                     }
                     Command.Breathing -> {
@@ -340,18 +341,6 @@ class ChatViewModel(
         }
     }
 
-    private enum class Command { Poetry, Breathing }
-
-    private fun detectCommand(text: String): Command? {
-        val t = text.trim().lowercase()
-        return when {
-            // "شعر" via word boundary so it doesn't match "أشعر" (I feel) / "يشعر" / hair-as-poetry.
-            t.contains("قصيدة") || POETRY_WORD.containsMatchIn(t) || t.contains("poem") || t.contains("poetry") -> Command.Poetry
-            t.contains("تنفس") || t.contains("تنفّس") || t.contains("breathe") || t.contains("breathing") -> Command.Breathing
-            else -> null
-        }
-    }
-
     private fun breathingGuideText(): String {
         val guide = BreathingCompanion.buildGuide(BreathingPattern.RELAXING, "ar")
         return buildString {
@@ -366,16 +355,6 @@ class ChatViewModel(
     /** Returns an empathetic directive when the user's message reads negative, else null. */
     private fun empatheticNote(text: String): String? =
         if (SentimentAnalyzer.analyze(text) == Sentiment.NEGATIVE) EMPATHETIC_NOTE else null
-
-    /** Picks the requested poetry emotion from the message, defaulting to NEUTRAL. */
-    private fun detectPoetryEmotion(text: String): Emotion = when {
-        text.contains("حزن") || text.contains("sad") -> Emotion.SADNESS
-        text.contains("فرح") || text.contains("سعا") || text.contains("happy") || text.contains("joy") -> Emotion.JOY
-        text.contains("غضب") || text.contains("angry") || text.contains("anger") -> Emotion.ANGER
-        text.contains("خوف") || text.contains("fear") -> Emotion.FEAR
-        text.contains("دهشة") || text.contains("surprise") -> Emotion.SURPRISE
-        else -> Emotion.NEUTRAL
-    }
 
     fun retryLast() {
         val convId = _currentConversationId.value ?: return
@@ -484,6 +463,5 @@ class ChatViewModel(
             "تم تجاوز الحد المسموح من المحاولات المخالفة. تم إيقاف الردود مؤقتًا، حاول لاحقًا."
         private const val EMPATHETIC_NOTE =
             "المستخدم يبدو متضايقًا، كن متعاطفًا ولطيفًا في ردك."
-        private val POETRY_WORD = Regex("(?<![\\p{L}])شعر(?![\\p{L}])")
     }
 }
