@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup/data-extraction policy: conversations, preferences, and encrypted secrets stay
+  on-device. Both cloud backup and device-to-device transfer are fully excluded (R9/TD-011),
+  because Room history and the encrypted secret store must not leave the device without an
+  explicit encrypted export flow (which does not exist yet).
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+    </device-transfer>
+</data-extraction-rules>

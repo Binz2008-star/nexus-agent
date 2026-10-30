@@ -253,7 +253,10 @@ class GoogleAuthManager(
                     Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP),
                     Charsets.UTF_8
                 )
-                json.parseToJsonElement(payload).jsonObject["email"]?.jsonPrimitive?.content
+                val obj = json.parseToJsonElement(payload).jsonObject
+                // Only trust the email claim when Google asserts the address is verified (R11).
+                if (obj["email_verified"]?.jsonPrimitive?.content?.toBoolean() != true) return null
+                obj["email"]?.jsonPrimitive?.content
             }
         } catch (e: Exception) {
             null

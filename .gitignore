@@ -24,9 +24,7 @@ gradle.properties.local
 keystore.properties
 signing.properties
 secrets.properties
-
-# Debug signing key (NOT a secret — committed so CI builds share one identity)
-!keystore/nexus-debug.p12
+keystore/
 
 # --- OS / editor ---
 .DS_Store

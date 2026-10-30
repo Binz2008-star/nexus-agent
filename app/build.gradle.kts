@@ -28,20 +28,9 @@ android {
         manifestPlaceholders["appAuthRedirectScheme"] = "com.nexus.agent"
     }
 
-    signingConfigs {
-        create("nexusDebug") {
-            storeFile = rootProject.file("keystore/nexus-debug.p12")
-            storePassword = "nexusdebug"
-            keyAlias = "nexus"
-            keyPassword = "nexusdebug"
-            storeType = "PKCS12"
-        }
-    }
-
+    // Debug builds use the default Android debug keystore (auto-generated, per-developer/CI).
+    // A private key is intentionally NOT tracked in the repo (supply-chain risk, R2/TD-002).
     buildTypes {
-        debug {
-            signingConfig = signingConfigs.getByName("nexusDebug")
-        }
         release {
             isMinifyEnabled = false
             proguardFiles(
