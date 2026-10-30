@@ -77,6 +77,7 @@ import com.nexus.agent.domain.tool.KnowledgeSearchTool
 import com.nexus.agent.domain.tool.TaskStatus
 import com.nexus.agent.domain.tool.ToolOrchestrator
 import com.nexus.agent.domain.tool.ToolSource
+import com.nexus.agent.domain.tool.WebSearchAdapter
 import com.nexus.agent.domain.tool.WebSearchOutcome
 import com.nexus.agent.security.AndroidKeystoreKeyProvider
 import com.nexus.agent.security.CryptoEngine
@@ -134,8 +135,14 @@ fun ChatScreen() {
     }
 
     val knowledgeSearchTool = remember { KnowledgeSearchTool(knowledgeTool) }
+    val webSearchAdapter = remember { WebSearchAdapter(webSearchTool) }
     val toolOrchestrator = remember {
-        ToolOrchestrator(mapOf(knowledgeSearchTool.name to knowledgeSearchTool))
+        ToolOrchestrator(
+            mapOf(
+                webSearchAdapter.name to webSearchAdapter,
+                knowledgeSearchTool.name to knowledgeSearchTool
+            )
+        )
     }
 
     val viewModel: ChatViewModel = viewModel(
@@ -560,6 +567,14 @@ private fun SourcesCard(sources: List<ToolSource>) {
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                source.url?.let { url ->
+                    Text(
+                        text = url,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1
+                    )
+                }
                 if (source.snippet.isNotBlank()) {
                     Text(
                         text = source.snippet,

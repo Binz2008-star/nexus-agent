@@ -142,10 +142,10 @@ class ChatViewModel(
     }
 
     /**
-     * Agentic send: search the knowledge base for grounding excerpts, then stream an answer
-     * grounded in those excerpts. Runs on [BackgroundTaskRunner] so the UI stays non-blocking
-     * and can show a "Working for Ns" timer + cancel. If the tool has no results (or is not
-     * configured), it falls back to a direct answer (existing chat behaviour preserved).
+     * Agentic send: search the web for grounding excerpts, then stream an answer grounded in
+     * those excerpts. Runs on [BackgroundTaskRunner] so the UI stays non-blocking and can show
+     * a "Working for Ns" timer + cancel. If the search fails or returns no results, it falls
+     * back to a direct answer (existing chat behaviour preserved).
      */
     fun sendMessageWithAgent(text: String) {
         if (text.isBlank()) return
@@ -175,9 +175,9 @@ class ChatViewModel(
 
                 val input = buildJsonObject {
                     put("query", JsonPrimitive(text.trim()))
-                    put("top_k", JsonPrimitive("5"))
+                    put("count", JsonPrimitive("5"))
                 }
-                val toolResult = toolOrchestrator.execute(TOOL_KNOWLEDGE_SEARCH, input)
+                val toolResult = toolOrchestrator.execute(TOOL_WEB_SEARCH, input)
                 if (toolResult is ToolResult.Blocked) {
                     _errorMessage.value = toolResult.reason
                     update(TaskStatus.Failed("blocked"))
@@ -303,6 +303,6 @@ class ChatViewModel(
     companion object {
         private const val DEFAULT_TOP_K = 8
         private const val DEFAULT_COUNT = 10
-        private const val TOOL_KNOWLEDGE_SEARCH = "second_brain_search"
+        private const val TOOL_WEB_SEARCH = "web_search"
     }
 }

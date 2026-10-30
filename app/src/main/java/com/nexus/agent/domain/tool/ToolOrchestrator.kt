@@ -33,8 +33,14 @@ class ToolOrchestrator(private val tools: Map<String, Tool>) {
  * tool excerpts (with citation guidance).
  */
 fun buildContextPrompt(sources: List<ToolSource>): String {
-    val body = sources.joinToString("\n\n") { "Source: ${it.title}\n${it.snippet}" }
-    return "Use the following excerpts from the knowledge base to answer the user's " +
-        "question. Cite sources when relevant. If the excerpts do not answer the " +
-        "question, say so.\n\n$body"
+    val body = sources.joinToString("\n\n") { source ->
+        val origin = when {
+            source.url != null -> " (${source.url})"
+            source.project.isNotBlank() -> " [${source.project}]"
+            else -> ""
+        }
+        "Source: ${source.title}$origin\n${source.snippet}"
+    }
+    return "Use the following excerpts to answer the user's question. Cite sources " +
+        "when relevant. If the excerpts do not answer the question, say so.\n\n$body"
 }

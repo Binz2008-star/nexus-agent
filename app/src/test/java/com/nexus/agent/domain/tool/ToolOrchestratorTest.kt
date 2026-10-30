@@ -67,4 +67,12 @@ class ToolOrchestratorTest {
         assertTrue(prompt.contains("excerpts"))
         assertTrue(!prompt.contains("Source:"))
     }
+
+    @Test
+    fun buildContextPromptIncludesUrlWhenPresent() {
+        val prompt = buildContextPrompt(
+            listOf(ToolSource("Page", snippet = "excerpt", url = "https://x.com/a"))
+        )
+        assertTrue(prompt.contains("https://x.com/a"))
+    }
 }
