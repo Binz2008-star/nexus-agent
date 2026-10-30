@@ -79,8 +79,10 @@ private fun normalize(text: String): String =
 
 /**
  * Builds one regex matching any keyword with Unicode word boundaries on both sides, so
- * "hack" does not match "hacker" and Arabic "سم" does not match "اسم". Keywords are
- * regex-escaped and matched case-insensitively.
+ * "hack" does not match "hacker" and Arabic "سم" does not match "اسم". An optional Arabic
+ * definite article ("ال" and its proclitic forms بال/وال/فال/كال/لل) is allowed before the
+ * keyword, so "انتحار" matches "الانتحار" (the boundaries still keep "سم" out of "اسم").
+ * Keywords are regex-escaped and matched case-insensitively.
  */
 private fun buildKeywordRegex(keywords: List<String>): Regex? {
     val parts = keywords.asSequence()
@@ -88,7 +90,7 @@ private fun buildKeywordRegex(keywords: List<String>): Regex? {
         .filter { it.isNotEmpty() }
         .map { keyword ->
             val escaped = Regex.escape(keyword)
-            "(?<![\\p{L}\\p{N}_])(?:$escaped)(?![\\p{L}\\p{N}_])"
+            "(?<![\\p{L}\\p{N}_])(?:ال|بال|وال|فال|كال|لل)?(?:$escaped)(?![\\p{L}\\p{N}_])"
         }
         .distinct()
         .toList()
