@@ -13,9 +13,16 @@ class KnowledgeSearchTool(private val knowledgeTool: KnowledgeTool) : Tool {
     override val name: String = "second_brain_search"
 
     override suspend fun execute(input: JsonObject): ToolResult {
-        val query = (input["query"] as? JsonPrimitive)?.contentOrNull?.trim()
+        val query = (input["query"] as? JsonPrimitive)
+            ?.takeIf { it.isString }
+            ?.content
+            ?.trim()
             ?: return ToolResult.Failure("empty")
-        val topK = (input["top_k"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 8
+        val topK = (input["top_k"] as? JsonPrimitive)
+            ?.takeIf { it.isString }
+            ?.content
+            ?.toIntOrNull()
+            ?: 8
 
         return when (val r = knowledgeTool.search(query, topK)) {
             is KnowledgeSearchResult.Success -> {

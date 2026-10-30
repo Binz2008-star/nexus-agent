@@ -2,6 +2,7 @@ package com.nexus.agent.data.remote
 
 import com.nexus.agent.domain.tool.ToolResult
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -13,7 +14,7 @@ class McpBridgeTest {
     fun searchDelegatesToBackend() = runBlocking {
         var called = false
         val bridge = McpBridge { _ -> called = true; ToolResult.Success("ok") }
-        val result = bridge.call("search", buildJsonObject { put("query", "x") })
+        val result = bridge.call("search", buildJsonObject { put("query", JsonPrimitive("x")) })
         assertTrue(result is ToolResult.Success)
         assertTrue(called)
     }

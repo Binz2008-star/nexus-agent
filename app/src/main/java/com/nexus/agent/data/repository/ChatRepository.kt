@@ -44,8 +44,8 @@ class ChatRepository(
         conversationId: Long,
         text: String,
         model: String,
-        onDelta: suspend (String) -> Unit,
-        context: String? = null
+        context: String? = null,
+        onDelta: suspend (String) -> Unit
     ): SendResult {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return SendResult.Failure("empty")

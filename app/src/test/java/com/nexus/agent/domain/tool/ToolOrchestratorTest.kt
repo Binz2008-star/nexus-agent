@@ -2,6 +2,7 @@ package com.nexus.agent.domain.tool
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -24,7 +25,7 @@ class ToolOrchestratorTest {
     fun runsToolAndReturnsResult() = runBlocking {
         val tool = FakeTool(result = ToolResult.Success("excerpt", listOf(ToolSource("a.md"))))
         val orch = ToolOrchestrator(mapOf("fake" to tool))
-        val result = orch.execute("fake", buildJsonObject { put("query", "x") })
+        val result = orch.execute("fake", buildJsonObject { put("query", JsonPrimitive("x")) })
         assertTrue(result is ToolResult.Success)
         assertEquals(1, tool.calls)
         assertEquals(1, (result as ToolResult.Success).sources.size)

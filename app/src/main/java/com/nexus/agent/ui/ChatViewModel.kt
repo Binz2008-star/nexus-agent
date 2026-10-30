@@ -167,7 +167,7 @@ class ChatViewModel(
 
             val input = buildJsonObject {
                 put("query", JsonPrimitive(text.trim()))
-                put("top_k", JsonPrimitive(5))
+                put("top_k", JsonPrimitive("5"))
             }
             val toolResult = toolOrchestrator.execute(TOOL_KNOWLEDGE_SEARCH, input)
             if (toolResult is ToolResult.Blocked) {
