@@ -3,6 +3,8 @@ package com.nexus.agent.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,25 +14,25 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,8 +56,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nexus.agent.R
@@ -70,14 +72,10 @@ import com.nexus.agent.data.repository.KnowledgeRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.data.repository.WebSearchRepository
 import com.nexus.agent.domain.model.ChatMessage
-import com.nexus.agent.domain.model.KnowledgeResult
-import com.nexus.agent.domain.model.WebSearchResult
-import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.domain.tool.KnowledgeSearchTool
 import com.nexus.agent.domain.tool.TaskStatus
 import com.nexus.agent.domain.tool.ToolOrchestrator
 import com.nexus.agent.domain.tool.WebSearchAdapter
-import com.nexus.agent.domain.tool.WebSearchOutcome
 import com.nexus.agent.security.AndroidKeystoreKeyProvider
 import com.nexus.agent.security.CryptoEngine
 import kotlinx.coroutines.Dispatchers
@@ -149,42 +147,17 @@ fun ChatScreen() {
         )
     )
 
-    val conversations by viewModel.conversations.collectAsState()
-    val currentConversationId by viewModel.currentConversationId.collectAsState()
-    var showConversationList by remember { mutableStateOf(false) }
-
     val messages by viewModel.messages.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
-    val selectedModel by viewModel.selectedModel.collectAsState()
     val streamingText by viewModel.streamingText.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
-    val isSearching by viewModel.isSearching.collectAsState()
-    val searchResults by viewModel.searchResults.collectAsState()
-    var showSearch by remember { mutableStateOf(false) }
-    val webQuery by viewModel.webQuery.collectAsState()
-    val isWebSearching by viewModel.isWebSearching.collectAsState()
-    val webResults by viewModel.webResults.collectAsState()
-    var showWebSearch by remember { mutableStateOf(false) }
-
     val taskStatus by viewModel.taskStatus.collectAsState()
 
-    var status by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
     var systemPromptInput by remember { mutableStateOf("") }
     var knowledgeBaseUrlInput by remember { mutableStateOf("") }
     var input by remember { mutableStateOf("") }
-
-    LaunchedEffect(selectedModel) {
-        val result = withContext(Dispatchers.IO) { secrets.readApiKey() }
-        status = when (result) {
-            is ApiKeyReadResult.Present -> context.getString(R.string.status_key_saved) + " · $selectedModel"
-            is ApiKeyReadResult.Missing -> context.getString(R.string.status_no_key)
-            is ApiKeyReadResult.Corrupted -> context.getString(R.string.status_corrupted)
-            is ApiKeyReadResult.KeyUnavailable -> context.getString(R.string.status_unavailable)
-        }
-    }
 
     LaunchedEffect(showSettings) {
         if (showSettings) {
@@ -204,38 +177,23 @@ fun ChatScreen() {
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            status,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(R.drawable.nexus_logo_premium_dark),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(8.dp))
                         )
+                        Spacer(Modifier.width(10.dp))
+                        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleMedium)
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showConversationList = true }) {
-                        Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.conversations))
-                    }
                     TextButton(onClick = { viewModel.createNewConversation() }) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
                         Text(stringResource(R.string.new_chat))
-                    }
-                    TextButton(onClick = {
-                        val next = if (selectedModel == DeepSeekClient.DEFAULT_MODEL)
-                            DeepSeekClient.PRO_MODEL else DeepSeekClient.DEFAULT_MODEL
-                        viewModel.setModel(next)
-                    }) {
-                        Text(
-                            if (selectedModel == DeepSeekClient.DEFAULT_MODEL)
-                                stringResource(R.string.model_flash)
-                            else stringResource(R.string.model_pro)
-                        )
-                    }
-                    IconButton(onClick = { showWebSearch = true }) {
-                        Icon(Icons.Default.Public, contentDescription = stringResource(R.string.web_search))
-                    }
-                    IconButton(onClick = { showSearch = true }) {
-                        Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search))
                     }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
@@ -271,29 +229,25 @@ fun ChatScreen() {
                 }
             }
 
-            if (messages.isEmpty() && !isLoading && streamingText.isEmpty() && taskStatus !is TaskStatus.Running) {
-                EmptyState(modifier = Modifier.weight(1f))
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(messages, key = { it.id }) { message ->
-                        MessageBubble(message)
-                    }
-                    if (streamingText.isNotEmpty()) {
-                        item(key = "streaming") {
-                            MessageBubble(
-                                ChatMessage(ChatMessage.Role.ASSISTANT, streamingText),
-                                isStreaming = true
-                            )
-                        }
-                    } else if (isLoading || taskStatus is TaskStatus.Running) {
-                        item(key = "thinking") {
-                            ThinkingIndicator()
-                        }
+            if (isLoading || taskStatus is TaskStatus.Running) {
+                BackgroundTasksBar()
+            }
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(messages, key = { it.id }) { message ->
+                    MessageBubble(message)
+                }
+                if (streamingText.isNotEmpty()) {
+                    item(key = "streaming") {
+                        MessageBubble(
+                            ChatMessage(ChatMessage.Role.ASSISTANT, streamingText),
+                            isStreaming = true
+                        )
                     }
                 }
             }
@@ -311,65 +265,6 @@ fun ChatScreen() {
         }
     }
 
-    if (showConversationList) {
-        AlertDialog(
-            onDismissRequest = { showConversationList = false },
-            title = { Text(stringResource(R.string.conversations)) },
-            text = {
-                LazyColumn {
-                    items(conversations) { conv ->
-                        TextButton(
-                            onClick = {
-                                viewModel.selectConversation(conv.id)
-                                showConversationList = false
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                conv.title,
-                                color = if (conv.id == currentConversationId)
-                                    MaterialTheme.colorScheme.primary
-                                else
-                                    MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showConversationList = false }) { Text(stringResource(R.string.close)) }
-            }
-        )
-    }
-
-    if (showSearch) {
-        SearchDialog(
-            query = searchQuery,
-            onQueryChange = viewModel::setSearchQuery,
-            isSearching = isSearching,
-            results = searchResults,
-            onSearch = viewModel::searchKnowledge,
-            onDismiss = {
-                showSearch = false
-                viewModel.clearSearch()
-            }
-        )
-    }
-
-    if (showWebSearch) {
-        WebSearchDialog(
-            query = webQuery,
-            onQueryChange = viewModel::setWebQuery,
-            isSearching = isWebSearching,
-            results = webResults,
-            onSearch = viewModel::searchWeb,
-            onDismiss = {
-                showWebSearch = false
-                viewModel.clearWebSearch()
-            }
-        )
-    }
-
     if (showSettings) {
         SettingsDialog(
             keyInput = keyInput,
@@ -384,7 +279,6 @@ fun ChatScreen() {
                     val key = keyInput.trim()
                     if (key.isNotEmpty()) {
                         withContext(Dispatchers.IO) { secrets.saveApiKey(key) }
-                        status = context.getString(R.string.status_key_saved) + " · $selectedModel"
                     }
                     withContext(Dispatchers.IO) { preferences.setSystemPrompt(systemPromptInput) }
                     withContext(Dispatchers.IO) { preferences.setKnowledgeBaseUrl(knowledgeBaseUrlInput) }
@@ -392,29 +286,6 @@ fun ChatScreen() {
                     showSettings = false
                 }
             }
-        )
-    }
-}
-
-@Composable
-private fun EmptyState(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.fillMaxWidth().padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(
-            Icons.Outlined.AutoAwesome,
-            contentDescription = null,
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
-        Spacer(Modifier.height(16.dp))
-        Text(
-            text = stringResource(R.string.empty_chat),
-            style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -463,20 +334,35 @@ private fun MessageBubble(message: ChatMessage, isStreaming: Boolean = false) {
 }
 
 @Composable
-private fun ThinkingIndicator() {
-    Row(
-        modifier = Modifier.padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+private fun BackgroundTasksBar() {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant
     ) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                stringResource(R.string.thinking),
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                style = MaterialTheme.typography.bodyMedium,
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                stringResource(R.string.background_task_running),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
             )
         }
     }
@@ -498,8 +384,16 @@ private fun Composer(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.Bottom
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            IconButton(onClick = { /* attach — reserved */ }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Default.AttachFile,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.width(4.dp))
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
@@ -509,20 +403,30 @@ private fun Composer(
                 maxLines = 5,
                 shape = RoundedCornerShape(24.dp)
             )
-            Spacer(Modifier.width(8.dp))
-            IconButton(
-                onClick = onSend,
-                enabled = value.isNotBlank() && sendEnabled,
-                modifier = Modifier.size(48.dp)
-            ) {
-                Icon(
-                    Icons.Default.Send,
-                    contentDescription = stringResource(R.string.send),
-                    tint = if (value.isNotBlank() && sendEnabled)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Spacer(Modifier.width(4.dp))
+            if (value.isNotBlank()) {
+                IconButton(
+                    onClick = onSend,
+                    enabled = sendEnabled,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Send,
+                        contentDescription = stringResource(R.string.send),
+                        tint = if (sendEnabled)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                IconButton(onClick = { /* voice — reserved */ }, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        Icons.Default.Mic,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
@@ -597,174 +501,4 @@ private fun mapErrorCode(code: String): String {
         code.startsWith("generic:") -> "Request failed (${code.removePrefix("generic:")})"
         else -> stringResource(R.string.error_generic)
     }
-}
-
-@Composable
-private fun SearchDialog(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    isSearching: Boolean,
-    results: KnowledgeSearchResult?,
-    onSearch: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.search)) },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
-                    label = { Text(stringResource(R.string.search_placeholder)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(12.dp))
-                when (val r = results) {
-                    is KnowledgeSearchResult.Failure ->
-                        Text(mapSearchError(r.errorCode), color = MaterialTheme.colorScheme.error)
-                    is KnowledgeSearchResult.Success ->
-                        if (r.results.isEmpty()) {
-                            Text(stringResource(R.string.search_no_results))
-                        } else {
-                            LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
-                                items(r.results) { item -> SearchResultItem(item) }
-                            }
-                        }
-                    null -> if (isSearching) Text(stringResource(R.string.thinking))
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = onSearch, enabled = query.isNotBlank() && !isSearching) {
-                Text(stringResource(R.string.search))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
-        }
-    )
-}
-
-@Composable
-private fun SearchResultItem(result: KnowledgeResult) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Text(
-            text = listOfNotNull(result.file, result.chunk).joinToString(" · "),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Text(
-            text = result.content,
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 3
-        )
-        Text(
-            text = "${result.project} · ${"%.2f".format(result.score)}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun mapSearchError(code: String): String = when (code) {
-    "empty" -> stringResource(R.string.search_empty)
-    "no_url" -> stringResource(R.string.search_no_url)
-    "network" -> stringResource(R.string.search_network)
-    "timeout" -> stringResource(R.string.search_timeout)
-    "server" -> stringResource(R.string.search_server)
-    "malformed" -> stringResource(R.string.search_malformed)
-    else -> stringResource(R.string.search_error)
-}
-
-@Composable
-private fun WebSearchDialog(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    isSearching: Boolean,
-    results: WebSearchOutcome?,
-    onSearch: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.web_search)) },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
-                    label = { Text(stringResource(R.string.web_search_placeholder)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(12.dp))
-                when (val r = results) {
-                    is WebSearchOutcome.Failure ->
-                        Text(mapWebSearchError(r.errorCode), color = MaterialTheme.colorScheme.error)
-                    is WebSearchOutcome.Success ->
-                        if (r.results.isEmpty()) {
-                            Text(stringResource(R.string.search_no_results))
-                        } else {
-                            LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
-                                items(r.results) { item -> WebSearchResultItem(item) }
-                            }
-                        }
-                    null -> if (isSearching) Text(stringResource(R.string.thinking))
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = onSearch, enabled = query.isNotBlank() && !isSearching) {
-                Text(stringResource(R.string.web_search))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
-        }
-    )
-}
-
-@Composable
-private fun WebSearchResultItem(result: WebSearchResult) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Text(
-            text = result.title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Text(
-            text = result.url,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            text = result.snippet.ifBlank { result.summary },
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 3
-        )
-        if (result.siteName != null) {
-            Text(
-                text = result.siteName,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun mapWebSearchError(code: String): String = when (code) {
-    "empty" -> stringResource(R.string.search_empty)
-    "no_key" -> stringResource(R.string.error_no_key)
-    "auth" -> stringResource(R.string.error_auth)
-    "quota" -> stringResource(R.string.error_quota)
-    "rate" -> stringResource(R.string.error_rate)
-    "network" -> stringResource(R.string.search_network)
-    "timeout" -> stringResource(R.string.search_timeout)
-    "server" -> stringResource(R.string.search_server)
-    "malformed" -> stringResource(R.string.search_malformed)
-    else -> stringResource(R.string.search_error)
 }
