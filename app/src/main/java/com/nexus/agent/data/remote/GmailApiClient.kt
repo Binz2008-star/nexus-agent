@@ -1,6 +1,8 @@
 package com.nexus.agent.data.remote
 
 import com.nexus.agent.domain.model.GmailMessage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -56,20 +58,21 @@ class GmailApiClient(
     private val httpClient: OkHttpClient = defaultClient(),
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
-    suspend fun searchMessages(query: String, maxResults: Int): Result<List<GmailMessage>> {
-        val token = tokenProvider()?.takeIf { it.isNotBlank() }
-            ?: return Result.failure(IOException("No Google Gmail access token configured"))
+    suspend fun searchMessages(query: String, maxResults: Int): Result<List<GmailMessage>> =
+        withContext(Dispatchers.IO) {
+            val token = tokenProvider()?.takeIf { it.isNotBlank() }
+                ?: return@withContext Result.failure(IOException("No Google Gmail access token configured"))
 
-        return try {
-            val refs = listMessages(token, query, maxResults)
-            val messages = refs.take(maxResults).mapNotNull { ref ->
-                getMessage(token, ref.id)
+            try {
+                val refs = listMessages(token, query, maxResults)
+                val messages = refs.take(maxResults).mapNotNull { ref ->
+                    getMessage(token, ref.id)
+                }
+                Result.success(messages)
+            } catch (e: Exception) {
+                Result.failure(e)
             }
-            Result.success(messages)
-        } catch (e: Exception) {
-            Result.failure(e)
         }
-    }
 
     private fun listMessages(token: String, query: String, maxResults: Int): List<GmailMessageRef> {
         val url = baseUrl().addPathSegment("users")

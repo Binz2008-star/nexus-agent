@@ -181,16 +181,25 @@ class GoogleAuthManager(
                 .build()
         ) ?: return
 
-        resp.refreshToken?.let { secretStorage.saveGoogleRefreshToken(it) }
-        val email = resp.idToken?.let { emailFromIdToken(it) }
-        email?.let { secretStorage.saveGoogleEmail(it) }
+        try {
+            resp.refreshToken?.let { secretStorage.saveGoogleRefreshToken(it) }
+            val email = resp.idToken?.let { emailFromIdToken(it) }
+            email?.let { secretStorage.saveGoogleEmail(it) }
 
-        cachedAccessToken = resp.accessToken
-        cachedExpiryMs = System.currentTimeMillis() + resp.expiresIn * 1000L
-        _email.value = email
-        _isConnected.value =
-            resp.refreshToken != null ||
-                secretStorage.readGoogleRefreshToken() is ApiKeyReadResult.Present
+            cachedAccessToken = resp.accessToken
+            cachedExpiryMs = System.currentTimeMillis() + resp.expiresIn * 1000L
+            _email.value = email
+            _isConnected.value =
+                resp.refreshToken != null ||
+                    secretStorage.readGoogleRefreshToken() is ApiKeyReadResult.Present
+        } catch (e: Exception) {
+            // Keystore/DataStore write failed: stay disconnected and let the user retry rather
+            // than leaving a half-connected session or crashing the coroutine.
+            cachedAccessToken = null
+            cachedExpiryMs = 0L
+            _isConnected.value = false
+            _email.value = null
+        }
     }
 
     private suspend fun postToken(form: FormBody): TokenResponseDto? =

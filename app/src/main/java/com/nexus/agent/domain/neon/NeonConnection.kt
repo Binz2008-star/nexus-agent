@@ -42,9 +42,20 @@ object NeonConnectionParser {
             else -> return null
         }
         if (!hasHost(url)) return null
-        if (!url.contains("sslmode", ignoreCase = true)) return null
+        if (!hasSecureSslMode(url)) return null
         return url
     }
+
+    /**
+     * Rejects `sslmode=disable|allow|prefer` so the Neon password/query traffic can never go
+     * over the wire in cleartext — only `require` / `verify-ca` / `verify-full` are accepted.
+     */
+    private fun hasSecureSslMode(url: String): Boolean {
+        val m = Regex("[?&]sslmode=([^&]+)", RegexOption.IGNORE_CASE).find(url) ?: return false
+        return m.groupValues[1].trim().lowercase() in SECURE_SSL_MODES
+    }
+
+    private val SECURE_SSL_MODES = setOf("require", "verify-ca", "verify-full")
 
     private fun uriToJdbc(raw: String): String? {
         val rest = raw.removePrefix(URI_SCHEME) // [user[:pass]@]host[:port]/db[?query]

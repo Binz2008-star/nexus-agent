@@ -27,6 +27,9 @@ android {
         // Google OAuth client id for the connectors (Gmail/Drive). Injected at CI build time;
         // empty placeholder means the connectors won't start authorization until set.
         buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"${System.getenv("GOOGLE_OAUTH_CLIENT_ID") ?: ""}\"")
+
+        // AppAuth's manifest declares a redirect receiver using this placeholder.
+        manifestPlaceholders["appAuthRedirectScheme"] = "com.nexus.agent"
     }
 
     signingConfigs {

@@ -258,6 +258,10 @@ class ChatViewModel(
                         repository.persistAssistantMessage(convId, breathingGuideText())
                         return@launch
                     }
+                    Command.Email -> {
+                        launchGmailTask(convId, text, generation)
+                        handedOffToTask = true
+                    }
                     null -> {
                         launchAgentTask(convId, text, generation)
                         handedOffToTask = true
@@ -362,6 +366,62 @@ class ChatViewModel(
             }
         }
     }
+
+    /**
+     * Runs a read-only Gmail inbox search and streams an answer grounded in the matching
+     * messages. Same lifecycle/cancel semantics as [launchAgentTask]. A failed search (e.g. not
+     * connected) contributes no sources and falls back to a direct answer.
+     */
+    private fun launchGmailTask(conversationId: Long, text: String, generation: Long) {
+        _streamingText.value = ""
+        _errorMessage.value = null
+        taskRunner.run { update ->
+            try {
+                val startedAt = System.currentTimeMillis()
+                update(TaskStatus.Running(startedAt, "searching"))
+                repository.persistUserMessage(conversationId, text)
+
+                val toolResult = toolOrchestrator.execute(TOOL_GMAIL, buildJsonObject {
+                    put("query", JsonPrimitive(gmailQuery(text)))
+                    put("max_results", JsonPrimitive("10"))
+                })
+                if (toolResult is ToolResult.Blocked) {
+                    _errorMessage.value = toolResult.reason
+                    update(TaskStatus.Failed("blocked"))
+                    return@run
+                }
+
+                val sources = (toolResult as? ToolResult.Success)?.sources.orEmpty()
+                val context = if (sources.isEmpty()) null else buildContextPrompt(sources)
+                lastContext = context
+
+                update(TaskStatus.Running(startedAt, "thinking"))
+                val result = repository.completeWithContext(
+                    conversationId, _selectedModel.value, context
+                ) { delta -> _streamingText.value += delta }
+                _streamingText.value = ""
+
+                when (result) {
+                    is SendResult.Success -> update(TaskStatus.Completed(sources))
+                    is SendResult.Failure -> {
+                        _errorMessage.value = result.errorCode
+                        update(TaskStatus.Failed(result.errorCode))
+                    }
+                }
+            } finally {
+                if (generation == taskGeneration) _agentBusy.value = false
+            }
+        }
+    }
+
+    /** Extracts a Gmail search term from a "check/read my email" command; empty = list recent. */
+    private fun gmailQuery(text: String): String =
+        text.trim()
+            .replace(Regex("(?i)^\\s*(check|read|search|show|list)\\s+(my\\s+)?(email|emails|inbox|gmail|mail|messages)\\s*"), "")
+            .replace(Regex("^\\s*(تفقد|اقرأ|ابحث|اعرض|أظهر|افحص|استعرض)\\s+(بريدي|ايميلي|إيميلي|رسائلي|رسائل|البريد|الايميل|الإيميل)\\s*"), "")
+            .replace(Regex("(?i)^\\s*(for|about|regarding)\\s+"), "")
+            .replace(Regex("^\\s*(عن|بخصوص|حول)\\s+"), "")
+            .trim()
 
     private fun breathingGuideText(): String {
         val guide = BreathingCompanion.buildGuide(BreathingPattern.RELAXING, "ar")
@@ -487,6 +547,7 @@ class ChatViewModel(
         private const val DEFAULT_COUNT = 10
         private const val TOOL_WEB_SEARCH = "web_search"
         private const val TOOL_SECOND_BRAIN = "second_brain_search"
+        private const val TOOL_GMAIL = "gmail_search"
         // Single-user app: a fixed session id scopes the behavior guard to this install.
         private const val SESSION_ID = "default"
         private const val BLOCKED_MESSAGE =

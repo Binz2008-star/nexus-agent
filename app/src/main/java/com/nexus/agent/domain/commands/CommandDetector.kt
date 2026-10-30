@@ -3,12 +3,12 @@ package com.nexus.agent.domain.commands
 import com.nexus.agent.domain.persona.Emotion
 
 /** Interactive commands triggered by simple keywords. */
-enum class Command { Poetry, Breathing }
+enum class Command { Poetry, Breathing, Email }
 
 /**
- * Detects user commands (poetry / breathing) and the requested poetry emotion. Extracted from
- * the ViewModel so it is unit-testable — the "شعر" false-positive (matching "أشعر") is guarded
- * here by a Unicode word boundary.
+ * Detects user commands (poetry / breathing / email) and the requested poetry emotion.
+ * Extracted from the ViewModel so it is unit-testable — the "شعر" false-positive (matching
+ * "أشعر") is guarded here by a Unicode word boundary.
  */
 object CommandDetector {
 
@@ -16,11 +16,16 @@ object CommandDetector {
     // The optional "ا" handles the accusative/tanwin form "شعراً" (alef suffix).
     private val POETRY_WORD = Regex("(?<![\\p{L}])شعر(?:ا)?(?![\\p{L}])")
 
+    // Email/Gmail/inbox in English via word boundary; Arabic forms matched as substrings.
+    private val EMAIL_WORD = Regex("(?<![\\p{L}])(email|emails|inbox|gmail|mail)(?![\\p{L}])")
+
     fun detect(text: String): Command? {
         val t = text.trim().lowercase()
         return when {
             t.contains("قصيدة") || POETRY_WORD.containsMatchIn(t) || t.contains("poem") || t.contains("poetry") -> Command.Poetry
             t.contains("تنفس") || t.contains("تنفّس") || t.contains("breathe") || t.contains("breathing") -> Command.Breathing
+            EMAIL_WORD.containsMatchIn(t) ||
+                t.contains("بريد") || t.contains("ايميل") || t.contains("إيميل") || t.contains("رسائل") -> Command.Email
             else -> null
         }
     }

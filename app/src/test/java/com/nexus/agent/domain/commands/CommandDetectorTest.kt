@@ -28,6 +28,20 @@ class CommandDetectorTest {
     }
 
     @Test
+    fun detectsEmail() {
+        assertEquals(Command.Email, CommandDetector.detect("check my email"))
+        assertEquals(Command.Email, CommandDetector.detect("search my inbox for invoice"))
+        assertEquals(Command.Email, CommandDetector.detect("تفقد بريدي"))
+        assertEquals(Command.Email, CommandDetector.detect("اقرأ رسائلي"))
+    }
+
+    @Test
+    fun emailDoesNotMatchUnrelatedMailWords() {
+        // "blackmail" must not trigger the email command (word boundary).
+        assertNull(CommandDetector.detect("what is blackmail"))
+    }
+
+    @Test
     fun benignTextReturnsNull() {
         assertNull(CommandDetector.detect("ما عاصمة فرنسا؟"))
     }
