@@ -88,8 +88,11 @@ import com.nexus.agent.domain.tool.KnowledgeSearchTool
 import com.nexus.agent.domain.tool.TaskStatus
 import com.nexus.agent.domain.tool.ToolOrchestrator
 import com.nexus.agent.domain.tool.WebSearchAdapter
-import com.nexus.agent.security.AndroidKeystoreKeyProvider
-import com.nexus.agent.security.CryptoEngine
+import com.nexus.agent.data.connectors.GoogleAuthManager
+import com.nexus.agent.data.remote.GmailApiClient
+import com.nexus.agent.data.repository.GmailRepository
+import com.nexus.agent.domain.connectors.GmailConnector
+import com.nexus.agent.domain.tool.GmailSearchTool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -97,12 +100,13 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen() {
+fun ChatScreen(
+    secrets: SecretStorageRepository,
+    googleAuthManager: GoogleAuthManager
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val crypto = remember { CryptoEngine(AndroidKeystoreKeyProvider()) }
-    val secrets = remember { SecretStorageRepository.create(context, crypto) }
     val preferences = remember { AppPreferencesRepository.create(context) }
     val db = remember { NexusDatabase.getInstance(context) }
     val client = remember {
@@ -195,11 +199,18 @@ fun ChatScreen() {
 
     val knowledgeSearchTool = remember { KnowledgeSearchTool(knowledgeTool) }
     val webSearchAdapter = remember { WebSearchAdapter(webSearchTool) }
+    val gmailConnector = remember { GmailConnector(googleAuthManager) }
+    val gmailSearchTool = remember(gmailConnector) {
+        val api = GmailApiClient(tokenProvider = { gmailConnector.accessToken() })
+        val repo = GmailRepository(searchApi = { q, n -> api.searchMessages(q, n) })
+        GmailSearchTool(repo)
+    }
     val toolOrchestrator = remember {
         ToolOrchestrator(
             mapOf(
                 webSearchAdapter.name to webSearchAdapter,
-                knowledgeSearchTool.name to knowledgeSearchTool
+                knowledgeSearchTool.name to knowledgeSearchTool,
+                gmailSearchTool.name to gmailSearchTool
             )
         )
     }
@@ -216,6 +227,8 @@ fun ChatScreen() {
     val errorMessage by viewModel.errorMessage.collectAsState()
     val streamingText by viewModel.streamingText.collectAsState()
     val taskStatus by viewModel.taskStatus.collectAsState()
+    val gmailConnected by gmailConnector.isConnected.collectAsState()
+    val gmailEmail by gmailConnector.email.collectAsState()
 
     var showSettings by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
@@ -355,6 +368,16 @@ fun ChatScreen() {
             onNeonReadUrlChange = { neonReadUrlInput = it },
             neonWriteUrl = neonWriteUrlInput,
             onNeonWriteUrlChange = { neonWriteUrlInput = it },
+            gmailConnected = gmailConnected,
+            gmailEmail = gmailEmail,
+            onConnectGmail = {
+                if (BuildConfig.GOOGLE_OAUTH_CLIENT_ID.isBlank()) {
+                    context.showToast(context.getString(R.string.oauth_client_missing))
+                } else {
+                    googleAuthManager.startAuthorization(gmailConnector.scopes)
+                }
+            },
+            onDisconnectGmail = { scope.launch { gmailConnector.disconnect() } },
             onDismiss = { showSettings = false },
             onSave = {
                 scope.launch {
@@ -552,6 +575,10 @@ private fun SettingsDialog(
     onNeonReadUrlChange: (String) -> Unit,
     neonWriteUrl: String,
     onNeonWriteUrlChange: (String) -> Unit,
+    gmailConnected: Boolean,
+    gmailEmail: String?,
+    onConnectGmail: () -> Unit,
+    onDisconnectGmail: () -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
@@ -560,6 +587,37 @@ private fun SettingsDialog(
         title = { Text(stringResource(R.string.settings)) },
         text = {
             Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.gmail),
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            text = if (gmailConnected) {
+                                gmailEmail?.let { stringResource(R.string.gmail_connected_as, it) }
+                                    ?: stringResource(R.string.gmail_connected)
+                            } else {
+                                stringResource(R.string.gmail_not_connected)
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (gmailConnected) {
+                        TextButton(onClick = onDisconnectGmail) {
+                            Text(stringResource(R.string.disconnect))
+                        }
+                    } else {
+                        Button(onClick = onConnectGmail) {
+                            Text(stringResource(R.string.connect))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = keyInput,
                     onValueChange = onKeyChange,

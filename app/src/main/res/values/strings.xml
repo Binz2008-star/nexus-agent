@@ -50,4 +50,11 @@
     <string name="sources">Sources</string>
     <string name="background_task_running">Background task running</string>
     <string name="saved">Saved</string>
+    <string name="gmail">Gmail</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="gmail_not_connected">Not connected</string>
+    <string name="gmail_connected">Connected</string>
+    <string name="gmail_connected_as">Connected as %1$s</string>
+    <string name="oauth_client_missing">Google OAuth client ID not configured yet</string>
 </resources>

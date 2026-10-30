@@ -50,4 +50,11 @@
     <string name="sources">المصادر</string>
     <string name="background_task_running">مهمة خلفية قيد التشغيل</string>
     <string name="saved">تم الحفظ</string>
+    <string name="gmail">Gmail</string>
+    <string name="connect">ربط</string>
+    <string name="disconnect">قطع الاتصال</string>
+    <string name="gmail_not_connected">غير مربوط</string>
+    <string name="gmail_connected">مربوط</string>
+    <string name="gmail_connected_as">مربوط كـ %1$s</string>
+    <string name="oauth_client_missing">معرّف عميل Google OAuth غير مُعد بعد</string>
 </resources>

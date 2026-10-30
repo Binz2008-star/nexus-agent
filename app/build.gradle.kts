@@ -23,6 +23,10 @@ android {
         // the credentials never live in git. Empty when not provided (local builds).
         buildConfigField("String", "NEON_READ_URL_DEFAULT", "\"${System.getenv("NEON_READ_URL") ?: ""}\"")
         buildConfigField("String", "NEON_WRITE_URL_DEFAULT", "\"${System.getenv("NEON_WRITE_URL") ?: ""}\"")
+
+        // Google OAuth client id for the connectors (Gmail/Drive). Injected at CI build time;
+        // empty placeholder means the connectors won't start authorization until set.
+        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"${System.getenv("GOOGLE_OAUTH_CLIENT_ID") ?: ""}\"")
     }
 
     signingConfigs {
@@ -94,6 +98,10 @@ dependencies {
 
     // Neon (Postgres) — direct JDBC for Second Brain search + cloud persistence.
     implementation("org.postgresql:postgresql:42.7.4")
+
+    // Connectors (Google OAuth) — AppAuth (PKCE) + Custom Tabs.
+    implementation("net.openid:appauth:0.11.1")
+    implementation("androidx.browser:browser:1.8.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

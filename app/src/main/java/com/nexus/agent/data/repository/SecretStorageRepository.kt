@@ -72,10 +72,37 @@ class SecretStorageRepository(
         dataStore.edit { it.remove(stringPreferencesKey(name)) }
     }
 
+    // ---- Google connector token (encrypted) + email (identifier, non-secret) ----
+
+    /** Encrypts and stores the Google OAuth refresh token. Never stored in plaintext. */
+    suspend fun saveGoogleRefreshToken(plaintext: String) =
+        saveSecret(GOOGLE_REFRESH_TOKEN_PREF, plaintext)
+
+    /** Reads/decrypts the Google refresh token. Reuses [ApiKeyReadResult] semantics. */
+    suspend fun readGoogleRefreshToken(): ApiKeyReadResult = readSecret(GOOGLE_REFRESH_TOKEN_PREF)
+
+    suspend fun clearGoogleRefreshToken() {
+        clearSecret(GOOGLE_REFRESH_TOKEN_PREF)
+    }
+
+    /** The connected Google account's email (an identifier, not a credential). */
+    suspend fun saveGoogleEmail(email: String) {
+        dataStore.edit { it[stringPreferencesKey(GOOGLE_EMAIL_PREF)] = email.trim() }
+    }
+
+    suspend fun readGoogleEmail(): String? =
+        dataStore.data.map { it[stringPreferencesKey(GOOGLE_EMAIL_PREF)] }.first()
+
+    suspend fun clearGoogleEmail() {
+        dataStore.edit { it.remove(stringPreferencesKey(GOOGLE_EMAIL_PREF)) }
+    }
+
     companion object {
         const val API_KEY_PREF_NAME = "encrypted_deepseek_api_key"
         const val NEON_READ_URL_PREF = "encrypted_neon_read_url"
         const val NEON_WRITE_URL_PREF = "encrypted_neon_write_url"
+        const val GOOGLE_REFRESH_TOKEN_PREF = "encrypted_google_refresh_token"
+        const val GOOGLE_EMAIL_PREF = "google_email"
 
         fun create(context: Context, cipher: SecretCipher): SecretStorageRepository =
             SecretStorageRepository(context.nexusSecretsDataStore, cipher)
