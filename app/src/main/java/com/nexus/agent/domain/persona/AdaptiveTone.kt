@@ -1,5 +1,23 @@
 package com.nexus.agent.domain.persona
 
+import com.nexus.agent.domain.culture.Region
+
+/**
+ * Maps a cultural [Region] to the closest supported [Dialect]. English/French regions map to
+ * the American-English dialect (the default).
+ */
+fun regionToDialect(region: Region): Dialect = when (region) {
+    Region.GULF -> Dialect.GULF
+    Region.EGYPT -> Dialect.EGYPT
+    Region.LEVANT -> Dialect.LEVANT
+    Region.IRAQ -> Dialect.IRAQ
+    Region.SUDAN -> Dialect.SUDAN
+    Region.YEMEN -> Dialect.YEMEN
+    Region.MAGHREB -> Dialect.MAGHREB
+    Region.EN_GLOBAL -> Dialect.EN_US
+    Region.FR_GLOBAL -> Dialect.EN_US
+}
+
 /**
  * Arabic dialects (plus English variants) supported for tone/dialect adaptation.
  * Ported from Mashaaer's `adaptive_tone_translator.py` (SUPPORTED_DIALECTS).

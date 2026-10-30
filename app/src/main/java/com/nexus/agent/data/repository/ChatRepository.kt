@@ -24,7 +24,8 @@ class ChatRepository(
     private val client: ChatCompletionClient,
     private val apiKeyProvider: suspend () -> String?,
     private val systemPromptProvider: suspend () -> String = { "" },
-    private val router: AiModelRouter? = null
+    private val router: AiModelRouter? = null,
+    private val personaProvider: suspend () -> String? = { null }
 ) {
     fun observeConversations(): Flow<List<ConversationEntity>> = conversationDao.getAll()
 
@@ -203,10 +204,14 @@ class ChatRepository(
         context: String? = null
     ): List<ChatMessage> {
         val customPrompt = systemPromptProvider().trim()
+        val persona = personaProvider()?.trim()
         val systemMessages = buildList {
             add(ChatMessage(ChatMessage.Role.SYSTEM, NAME_SAFETY_PROMPT))
             if (customPrompt.isNotEmpty()) {
                 add(ChatMessage(ChatMessage.Role.SYSTEM, customPrompt))
+            }
+            if (!persona.isNullOrBlank()) {
+                add(ChatMessage(ChatMessage.Role.SYSTEM, persona))
             }
             if (!context.isNullOrBlank()) {
                 add(ChatMessage(ChatMessage.Role.SYSTEM, context))

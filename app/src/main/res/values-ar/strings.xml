@@ -47,4 +47,5 @@
     <string name="stage_searching">جارٍ البحث…</string>
     <string name="sources">المصادر</string>
     <string name="background_task_running">مهمة خلفية قيد التشغيل</string>
+    <string name="saved">تم الحفظ</string>
 </resources>

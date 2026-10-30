@@ -72,8 +72,13 @@ import com.nexus.agent.data.repository.KnowledgeRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.data.repository.WebSearchRepository
 import com.nexus.agent.domain.cognitive.CognitiveLoadManager
+import com.nexus.agent.domain.culture.CultureContextEngine
+import com.nexus.agent.domain.culture.Region
 import com.nexus.agent.domain.emotion.EmotionAnalyzer
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.persona.AdaptiveTone
+import com.nexus.agent.domain.persona.Tone
+import com.nexus.agent.domain.persona.regionToDialect
 import com.nexus.agent.domain.router.AiModelRouter
 import com.nexus.agent.domain.router.ModelClient
 import com.nexus.agent.domain.tool.KnowledgeSearchTool
@@ -125,6 +130,16 @@ fun ChatScreen() {
     }
     val emotionAnalyzer = remember { EmotionAnalyzer() }
     val loadManager = remember { CognitiveLoadManager() }
+    val personaInstruction = remember {
+        val region = CultureContextEngine.detectRegionFromLocale(java.util.Locale.getDefault().toLanguageTag())
+        val dialect = regionToDialect(region)
+        val english = region == Region.EN_GLOBAL || region == Region.FR_GLOBAL
+        if (english) {
+            AdaptiveTone.buildRewriteInstructionEnglish(dialect, Tone.FRIENDLY)
+        } else {
+            AdaptiveTone.buildRewriteInstruction(dialect, Tone.FRIENDLY)
+        }
+    }
     val repository = remember {
         ChatRepository(
             messageDao = db.messageDao(),
@@ -137,7 +152,8 @@ fun ChatScreen() {
                 }
             },
             systemPromptProvider = { preferences.systemPrompt.first() },
-            router = router
+            router = router,
+            personaProvider = { personaInstruction }
         )
     }
 
@@ -310,6 +326,7 @@ fun ChatScreen() {
                     withContext(Dispatchers.IO) { preferences.setKnowledgeBaseUrl(knowledgeBaseUrlInput) }
                     keyInput = ""
                     showSettings = false
+                    context.showToast(context.getString(R.string.saved))
                 }
             }
         )

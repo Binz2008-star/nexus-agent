@@ -1,10 +1,20 @@
 package com.nexus.agent.domain.persona
 
+import com.nexus.agent.domain.culture.Region
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AdaptiveToneTest {
+
+    @Test
+    fun regionToDialectMapsRegions() {
+        assertEquals(Dialect.EGYPT, regionToDialect(Region.EGYPT))
+        assertEquals(Dialect.GULF, regionToDialect(Region.GULF))
+        assertEquals(Dialect.LEVANT, regionToDialect(Region.LEVANT))
+        assertEquals(Dialect.EN_US, regionToDialect(Region.EN_GLOBAL))
+        assertEquals(Dialect.EN_US, regionToDialect(Region.FR_GLOBAL))
+    }
 
     @Test
     fun dialectFromId() {

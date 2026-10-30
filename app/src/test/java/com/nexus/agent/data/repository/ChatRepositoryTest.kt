@@ -139,4 +139,21 @@ class ChatRepositoryTest {
         assertEquals(ChatMessage.Role.USER, history[3].role)
         assertEquals("hi", history[3].text)
     }
+
+    @Test
+    fun personaInstructionIsInjectedAfterCustomPrompt() = runBlocking {
+        val dao = FakeDao()
+        val client = FakeClient(listOf(Result.success("ok")))
+        val r = ChatRepository(
+            dao, FakeConversationDao(), client, { "key" }, { "custom prompt" },
+            personaProvider = { "respond in Gulf Arabic with a friendly tone" }
+        )
+        r.sendMessageStream(1L, "hi", "deepseek-flash") { }
+        val history = client.lastHistory
+        assertEquals(ChatMessage.Role.SYSTEM, history[0].role)
+        assertTrue(history[0].text.contains("Do not assume"))
+        assertEquals("custom prompt", history[1].text)
+        assertEquals("respond in Gulf Arabic with a friendly tone", history[2].text)
+        assertEquals(ChatMessage.Role.USER, history[3].role)
+    }
 }
