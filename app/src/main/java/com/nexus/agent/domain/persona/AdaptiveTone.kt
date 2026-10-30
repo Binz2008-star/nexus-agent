@@ -59,10 +59,10 @@ enum class Tone(val id: String, val arabicLabel: String) {
 object AdaptiveTone {
 
     fun buildRewriteInstruction(dialect: Dialect, tone: Tone): String =
-        "أعد صياغة الرد التالي باللهجة ${dialect.arabicLabel} وبأسلوب ${tone.arabicLabel}، " +
+        "تحدث باللهجة ${dialect.arabicLabel} وبأسلوب ${tone.arabicLabel} في ردودك، " +
             "مع الحفاظ على المعنى الأصلي وعدم إضافة معلومات جديدة."
 
     fun buildRewriteInstructionEnglish(dialect: Dialect, tone: Tone): String =
-        "Rewrite the following reply in ${dialect.id} dialect with a ${tone.id} tone, " +
+        "Respond in ${dialect.id} dialect with a ${tone.id} tone, " +
             "preserving the original meaning and not adding new information."
 }

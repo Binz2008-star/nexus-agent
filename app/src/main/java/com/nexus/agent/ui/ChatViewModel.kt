@@ -50,7 +50,8 @@ class ChatViewModel(
     private val webSearchTool: WebSearchTool,
     private val toolOrchestrator: ToolOrchestrator,
     private val emotionAnalyzer: EmotionAnalyzer,
-    private val loadManager: CognitiveLoadManager
+    private val loadManager: CognitiveLoadManager,
+    private val cultureContext: CultureContext
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -92,6 +93,11 @@ class ChatViewModel(
     @Volatile
     private var lastContext: String? = null
 
+    // Monotonic task id so a superseded/cancelled task's finally can't clear the busy flag
+    // for a newer task.
+    @Volatile
+    private var taskGeneration = 0L
+
     // Escalating safety guard: blocks the session after repeated policy violations.
     private val behaviorGuard = UserBehaviorGuard()
     private val intentEvaluator = IntentEvaluator(behaviorGuard)
@@ -117,6 +123,7 @@ class ChatViewModel(
         _currentConversationId.value = id
         _streamingText.value = ""
         _errorMessage.value = null
+        lastContext = null
     }
 
     fun createNewConversation() {
@@ -125,6 +132,7 @@ class ChatViewModel(
             _currentConversationId.value = id
             _streamingText.value = ""
             _errorMessage.value = null
+            lastContext = null
         }
     }
 
@@ -170,6 +178,7 @@ class ChatViewModel(
     fun sendMessageWithAgent(text: String) {
         if (text.isBlank()) return
         if (!_agentBusy.compareAndSet(false, true)) return
+        val generation = ++taskGeneration
         viewModelScope.launch {
             var handedOffToTask = false
             try {
@@ -213,8 +222,9 @@ class ChatViewModel(
                         _currentConversationId.value = it
                     }
                     repository.persistUserMessage(convId, text.trim())
-                    val result = intentEvaluator.handleSensitiveContent(SESSION_ID, category, CultureContext())
-                    repository.persistAssistantMessage(convId, result.reply)
+                    val result = intentEvaluator.handleSensitiveContent(SESSION_ID, category, cultureContext)
+                    val reply = if (result.blocked) BLOCKED_MESSAGE else result.reply
+                    repository.persistAssistantMessage(convId, reply)
                     return@launch
                 }
 
@@ -224,7 +234,7 @@ class ChatViewModel(
                 }
                 when (detectCommand(text)) {
                     Command.Poetry -> {
-                        launchPromptTask(convId, text, EmotionPoetry.buildPoetryPrompt(Emotion.NEUTRAL))
+                        launchPromptTask(convId, text, EmotionPoetry.buildPoetryPrompt(detectPoetryEmotion(text)), generation)
                         handedOffToTask = true
                     }
                     Command.Breathing -> {
@@ -233,7 +243,7 @@ class ChatViewModel(
                         return@launch
                     }
                     null -> {
-                        launchAgentTask(convId, text)
+                        launchAgentTask(convId, text, generation)
                         handedOffToTask = true
                     }
                 }
@@ -241,7 +251,7 @@ class ChatViewModel(
                 // Clear the re-entry guard on every path that did NOT hand off to the
                 // BackgroundTaskRunner (whose own finally clears it). This also covers
                 // exceptions thrown while creating the conversation or persisting.
-                if (!handedOffToTask) _agentBusy.value = false
+                if (!handedOffToTask && generation == taskGeneration) _agentBusy.value = false
             }
         }
     }
@@ -252,7 +262,7 @@ class ChatViewModel(
         _agentBusy.value = false
     }
 
-    private fun launchAgentTask(conversationId: Long, text: String) {
+    private fun launchAgentTask(conversationId: Long, text: String, generation: Long) {
         _streamingText.value = ""
         _errorMessage.value = null
         taskRunner.run { update ->
@@ -293,7 +303,7 @@ class ChatViewModel(
                     }
                 }
             } finally {
-                _agentBusy.value = false
+                if (generation == taskGeneration) _agentBusy.value = false
             }
         }
     }
@@ -302,7 +312,7 @@ class ChatViewModel(
      * Streams an answer using a fixed instruction [prompt] (e.g. poetry) instead of web search.
      * Same lifecycle/cancel semantics as [launchAgentTask].
      */
-    private fun launchPromptTask(conversationId: Long, text: String, prompt: String) {
+    private fun launchPromptTask(conversationId: Long, text: String, prompt: String, generation: Long) {
         _streamingText.value = ""
         _errorMessage.value = null
         taskRunner.run { update ->
@@ -325,7 +335,7 @@ class ChatViewModel(
                     }
                 }
             } finally {
-                _agentBusy.value = false
+                if (generation == taskGeneration) _agentBusy.value = false
             }
         }
     }
@@ -335,7 +345,8 @@ class ChatViewModel(
     private fun detectCommand(text: String): Command? {
         val t = text.trim().lowercase()
         return when {
-            t.contains("قصيدة") || t.contains("شعر") || t.contains("poem") || t.contains("poetry") -> Command.Poetry
+            // "شعر" via word boundary so it doesn't match "أشعر" (I feel) / "يشعر" / hair-as-poetry.
+            t.contains("قصيدة") || POETRY_WORD.containsMatchIn(t) || t.contains("poem") || t.contains("poetry") -> Command.Poetry
             t.contains("تنفس") || t.contains("تنفّس") || t.contains("breathe") || t.contains("breathing") -> Command.Breathing
             else -> null
         }
@@ -356,9 +367,19 @@ class ChatViewModel(
     private fun empatheticNote(text: String): String? =
         if (SentimentAnalyzer.analyze(text) == Sentiment.NEGATIVE) EMPATHETIC_NOTE else null
 
+    /** Picks the requested poetry emotion from the message, defaulting to NEUTRAL. */
+    private fun detectPoetryEmotion(text: String): Emotion = when {
+        text.contains("حزن") || text.contains("sad") -> Emotion.SADNESS
+        text.contains("فرح") || text.contains("سعا") || text.contains("happy") || text.contains("joy") -> Emotion.JOY
+        text.contains("غضب") || text.contains("angry") || text.contains("anger") -> Emotion.ANGER
+        text.contains("خوف") || text.contains("fear") -> Emotion.FEAR
+        text.contains("دهشة") || text.contains("surprise") -> Emotion.SURPRISE
+        else -> Emotion.NEUTRAL
+    }
+
     fun retryLast() {
         val convId = _currentConversationId.value ?: return
-        if (_isLoading.value) return
+        if (_isLoading.value || taskStatus.value is TaskStatus.Running) return
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
@@ -441,13 +462,14 @@ class ChatViewModel(
         private val webSearchTool: WebSearchTool,
         private val toolOrchestrator: ToolOrchestrator,
         private val emotionAnalyzer: EmotionAnalyzer,
-        private val loadManager: CognitiveLoadManager
+        private val loadManager: CognitiveLoadManager,
+        private val cultureContext: CultureContext
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return ChatViewModel(
                 repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
-                emotionAnalyzer, loadManager
+                emotionAnalyzer, loadManager, cultureContext
             ) as T
         }
     }
@@ -462,5 +484,6 @@ class ChatViewModel(
             "تم تجاوز الحد المسموح من المحاولات المخالفة. تم إيقاف الردود مؤقتًا، حاول لاحقًا."
         private const val EMPATHETIC_NOTE =
             "المستخدم يبدو متضايقًا، كن متعاطفًا ولطيفًا في ردك."
+        private val POETRY_WORD = Regex("(?<![\\p{L}])شعر(?![\\p{L}])")
     }
 }

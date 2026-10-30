@@ -12,8 +12,9 @@ object SensitiveTopicDetector {
         put(
             NeutralCategory.RELIGION,
             buildKeywordRegex(
-                listOf("دين", "طائفة", "مذهب", "إله", "الله", "نبي", "محمد", "عيسى",
-                    "religion", "god", "إسلام", "مسيحية", "يهودية")
+                // Deliberately excludes الله/محمد/عيسى/نبي/إله/god — those appear in everyday
+                // invocations and names and would false-positive on benign messages.
+                listOf("دين", "طائفة", "مذهب", "religion", "إسلام", "مسيحية", "يهودية")
             )
         )
         put(

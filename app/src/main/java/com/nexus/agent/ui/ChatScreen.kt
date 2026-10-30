@@ -72,6 +72,7 @@ import com.nexus.agent.data.repository.KnowledgeRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.data.repository.WebSearchRepository
 import com.nexus.agent.domain.cognitive.CognitiveLoadManager
+import com.nexus.agent.domain.culture.CultureContext
 import com.nexus.agent.domain.culture.CultureContextEngine
 import com.nexus.agent.domain.culture.Region
 import com.nexus.agent.domain.emotion.EmotionAnalyzer
@@ -130,10 +131,13 @@ fun ChatScreen() {
     }
     val emotionAnalyzer = remember { EmotionAnalyzer() }
     val loadManager = remember { CognitiveLoadManager() }
-    val personaInstruction = remember {
+    val cultureContext = remember {
         val region = CultureContextEngine.detectRegionFromLocale(java.util.Locale.getDefault().toLanguageTag())
-        val dialect = regionToDialect(region)
-        val english = region == Region.EN_GLOBAL || region == Region.FR_GLOBAL
+        CultureContext(region = region)
+    }
+    val personaInstruction = remember(cultureContext) {
+        val dialect = regionToDialect(cultureContext.region)
+        val english = cultureContext.region == Region.EN_GLOBAL || cultureContext.region == Region.FR_GLOBAL
         if (english) {
             AdaptiveTone.buildRewriteInstructionEnglish(dialect, Tone.FRIENDLY)
         } else {
@@ -185,7 +189,7 @@ fun ChatScreen() {
     val viewModel: ChatViewModel = viewModel(
         factory = ChatViewModel.Factory(
             repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
-            emotionAnalyzer, loadManager
+            emotionAnalyzer, loadManager, cultureContext
         )
     )
 
