@@ -76,13 +76,11 @@ import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.domain.tool.KnowledgeSearchTool
 import com.nexus.agent.domain.tool.TaskStatus
 import com.nexus.agent.domain.tool.ToolOrchestrator
-import com.nexus.agent.domain.tool.ToolSource
 import com.nexus.agent.domain.tool.WebSearchAdapter
 import com.nexus.agent.domain.tool.WebSearchOutcome
 import com.nexus.agent.security.AndroidKeystoreKeyProvider
 import com.nexus.agent.security.CryptoEngine
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -177,19 +175,6 @@ fun ChatScreen() {
     var systemPromptInput by remember { mutableStateOf("") }
     var knowledgeBaseUrlInput by remember { mutableStateOf("") }
     var input by remember { mutableStateOf("") }
-
-    var elapsedSeconds by remember { mutableStateOf(0) }
-    LaunchedEffect(taskStatus) {
-        val running = taskStatus as? TaskStatus.Running
-        if (running != null) {
-            while (true) {
-                elapsedSeconds = ((System.currentTimeMillis() - running.startedAtMs) / 1000).toInt()
-                delay(1000)
-            }
-        } else {
-            elapsedSeconds = 0
-        }
-    }
 
     LaunchedEffect(selectedModel) {
         val result = withContext(Dispatchers.IO) { secrets.readApiKey() }
@@ -286,7 +271,7 @@ fun ChatScreen() {
                 }
             }
 
-            if (messages.isEmpty() && !isLoading && streamingText.isEmpty()) {
+            if (messages.isEmpty() && !isLoading && streamingText.isEmpty() && taskStatus !is TaskStatus.Running) {
                 EmptyState(modifier = Modifier.weight(1f))
             } else {
                 LazyColumn(
@@ -305,23 +290,11 @@ fun ChatScreen() {
                                 isStreaming = true
                             )
                         }
-                    } else if (isLoading) {
+                    } else if (isLoading || taskStatus is TaskStatus.Running) {
                         item(key = "thinking") {
                             ThinkingIndicator()
                         }
                     }
-                }
-            }
-
-            TaskStatusBar(
-                status = taskStatus,
-                elapsedSeconds = elapsedSeconds,
-                onCancel = viewModel::cancelTask
-            )
-
-            (taskStatus as? TaskStatus.Completed)?.let { completed ->
-                if (completed.sources.isNotEmpty()) {
-                    SourcesCard(completed.sources)
                 }
             }
 
@@ -507,92 +480,6 @@ private fun ThinkingIndicator() {
             )
         }
     }
-}
-
-@Composable
-private fun TaskStatusBar(status: TaskStatus, elapsedSeconds: Int, onCancel: () -> Unit) {
-    if (status !is TaskStatus.Running) return
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(R.string.working_for, elapsedSeconds),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = stageLabel(status.stage),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-            }
-        }
-        Spacer(Modifier.weight(1f))
-        TextButton(onClick = onCancel) {
-            Text(stringResource(R.string.cancel))
-        }
-    }
-}
-
-@Composable
-private fun SourcesCard(sources: List<ToolSource>) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                text = stringResource(R.string.sources),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.height(4.dp))
-            sources.take(3).forEach { source ->
-                Text(
-                    text = source.title.ifBlank { source.file }.ifBlank { source.project },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                source.url?.let { url ->
-                    Text(
-                        text = url,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1
-                    )
-                }
-                if (source.snippet.isNotBlank()) {
-                    Text(
-                        text = source.snippet,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 2
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun stageLabel(stage: String): String = when (stage) {
-    "searching" -> stringResource(R.string.stage_searching)
-    "thinking" -> stringResource(R.string.thinking)
-    else -> stage
 }
 
 @Composable
