@@ -71,7 +71,11 @@ import com.nexus.agent.data.repository.ChatRepository
 import com.nexus.agent.data.repository.KnowledgeRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.data.repository.WebSearchRepository
+import com.nexus.agent.domain.cognitive.CognitiveLoadManager
+import com.nexus.agent.domain.emotion.EmotionAnalyzer
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.router.AiModelRouter
+import com.nexus.agent.domain.router.ModelClient
 import com.nexus.agent.domain.tool.KnowledgeSearchTool
 import com.nexus.agent.domain.tool.TaskStatus
 import com.nexus.agent.domain.tool.ToolOrchestrator
@@ -101,6 +105,26 @@ fun ChatScreen() {
             }
         })
     }
+    val router = remember(client) {
+        val deepSeek = object : ModelClient {
+            override val supportedModels = setOf(
+                AiModelRouter.MODEL_DEEPSEEK_FLASH,
+                AiModelRouter.MODEL_DEEPSEEK_V4_PRO
+            )
+            override suspend fun complete(
+                history: List<ChatMessage>,
+                model: String
+            ): Result<String> = client.complete(history, model)
+            override suspend fun completeStream(
+                history: List<ChatMessage>,
+                model: String,
+                onDelta: suspend (String) -> Unit
+            ): Result<String> = client.completeStream(history, model, onDelta)
+        }
+        AiModelRouter(listOf(deepSeek))
+    }
+    val emotionAnalyzer = remember { EmotionAnalyzer() }
+    val loadManager = remember { CognitiveLoadManager() }
     val repository = remember {
         ChatRepository(
             messageDao = db.messageDao(),
@@ -112,7 +136,8 @@ fun ChatScreen() {
                     else -> null
                 }
             },
-            systemPromptProvider = { preferences.systemPrompt.first() }
+            systemPromptProvider = { preferences.systemPrompt.first() },
+            router = router
         )
     }
 
@@ -143,7 +168,8 @@ fun ChatScreen() {
 
     val viewModel: ChatViewModel = viewModel(
         factory = ChatViewModel.Factory(
-            repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator
+            repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
+            emotionAnalyzer, loadManager
         )
     )
 

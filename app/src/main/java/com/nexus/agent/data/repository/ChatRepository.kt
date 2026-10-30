@@ -6,6 +6,7 @@ import com.nexus.agent.data.local.MessageDao
 import com.nexus.agent.data.local.MessageEntity
 import com.nexus.agent.data.network.ChatCompletionClient
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.router.AiModelRouter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -22,7 +23,8 @@ class ChatRepository(
     private val conversationDao: ConversationDao,
     private val client: ChatCompletionClient,
     private val apiKeyProvider: suspend () -> String?,
-    private val systemPromptProvider: suspend () -> String = { "" }
+    private val systemPromptProvider: suspend () -> String = { "" },
+    private val router: AiModelRouter? = null
 ) {
     fun observeConversations(): Flow<List<ConversationEntity>> = conversationDao.getAll()
 
@@ -85,6 +87,24 @@ class ChatRepository(
     }
 
     /**
+     * Persists a local assistant reply (e.g. a safety refusal or a cognitive-load warning)
+     * without touching the network. Used by the ViewModel to surface local responses as normal
+     * chat messages.
+     */
+    suspend fun persistAssistantMessage(conversationId: Long, text: String) {
+        withContext(Dispatchers.IO) {
+            val trimmed = text.trim()
+            if (trimmed.isEmpty()) return@withContext
+            messageDao.insert(
+                MessageEntity.fromDomain(
+                    ChatMessage(ChatMessage.Role.ASSISTANT, trimmed),
+                    conversationId
+                )
+            )
+        }
+    }
+
+    /**
      * Streams a completion against the existing conversation history (which must already
      * include the user message), optionally grounding the answer in [context] (tool excerpts).
      */
@@ -100,7 +120,7 @@ class ChatRepository(
         val fullHistory = buildHistoryWithSystem(history, context)
 
         try {
-            val result = client.completeStream(fullHistory, model, onDelta)
+            val result = streamCompletion(fullHistory, model, onDelta)
             result.fold(
                 onSuccess = { reply ->
                     messageDao.insert(
@@ -136,7 +156,7 @@ class ChatRepository(
         }
         val fullHistory = buildHistoryWithSystem(history, context)
         try {
-            val result = client.completeStream(fullHistory, model, onDelta)
+            val result = streamCompletion(fullHistory, model, onDelta)
             result.fold(
                 onSuccess = { reply ->
                     messageDao.insert(
@@ -164,6 +184,19 @@ class ChatRepository(
         sendMessageStream(0L, text, model) { }
     suspend fun retryCompletion(model: String): SendResult =
         retryCompletionStream(0L, model) { }
+
+    /**
+     * Sends the completion through the [AiModelRouter] when one is wired in, otherwise falls
+     * back to the raw [client] (keeps older tests and callers working). The router resolves the
+     * requested model to the right provider; both paths run on [Dispatchers.IO].
+     */
+    private suspend fun streamCompletion(
+        history: List<ChatMessage>,
+        model: String,
+        onDelta: suspend (String) -> Unit
+    ): Result<String> =
+        if (router != null) router.routeStream(history, model, onDelta)
+        else client.completeStream(history, model, onDelta)
 
     private suspend fun buildHistoryWithSystem(
         history: List<ChatMessage>,

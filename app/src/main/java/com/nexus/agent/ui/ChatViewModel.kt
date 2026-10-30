@@ -8,6 +8,10 @@ import com.nexus.agent.data.repository.AppPreferencesRepository
 import com.nexus.agent.data.repository.ChatRepository
 import com.nexus.agent.data.repository.SendResult
 import com.nexus.agent.data.work.BackgroundTaskRunner
+import com.nexus.agent.domain.cognitive.CognitiveLoadDecision
+import com.nexus.agent.domain.cognitive.CognitiveLoadManager
+import com.nexus.agent.domain.emotion.EmotionAnalysis
+import com.nexus.agent.domain.emotion.EmotionAnalyzer
 import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.domain.tool.KnowledgeTool
@@ -34,7 +38,9 @@ class ChatViewModel(
     private val preferences: AppPreferencesRepository,
     private val knowledgeTool: KnowledgeTool,
     private val webSearchTool: WebSearchTool,
-    private val toolOrchestrator: ToolOrchestrator
+    private val toolOrchestrator: ToolOrchestrator,
+    private val emotionAnalyzer: EmotionAnalyzer,
+    private val loadManager: CognitiveLoadManager
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -151,10 +157,48 @@ class ChatViewModel(
         if (text.isBlank()) return
         if (!_agentBusy.compareAndSet(false, true)) return
         viewModelScope.launch {
-            val convId = _currentConversationId.value ?: repository.createConversation().also {
-                _currentConversationId.value = it
+            var handedOffToTask = false
+            try {
+                // 1) Cognitive-load (spam) gate — suppresses the request before it reaches the
+                //    tool/network layer and shows a polite local warning instead.
+                when (val decision = loadManager.tryAcquire()) {
+                    is CognitiveLoadDecision.Throttled -> {
+                        val convId = _currentConversationId.value ?: repository.createConversation().also {
+                            _currentConversationId.value = it
+                        }
+                        repository.persistUserMessage(convId, text.trim())
+                        repository.persistAssistantMessage(convId, decision.message)
+                        return@launch
+                    }
+                    CognitiveLoadDecision.Allowed -> Unit
+                }
+
+                // 2) Emotion / intent safety gate — blocks harmful requests locally and aborts the
+                //    network request, surfacing the refusal as an assistant message.
+                when (val analysis = emotionAnalyzer.analyze(text.trim())) {
+                    is EmotionAnalysis.Blocked -> {
+                        val convId = _currentConversationId.value ?: repository.createConversation().also {
+                            _currentConversationId.value = it
+                        }
+                        repository.persistUserMessage(convId, text.trim())
+                        repository.persistAssistantMessage(convId, analysis.localResponse)
+                        return@launch
+                    }
+                    EmotionAnalysis.Passed -> Unit
+                }
+
+                // 3) Normal agentic flow (persist → search → grounded answer via the router).
+                val convId = _currentConversationId.value ?: repository.createConversation().also {
+                    _currentConversationId.value = it
+                }
+                launchAgentTask(convId, text)
+                handedOffToTask = true
+            } finally {
+                // Clear the re-entry guard on every path that did NOT hand off to the
+                // BackgroundTaskRunner (whose own finally clears it). This also covers
+                // exceptions thrown while creating the conversation or persisting.
+                if (!handedOffToTask) _agentBusy.value = false
             }
-            launchAgentTask(convId, text)
         }
     }
 
@@ -290,12 +334,15 @@ class ChatViewModel(
         private val preferences: AppPreferencesRepository,
         private val knowledgeTool: KnowledgeTool,
         private val webSearchTool: WebSearchTool,
-        private val toolOrchestrator: ToolOrchestrator
+        private val toolOrchestrator: ToolOrchestrator,
+        private val emotionAnalyzer: EmotionAnalyzer,
+        private val loadManager: CognitiveLoadManager
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return ChatViewModel(
-                repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator
+                repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
+                emotionAnalyzer, loadManager
             ) as T
         }
     }
