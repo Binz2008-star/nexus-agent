@@ -12,7 +12,9 @@ enum class Command { Poetry, Breathing }
  */
 object CommandDetector {
 
-    private val POETRY_WORD = Regex("(?<![\\p{L}])شعر(?![\\p{L}])")
+    // "شعر" (poetry) via word boundary so it doesn't match "أشعر" (I feel) / "يشعر".
+    // The optional "ا" handles the accusative/tanwin form "شعراً" (alef suffix).
+    private val POETRY_WORD = Regex("(?<![\\p{L}])شعر(?:ا)?(?![\\p{L}])")
 
     fun detect(text: String): Command? {
         val t = text.trim().lowercase()
