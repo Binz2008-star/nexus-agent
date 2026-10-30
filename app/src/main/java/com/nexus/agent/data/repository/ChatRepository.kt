@@ -8,9 +8,12 @@ import com.nexus.agent.data.network.ChatCompletionClient
 import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.router.AiModelRouter
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 sealed class SendResult {
@@ -25,8 +28,13 @@ class ChatRepository(
     private val apiKeyProvider: suspend () -> String?,
     private val systemPromptProvider: suspend () -> String = { "" },
     private val router: AiModelRouter? = null,
-    private val personaProvider: suspend () -> String? = { null }
+    private val personaProvider: suspend () -> String? = { null },
+    private val mirror: ConversationMirror? = null
 ) {
+    // Fire-and-forget scope for the best-effort Neon mirror, so a slow/hung mirror can never
+    // delay the chat flow (Room persists first; the mirror is an async side effect).
+    private val mirrorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     fun observeConversations(): Flow<List<ConversationEntity>> = conversationDao.getAll()
 
     fun observeMessages(conversationId: Long): Flow<List<ChatMessage>> =
@@ -84,6 +92,15 @@ class ChatRepository(
                     System.currentTimeMillis()
                 )
             }
+            mirrorMessage(conversationId, ROLE_USER, trimmed)
+        }
+    }
+
+    /** Best-effort, fire-and-forget mirror to Neon (never throws into the caller). */
+    private fun mirrorMessage(conversationId: Long, role: String, content: String) {
+        val target = mirror ?: return
+        mirrorScope.launch {
+            runCatching { target.mirror(conversationId.toString(), role, content) }
         }
     }
 
@@ -130,6 +147,7 @@ class ChatRepository(
                             conversationId
                         )
                     )
+                    mirrorMessage(conversationId, ROLE_ASSISTANT, reply)
                     SendResult.Success
                 },
                 onFailure = { e ->
@@ -166,6 +184,7 @@ class ChatRepository(
                             conversationId
                         )
                     )
+                    mirrorMessage(conversationId, ROLE_ASSISTANT, reply)
                     SendResult.Success
                 },
                 onFailure = { e ->
@@ -237,6 +256,9 @@ class ChatRepository(
     }
 
     companion object {
+        const val ROLE_USER = "user"
+        const val ROLE_ASSISTANT = "assistant"
+
         /**
          * Mandatory system instruction injected on every request. Prevents the model from
          * hallucinating or reusing a user name it was never explicitly given in the current

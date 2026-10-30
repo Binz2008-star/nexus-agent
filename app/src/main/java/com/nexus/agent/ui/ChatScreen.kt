@@ -63,12 +63,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
-import com.nexus.agent.data.remote.KnowledgeApiClient
+import com.nexus.agent.data.remote.NeonJdbcClient
 import com.nexus.agent.data.remote.WebSearchApiClient
 import com.nexus.agent.data.repository.ApiKeyReadResult
 import com.nexus.agent.data.repository.AppPreferencesRepository
 import com.nexus.agent.data.repository.ChatRepository
-import com.nexus.agent.data.repository.KnowledgeRepository
+import com.nexus.agent.data.repository.NeonRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.data.repository.WebSearchRepository
 import com.nexus.agent.domain.cognitive.CognitiveLoadManager
@@ -77,6 +77,7 @@ import com.nexus.agent.domain.culture.CultureContextEngine
 import com.nexus.agent.domain.culture.Region
 import com.nexus.agent.domain.emotion.EmotionAnalyzer
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.neon.NeonConnectionParser
 import com.nexus.agent.domain.persona.AdaptiveTone
 import com.nexus.agent.domain.persona.Tone
 import com.nexus.agent.domain.persona.regionToDialect
@@ -144,7 +145,25 @@ fun ChatScreen() {
             AdaptiveTone.buildRewriteInstruction(dialect, Tone.FRIENDLY)
         }
     }
-    val repository = remember {
+    val neonRepository = remember {
+        NeonRepository(
+            readUrlProvider = {
+                when (val r = secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF)) {
+                    is ApiKeyReadResult.Present -> r.value
+                    else -> null
+                }
+            },
+            writeUrlProvider = {
+                when (val r = secrets.readSecret(SecretStorageRepository.NEON_WRITE_URL_PREF)) {
+                    is ApiKeyReadResult.Present -> r.value
+                    else -> null
+                }
+            },
+            jdbc = NeonJdbcClient()
+        )
+    }
+
+    val repository = remember(neonRepository) {
         ChatRepository(
             messageDao = db.messageDao(),
             conversationDao = db.conversationDao(),
@@ -157,14 +176,12 @@ fun ChatScreen() {
             },
             systemPromptProvider = { preferences.systemPrompt.first() },
             router = router,
-            personaProvider = { personaInstruction }
+            personaProvider = { personaInstruction },
+            mirror = neonRepository
         )
     }
 
-    val knowledgeTool = remember {
-        val api = KnowledgeApiClient(baseUrlProvider = { preferences.knowledgeBaseUrl.first() })
-        KnowledgeRepository(searchApi = { q, k -> api.search(q, k) })
-    }
+    val knowledgeTool = neonRepository
     val webSearchTool = remember {
         val api = WebSearchApiClient(apiKeyProvider = {
             when (val r = secrets.readApiKey()) {
@@ -189,7 +206,7 @@ fun ChatScreen() {
     val viewModel: ChatViewModel = viewModel(
         factory = ChatViewModel.Factory(
             repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
-            emotionAnalyzer, loadManager, cultureContext
+            emotionAnalyzer, loadManager, cultureContext, neonRepository
         )
     )
 
@@ -203,12 +220,26 @@ fun ChatScreen() {
     var keyInput by remember { mutableStateOf("") }
     var systemPromptInput by remember { mutableStateOf("") }
     var knowledgeBaseUrlInput by remember { mutableStateOf("") }
+    var neonReadUrlInput by remember { mutableStateOf("") }
+    var neonWriteUrlInput by remember { mutableStateOf("") }
     var input by remember { mutableStateOf("") }
 
     LaunchedEffect(showSettings) {
         if (showSettings) {
             systemPromptInput = withContext(Dispatchers.IO) { preferences.systemPrompt.first() }
             knowledgeBaseUrlInput = withContext(Dispatchers.IO) { preferences.knowledgeBaseUrl.first() }
+            neonReadUrlInput = withContext(Dispatchers.IO) {
+                when (val r = secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF)) {
+                    is ApiKeyReadResult.Present -> r.value
+                    else -> ""
+                }
+            }
+            neonWriteUrlInput = withContext(Dispatchers.IO) {
+                when (val r = secrets.readSecret(SecretStorageRepository.NEON_WRITE_URL_PREF)) {
+                    is ApiKeyReadResult.Present -> r.value
+                    else -> ""
+                }
+            }
         }
     }
 
@@ -319,6 +350,10 @@ fun ChatScreen() {
             onSystemPromptChange = { systemPromptInput = it },
             knowledgeBaseUrl = knowledgeBaseUrlInput,
             onKnowledgeBaseUrlChange = { knowledgeBaseUrlInput = it },
+            neonReadUrl = neonReadUrlInput,
+            onNeonReadUrlChange = { neonReadUrlInput = it },
+            neonWriteUrl = neonWriteUrlInput,
+            onNeonWriteUrlChange = { neonWriteUrlInput = it },
             onDismiss = { showSettings = false },
             onSave = {
                 scope.launch {
@@ -328,12 +363,29 @@ fun ChatScreen() {
                     }
                     withContext(Dispatchers.IO) { preferences.setSystemPrompt(systemPromptInput) }
                     withContext(Dispatchers.IO) { preferences.setKnowledgeBaseUrl(knowledgeBaseUrlInput) }
+                    withContext(Dispatchers.IO) {
+                        saveNeonUrl(secrets, neonReadUrlInput, SecretStorageRepository.NEON_READ_URL_PREF)
+                        saveNeonUrl(secrets, neonWriteUrlInput, SecretStorageRepository.NEON_WRITE_URL_PREF)
+                    }
                     keyInput = ""
                     showSettings = false
                     context.showToast(context.getString(R.string.saved))
                 }
             }
         )
+    }
+}
+
+private suspend fun saveNeonUrl(
+    secrets: SecretStorageRepository,
+    raw: String,
+    prefName: String
+) {
+    val trimmed = raw.trim()
+    if (trimmed.isNotEmpty() && NeonConnectionParser.parse(trimmed) != null) {
+        secrets.saveSecret(prefName, trimmed)
+    } else {
+        secrets.clearSecret(prefName)
     }
 }
 
@@ -487,6 +539,10 @@ private fun SettingsDialog(
     onSystemPromptChange: (String) -> Unit,
     knowledgeBaseUrl: String,
     onKnowledgeBaseUrlChange: (String) -> Unit,
+    neonReadUrl: String,
+    onNeonReadUrlChange: (String) -> Unit,
+    neonWriteUrl: String,
+    onNeonWriteUrlChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
@@ -499,6 +555,24 @@ private fun SettingsDialog(
                     value = keyInput,
                     onValueChange = onKeyChange,
                     label = { Text(stringResource(R.string.api_key_title)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = neonReadUrl,
+                    onValueChange = onNeonReadUrlChange,
+                    label = { Text(stringResource(R.string.neon_read_url)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = neonWriteUrl,
+                    onValueChange = onNeonWriteUrlChange,
+                    label = { Text(stringResource(R.string.neon_write_url)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)

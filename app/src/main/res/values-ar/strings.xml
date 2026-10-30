@@ -41,6 +41,8 @@
     <string name="search_malformed">استجابة غير صالحة من قاعدة المعرفة</string>
     <string name="search_error">فشل البحث</string>
     <string name="knowledge_base_url">رابط قاعدة المعرفة</string>
+    <string name="neon_read_url">اتصال Neon للقراءة (بحث Second Brain)</string>
+    <string name="neon_write_url">اتصال Neon للكتابة (الدردشة والذاكرة)</string>
     <string name="web_search">بحث الويب</string>
     <string name="web_search_placeholder">ابحث في الويب…</string>
     <string name="working_for">يعمل منذ %1$d ثانية</string>

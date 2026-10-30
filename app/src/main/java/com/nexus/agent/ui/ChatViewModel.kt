@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.nexus.agent.data.local.ConversationEntity
 import com.nexus.agent.data.repository.AppPreferencesRepository
 import com.nexus.agent.data.repository.ChatRepository
+import com.nexus.agent.data.repository.NeonRepository
 import com.nexus.agent.data.repository.SendResult
 import com.nexus.agent.data.work.BackgroundTaskRunner
 import com.nexus.agent.domain.cognitive.CognitiveLoadDecision
@@ -16,6 +17,7 @@ import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.culture.CultureContext
 import com.nexus.agent.domain.commands.Command
 import com.nexus.agent.domain.commands.CommandDetector
+import com.nexus.agent.domain.memory.RememberCommandDetector
 import com.nexus.agent.domain.persona.EmotionPoetry
 import com.nexus.agent.domain.persona.Sentiment
 import com.nexus.agent.domain.persona.SentimentAnalyzer
@@ -52,7 +54,8 @@ class ChatViewModel(
     private val toolOrchestrator: ToolOrchestrator,
     private val emotionAnalyzer: EmotionAnalyzer,
     private val loadManager: CognitiveLoadManager,
-    private val cultureContext: CultureContext
+    private val cultureContext: CultureContext,
+    private val neonRepository: NeonRepository? = null
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -229,6 +232,16 @@ class ChatViewModel(
                     return@launch
                 }
 
+                // 2c) "remember …" instruction → persist the fact to Neon memory + acknowledge.
+                RememberCommandDetector.detect(text.trim())?.let { remembered ->
+                    val convId = _currentConversationId.value ?: repository.createConversation().also {
+                        _currentConversationId.value = it
+                    }
+                    repository.persistUserMessage(convId, text.trim())
+                    repository.persistAssistantMessage(convId, rememberFact(remembered.fact))
+                    return@launch
+                }
+
                 // 3) Commands (poetry / breathing) or the normal agentic flow.
                 val convId = _currentConversationId.value ?: repository.createConversation().also {
                     _currentConversationId.value = it
@@ -272,18 +285,25 @@ class ChatViewModel(
                 update(TaskStatus.Running(startedAt, "searching"))
                 repository.persistUserMessage(conversationId, text)
 
-                val input = buildJsonObject {
+                val webResult = toolOrchestrator.execute(TOOL_WEB_SEARCH, buildJsonObject {
                     put("query", JsonPrimitive(text.trim()))
                     put("count", JsonPrimitive("5"))
-                }
-                val toolResult = toolOrchestrator.execute(TOOL_WEB_SEARCH, input)
-                if (toolResult is ToolResult.Blocked) {
-                    _errorMessage.value = toolResult.reason
+                })
+                val brainResult = toolOrchestrator.execute(TOOL_SECOND_BRAIN, buildJsonObject {
+                    put("query", JsonPrimitive(text.trim()))
+                    put("top_k", JsonPrimitive("8"))
+                })
+                if (webResult is ToolResult.Blocked || brainResult is ToolResult.Blocked) {
+                    _errorMessage.value = (webResult as? ToolResult.Blocked)?.reason
+                        ?: (brainResult as? ToolResult.Blocked)?.reason
                     update(TaskStatus.Failed("blocked"))
                     return@run
                 }
 
-                val sources = (toolResult as? ToolResult.Success)?.sources.orEmpty()
+                // Merge web + Second Brain grounding. The Second Brain search is best-effort
+                // (a missing Neon config simply contributes no sources).
+                val sources = (webResult as? ToolResult.Success)?.sources.orEmpty() +
+                    (brainResult as? ToolResult.Success)?.sources.orEmpty()
                 val context = buildList {
                     if (sources.isNotEmpty()) add(buildContextPrompt(sources))
                     empatheticNote(text)?.let { add(it) }
@@ -355,6 +375,12 @@ class ChatViewModel(
     /** Returns an empathetic directive when the user's message reads negative, else null. */
     private fun empatheticNote(text: String): String? =
         if (SentimentAnalyzer.analyze(text) == Sentiment.NEGATIVE) EMPATHETIC_NOTE else null
+
+    /** Saves a remembered fact to Neon memory and returns a user-facing acknowledgment. */
+    private suspend fun rememberFact(fact: String): String {
+        val neon = neonRepository ?: return REMEMBER_UNAVAILABLE
+        return if (neon.saveMemory("fact", fact).isSuccess) REMEMBER_SAVED else REMEMBER_FAILED
+    }
 
     fun retryLast() {
         val convId = _currentConversationId.value ?: return
@@ -442,13 +468,14 @@ class ChatViewModel(
         private val toolOrchestrator: ToolOrchestrator,
         private val emotionAnalyzer: EmotionAnalyzer,
         private val loadManager: CognitiveLoadManager,
-        private val cultureContext: CultureContext
+        private val cultureContext: CultureContext,
+        private val neonRepository: NeonRepository? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return ChatViewModel(
                 repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
-                emotionAnalyzer, loadManager, cultureContext
+                emotionAnalyzer, loadManager, cultureContext, neonRepository
             ) as T
         }
     }
@@ -457,11 +484,16 @@ class ChatViewModel(
         private const val DEFAULT_TOP_K = 8
         private const val DEFAULT_COUNT = 10
         private const val TOOL_WEB_SEARCH = "web_search"
+        private const val TOOL_SECOND_BRAIN = "second_brain_search"
         // Single-user app: a fixed session id scopes the behavior guard to this install.
         private const val SESSION_ID = "default"
         private const val BLOCKED_MESSAGE =
             "تم تجاوز الحد المسموح من المحاولات المخالفة. تم إيقاف الردود مؤقتًا، حاول لاحقًا."
         private const val EMPATHETIC_NOTE =
             "المستخدم يبدو متضايقًا، كن متعاطفًا ولطيفًا في ردك."
+        private const val REMEMBER_SAVED = "تم حفظها في ذاكرتي ✓"
+        private const val REMEMBER_FAILED = "تعذّر حفظها في الذاكرة، حاول لاحقًا."
+        private const val REMEMBER_UNAVAILABLE =
+            "قاعدة البيانات غير مربوطة بعد — اربطها من الإعدادات أولًا."
     }
 }

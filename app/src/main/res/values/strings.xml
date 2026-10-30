@@ -41,6 +41,8 @@
     <string name="search_malformed">Invalid response from knowledge base</string>
     <string name="search_error">Search failed</string>
     <string name="knowledge_base_url">Knowledge base URL</string>
+    <string name="neon_read_url">Neon read connection (Second Brain search)</string>
+    <string name="neon_write_url">Neon write connection (chat &amp; memory)</string>
     <string name="web_search">Web search</string>
     <string name="web_search_placeholder">Search the web…</string>
     <string name="working_for">Working for %1$ds</string>

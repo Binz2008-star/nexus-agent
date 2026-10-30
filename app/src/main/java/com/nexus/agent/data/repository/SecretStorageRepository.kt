@@ -38,17 +38,26 @@ class SecretStorageRepository(
     private val dataStore: DataStore<Preferences>,
     private val cipher: SecretCipher
 ) {
-    private val apiKeyPref = stringPreferencesKey(API_KEY_PREF_NAME)
-
     /** Encrypts and stores [plaintext]. Throws [CryptoException] if encryption fails. */
     suspend fun saveApiKey(plaintext: String) {
-        val ciphertext = cipher.encryptString(plaintext)
-        dataStore.edit { it[apiKeyPref] = ciphertext }
+        saveSecret(API_KEY_PREF_NAME, plaintext)
     }
 
     /** Reads and decrypts the stored key, distinguishing missing / corrupted / invalidated. */
-    suspend fun readApiKey(): ApiKeyReadResult {
-        val ciphertext = dataStore.data.map { it[apiKeyPref] }.first()
+    suspend fun readApiKey(): ApiKeyReadResult = readSecret(API_KEY_PREF_NAME)
+
+    suspend fun clearApiKey() {
+        clearSecret(API_KEY_PREF_NAME)
+    }
+
+    /** Generic encrypted-secret storage (used for the DeepSeek key and Neon connection strings). */
+    suspend fun saveSecret(name: String, plaintext: String) {
+        val ciphertext = cipher.encryptString(plaintext)
+        dataStore.edit { it[stringPreferencesKey(name)] = ciphertext }
+    }
+
+    suspend fun readSecret(name: String): ApiKeyReadResult {
+        val ciphertext = dataStore.data.map { it[stringPreferencesKey(name)] }.first()
             ?: return ApiKeyReadResult.Missing
         return try {
             ApiKeyReadResult.Present(cipher.decryptString(ciphertext))
@@ -59,12 +68,14 @@ class SecretStorageRepository(
         }
     }
 
-    suspend fun clearApiKey() {
-        dataStore.edit { it.remove(apiKeyPref) }
+    suspend fun clearSecret(name: String) {
+        dataStore.edit { it.remove(stringPreferencesKey(name)) }
     }
 
     companion object {
         const val API_KEY_PREF_NAME = "encrypted_deepseek_api_key"
+        const val NEON_READ_URL_PREF = "encrypted_neon_read_url"
+        const val NEON_WRITE_URL_PREF = "encrypted_neon_write_url"
 
         fun create(context: Context, cipher: SecretCipher): SecretStorageRepository =
             SecretStorageRepository(context.nexusSecretsDataStore, cipher)

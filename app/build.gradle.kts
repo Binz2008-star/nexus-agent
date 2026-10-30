@@ -44,6 +44,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -83,6 +84,11 @@ dependencies {
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
+
+    // Neon (Postgres) — direct JDBC for Second Brain search + cloud persistence.
+    // desugaring backports java.time for minSdk < 26 (pgjdbc uses it for timestamps).
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    implementation("org.postgresql:postgresql:42.7.4")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 
