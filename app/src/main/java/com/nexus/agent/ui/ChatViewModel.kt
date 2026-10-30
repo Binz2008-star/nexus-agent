@@ -43,6 +43,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
@@ -420,7 +422,7 @@ class ChatViewModel(
         if (query.isEmpty() || _isSearching.value) return
         viewModelScope.launch {
             _isSearching.value = true
-            _searchResults.value = knowledgeTool.search(query, DEFAULT_TOP_K)
+            _searchResults.value = withContext(Dispatchers.IO) { knowledgeTool.search(query, DEFAULT_TOP_K) }
             _isSearching.value = false
         }
     }
@@ -450,7 +452,7 @@ class ChatViewModel(
         if (query.isEmpty() || _isWebSearching.value) return
         viewModelScope.launch {
             _isWebSearching.value = true
-            _webResults.value = webSearchTool.search(query, DEFAULT_COUNT)
+            _webResults.value = withContext(Dispatchers.IO) { webSearchTool.search(query, DEFAULT_COUNT) }
             _isWebSearching.value = false
         }
     }
