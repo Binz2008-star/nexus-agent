@@ -69,6 +69,9 @@ object SecondBrainSql {
     fun errorCode(e: Throwable): String {
         val msg = e.message.orEmpty()
         return when {
+            msg.contains("driver", ignoreCase = true) ||
+                msg.contains("initialize class", ignoreCase = true) ||
+                msg.contains("failed resolution", ignoreCase = true) -> "driver"
             msg.contains("no connection", ignoreCase = true) ||
                 msg.contains("no url", ignoreCase = true) -> "no_connection"
             msg.contains("password authentication failed", ignoreCase = true) ||

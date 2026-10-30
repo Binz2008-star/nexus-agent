@@ -46,7 +46,11 @@ class NeonRepository(
                 KnowledgeSearchResult.Success(trimmed, merged)
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (e: VirtualMachineError) {
+                throw e
+            } catch (e: Throwable) {
+                // Includes LinkageError (NoClassDefFoundError/NoSuchMethodError) thrown by
+                // pgjdbc on Android where JNDI/JDBC-4.2 shims are missing. Degrade, don't crash.
                 KnowledgeSearchResult.Failure(SecondBrainSql.errorCode(e))
             }
         }
@@ -60,7 +64,9 @@ class NeonRepository(
                 Result.success(Unit)
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (e: VirtualMachineError) {
+                throw e
+            } catch (e: Throwable) {
                 Result.failure(e)
             }
         }
@@ -76,7 +82,9 @@ class NeonRepository(
                 Result.success(Unit)
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (e: VirtualMachineError) {
+                throw e
+            } catch (e: Throwable) {
                 Result.failure(e)
             }
         }
@@ -90,7 +98,9 @@ class NeonRepository(
                 Result.success(rows)
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (e: VirtualMachineError) {
+                throw e
+            } catch (e: Throwable) {
                 Result.failure(e)
             }
         }
