@@ -19,7 +19,8 @@ class ToolLoopTest {
     private class FakeTool(
         override val name: String,
         private val result: ToolResult,
-        override val riskLevel: RiskLevel = RiskLevel.READ
+        override val riskLevel: RiskLevel = RiskLevel.READ,
+        override val requiredScopes: List<String> = emptyList()
     ) : Tool {
         var calls = 0
         override suspend fun execute(input: JsonObject): ToolResult {
@@ -149,5 +150,47 @@ class ToolLoopTest {
         val answered = outcome as ToolLoop.Outcome.Answered
         assertEquals(1, commit.calls)
         assertEquals(1, answered.sources.size)
+    }
+
+    @Test
+    fun grantedScopesAreForwardedToToolExecution() = runTest {
+        val gmail = FakeTool(
+            "gmail_search", ToolResult.Success("msg", listOf(ToolSource("email.md"))),
+            requiredScopes = listOf("https://www.googleapis.com/auth/gmail.readonly")
+        )
+        val loop = ToolLoop(ToolOrchestrator(mapOf("gmail_search" to gmail)))
+        var round = 0
+        val outcome = loop.run(
+            history = emptyList(), model = "m", schemas = emptyList(),
+            propose = { _, _, _ ->
+                round++
+                if (round == 1) Result.success(ToolProposal.Calls(listOf(ToolCall("gmail_search", mapOf("query" to "receipt")))))
+                else Result.success(ToolProposal.Answer("found"))
+            },
+            grantedScopes = setOf("https://www.googleapis.com/auth/gmail.readonly")
+        )
+        assertTrue(outcome is ToolLoop.Outcome.Answered)
+        assertEquals(1, gmail.calls)
+    }
+
+    @Test
+    fun scopedToolWithoutGrantedScopesIsBlocked() = runTest {
+        val gmail = FakeTool(
+            "gmail_search", ToolResult.Success("msg"),
+            requiredScopes = listOf("https://www.googleapis.com/auth/gmail.readonly")
+        )
+        val loop = ToolLoop(ToolOrchestrator(mapOf("gmail_search" to gmail)))
+        var round = 0
+        val outcome = loop.run(
+            history = emptyList(), model = "m", schemas = emptyList(),
+            propose = { _, _, _ ->
+                round++
+                if (round == 1) Result.success(ToolProposal.Calls(listOf(ToolCall("gmail_search", mapOf("query" to "q")))))
+                else Result.success(ToolProposal.Answer("done"))
+            }
+            // No grantedScopes → default emptySet.
+        )
+        assertTrue(outcome is ToolLoop.Outcome.Answered)
+        assertEquals(0, gmail.calls) // unauthorized access stays blocked
     }
 }

@@ -19,6 +19,7 @@ import com.nexus.agent.domain.commands.Command
 import com.nexus.agent.domain.commands.CommandDetector
 import com.nexus.agent.domain.commands.GreetingDetector
 import com.nexus.agent.domain.memory.RememberCommandDetector
+import com.nexus.agent.domain.neon.MemoryRecall
 import com.nexus.agent.domain.orchestration.ToolLoop
 import com.nexus.agent.domain.orchestration.ToolProposal
 import com.nexus.agent.domain.persona.EmotionPoetry
@@ -323,11 +324,19 @@ class ChatViewModel(
                 update(TaskStatus.Running(startedAt, "thinking"))
                 repository.persistUserMessage(conversationId, text)
 
-                val history = repository.buildHistory(conversationId)
+                val history = repository.conversationHistory(conversationId)
+                val memoryContext = recallMemoryContext(text)
+                val fullHistory = buildList {
+                    if (!memoryContext.isNullOrBlank()) {
+                        add(ChatMessage(ChatMessage.Role.SYSTEM, memoryContext))
+                    }
+                    addAll(history)
+                }
                 val schemas = toolOrchestrator.functionSchemas()
                 val outcome = toolLoop.run(
-                    history, _selectedModel.value, schemas,
-                    propose = { h, m, s -> repository.completeWithTools(h, m, s).map { it.toProposal() } }
+                    fullHistory, _selectedModel.value, schemas,
+                    propose = { h, m, s -> repository.completeWithTools(h, m, s).map { it.toProposal() } },
+                    grantedScopes = gmailScopesProvider()
                 )
                 when (outcome) {
                     is ToolLoop.Outcome.Answered -> {
@@ -368,10 +377,13 @@ class ChatViewModel(
         }
 
         // Merge web + Second Brain grounding. The Second Brain search is best-effort
-        // (a missing Neon config simply contributes no sources).
+        // (a missing Neon config simply contributes no sources). Personal memory recall is
+        // injected first, fenced as untrusted data.
         val sources = (webResult as? ToolResult.Success)?.sources.orEmpty() +
             (brainResult as? ToolResult.Success)?.sources.orEmpty()
+        val memoryContext = recallMemoryContext(text)
         val context = buildList {
+            if (!memoryContext.isNullOrBlank()) add(memoryContext)
             if (sources.isNotEmpty()) add(buildContextPrompt(sources))
             empatheticNote(text)?.let { add(it) }
         }.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
@@ -542,6 +554,17 @@ class ChatViewModel(
         return if (neon.saveMemory("fact", fact).isSuccess) REMEMBER_SAVED else REMEMBER_FAILED
     }
 
+    /**
+     * Recalls the personal memories relevant to [query] and returns a fenced, bounded context
+     * string (or null when none are available / Neon is not configured / the DB is unreachable).
+     * Retrieved content is treated as untrusted data, never as system instructions.
+     */
+    private suspend fun recallMemoryContext(query: String): String? {
+        val neon = neonRepository ?: return null
+        val items = neon.recallMemory(query, MEMORY_RECALL_LIMIT).getOrNull().orEmpty()
+        return MemoryRecall.buildMemoryContext(items).takeIf { it.isNotBlank() }
+    }
+
     fun retryLast() {
         val convId = _currentConversationId.value ?: return
         if (_isLoading.value || taskStatus.value is TaskStatus.Running) return
@@ -651,6 +674,7 @@ class ChatViewModel(
     companion object {
         private const val DEFAULT_TOP_K = 8
         private const val DEFAULT_COUNT = 10
+        private const val MEMORY_RECALL_LIMIT = 8
         private const val TOOL_WEB_SEARCH = "web_search"
         private const val TOOL_SECOND_BRAIN = "second_brain_search"
         private const val TOOL_GMAIL = "gmail_search"
