@@ -1,5 +1,7 @@
 package com.nexus.agent.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -22,10 +24,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -80,6 +81,7 @@ import com.nexus.agent.domain.culture.CultureContextEngine
 import com.nexus.agent.domain.culture.Region
 import com.nexus.agent.domain.emotion.EmotionAnalyzer
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.neon.CredentialFileParser
 import com.nexus.agent.domain.neon.NeonConnectionParser
 import com.nexus.agent.domain.persona.AdaptiveTone
 import com.nexus.agent.domain.persona.Tone
@@ -266,6 +268,31 @@ fun ChatScreen(
     var neonWriteDirty by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
 
+    // Import credentials from a user-placed file (nexus-neon-rotation.txt) so they don't need
+    // to be retyped. Values pre-fill the fields and are stored encrypted on Save.
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val content = withContext(Dispatchers.IO) {
+                    try {
+                        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                val creds = content?.let { CredentialFileParser.parse(it) }
+                if (creds == null || creds.isEmpty) {
+                    context.showToast(context.getString(R.string.import_failed))
+                } else {
+                    creds.deepSeekKey?.let { keyInput = it }
+                    creds.readUrl?.let { neonReadUrlInput = it; neonReadDirty = true }
+                    creds.writeUrl?.let { neonWriteUrlInput = it; neonWriteDirty = true }
+                    context.showToast(context.getString(R.string.import_ok))
+                }
+            }
+        }
+    }
+
     LaunchedEffect(showSettings) {
         if (showSettings) {
             systemPromptInput = withContext(Dispatchers.IO) { preferences.systemPrompt.first() }
@@ -377,7 +404,7 @@ fun ChatScreen(
                 value = input,
                 onValueChange = { input = it },
                 enabled = !isLoading,
-                sendEnabled = !isLoading && taskStatus !is TaskStatus.Running,
+                sendEnabled = !isLoading && taskStatus !is TaskStatus.Running && input.isNotBlank(),
                 onSend = {
                     viewModel.sendMessageWithAgent(input)
                     input = ""
@@ -410,6 +437,7 @@ fun ChatScreen(
             onDisconnectGmail = { scope.launch { gmailConnector.disconnect() } },
             mirrorEnabled = mirrorEnabled,
             onMirrorEnabledChange = { scope.launch { preferences.setMirrorEnabled(it) } },
+            onImport = { importLauncher.launch(arrayOf("*/*")) },
             onDismiss = { showSettings = false },
             onSave = {
                 scope.launch {
@@ -493,14 +521,16 @@ private fun MessageBubble(message: ChatMessage, isStreaming: Boolean = false) {
             )
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Text(
-                    text = message.text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (isUser)
-                        MaterialTheme.colorScheme.onPrimary
-                    else
-                        MaterialTheme.colorScheme.onSurface
-                )
+                SelectionContainer {
+                    Text(
+                        text = message.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (isUser)
+                            MaterialTheme.colorScheme.onPrimary
+                        else
+                            MaterialTheme.colorScheme.onSurface
+                    )
+                }
                 if (isStreaming) {
                     Text(
                         "…",
@@ -566,14 +596,6 @@ private fun Composer(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { /* attach — reserved */ }, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    Icons.Default.AttachFile,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(Modifier.width(4.dp))
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
@@ -584,29 +606,19 @@ private fun Composer(
                 shape = RoundedCornerShape(24.dp)
             )
             Spacer(Modifier.width(4.dp))
-            if (value.isNotBlank()) {
-                IconButton(
-                    onClick = onSend,
-                    enabled = sendEnabled,
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Send,
-                        contentDescription = stringResource(R.string.send),
-                        tint = if (sendEnabled)
-                            MaterialTheme.colorScheme.primary
-                        else
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                IconButton(onClick = { /* voice — reserved */ }, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        Icons.Default.Mic,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            IconButton(
+                onClick = onSend,
+                enabled = sendEnabled,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    Icons.Default.Send,
+                    contentDescription = stringResource(R.string.send),
+                    tint = if (sendEnabled)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -630,6 +642,7 @@ private fun SettingsDialog(
     onDisconnectGmail: () -> Unit,
     mirrorEnabled: Boolean,
     onMirrorEnabledChange: (Boolean) -> Unit,
+    onImport: () -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
@@ -669,6 +682,9 @@ private fun SettingsDialog(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                TextButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.import_from_file))
+                }
                 OutlinedTextField(
                     value = keyInput,
                     onValueChange = onKeyChange,

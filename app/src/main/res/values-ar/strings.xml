@@ -62,4 +62,7 @@
     <string name="approval_action">يريد NEXUS تشغيل: %1$s</string>
     <string name="approve">موافقة</string>
     <string name="reject">رفض</string>
+    <string name="import_from_file">استيراد من ملف</string>
+    <string name="import_ok">تم الاستيراد</string>
+    <string name="import_failed">تعذّرت قراءة ملف بيانات الدخول</string>
 </resources>

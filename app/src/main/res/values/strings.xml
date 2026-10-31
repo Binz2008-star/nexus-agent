@@ -62,4 +62,7 @@
     <string name="approval_action">NEXUS wants to run: %1$s</string>
     <string name="approve">Approve</string>
     <string name="reject">Reject</string>
+    <string name="import_from_file">Import from file</string>
+    <string name="import_ok">Imported</string>
+    <string name="import_failed">Could not read credentials file</string>
 </resources>
