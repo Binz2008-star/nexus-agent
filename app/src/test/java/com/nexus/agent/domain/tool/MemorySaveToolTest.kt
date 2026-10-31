@@ -65,4 +65,14 @@ class MemorySaveToolTest {
         assertTrue(orch.execute("memory_save", input, receipt) is ToolResult.Blocked)
         assertEquals(listOf("prefer tea"), saved)
     }
+
+    @Test
+    fun modelProposedContentCallReachesHandler() = runBlocking {
+        val saved = mutableListOf<String>()
+        val tool = MemorySaveTool(save = { c -> saved += c; Result.success(Unit) })
+        val call = ToolCallParser.parse("memory_save", """{"content":"I prefer tea"}""")!!
+        val result = tool.execute(ToolCallParser.toJsonObject(call))
+        assertTrue(result is ToolResult.Success)
+        assertEquals(listOf("I prefer tea"), saved)
+    }
 }

@@ -42,5 +42,8 @@ interface Tool {
     /** OAuth/account scopes required to run (e.g. "gmail.readonly"). Empty = none. */
     val requiredScopes: List<String> get() = emptyList()
 
+    /** Function-calling parameters schema (JSON Schema). Defaults to a single required `query`. */
+    val parameterSchema: JsonObject get() = ToolSchema.DEFAULT_QUERY_PARAMETERS
+
     suspend fun execute(input: JsonObject): ToolResult
 }

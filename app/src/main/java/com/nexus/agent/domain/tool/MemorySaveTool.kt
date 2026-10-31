@@ -24,6 +24,10 @@ class MemorySaveTool(
 
     override val riskLevel: RiskLevel = RiskLevel.COMMIT
 
+    override val parameterSchema: JsonObject = ToolSchema.parameters(
+        listOf(ToolSchema.Parameter("content", "The fact or preference to remember"))
+    )
+
     override suspend fun execute(input: JsonObject): ToolResult {
         val content = (input["content"] as? JsonPrimitive)
             ?.takeIf { it.isString }?.content?.trim().orEmpty()

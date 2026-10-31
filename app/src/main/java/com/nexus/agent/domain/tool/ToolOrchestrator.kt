@@ -64,7 +64,7 @@ class ToolOrchestrator(
 
     /** Function-calling schemas for model-driven tool selection. */
     fun functionSchemas(): List<JsonObject> =
-        tools.values.map { ToolSchema.forTool(it.name, it.description) }
+        tools.values.map { ToolSchema.forTool(it.name, it.description, it.parameterSchema) }
 
     companion object {
         /** Tools that must never execute, even if the model requests them. */
