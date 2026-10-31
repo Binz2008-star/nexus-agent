@@ -1,6 +1,9 @@
 package com.nexus.agent.domain.orchestration
 
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.policy.ApprovalReceipt
+import com.nexus.agent.domain.policy.ApprovalRequest
+import com.nexus.agent.domain.tool.RiskLevel
 import com.nexus.agent.domain.tool.ToolCall
 import com.nexus.agent.domain.tool.ToolCallParser
 import com.nexus.agent.domain.tool.ToolOrchestrator
@@ -24,7 +27,8 @@ sealed interface ToolProposal {
  */
 class ToolLoop(
     private val orchestrator: ToolOrchestrator,
-    private val maxRounds: Int = 3
+    private val maxRounds: Int = 3,
+    private val requestApproval: suspend (ApprovalRequest) -> ApprovalReceipt? = { null }
 ) {
 
     sealed interface Outcome {
@@ -51,8 +55,23 @@ class ToolLoop(
                 is ToolProposal.Calls -> {
                     val notes = mutableListOf<String>()
                     for (call in proposal.calls) {
+                        // COMMIT-level tools need an approval receipt before execution.
+                        var receipt: ApprovalReceipt? = null
+                        if (orchestrator.riskLevelOf(call.name) == RiskLevel.COMMIT) {
+                            val request = ApprovalRequest(
+                                id = "call-${call.name}-${System.nanoTime()}",
+                                toolName = call.name,
+                                arguments = call.arguments.toString()
+                            )
+                            receipt = requestApproval(request)
+                            if (receipt == null) {
+                                notes += "Tool ${call.name} requires approval (not granted)"
+                                continue
+                            }
+                        }
                         val result = orchestrator.execute(
-                            call.name, ToolCallParser.toJsonObject(call), grantedScopes = grantedScopes
+                            call.name, ToolCallParser.toJsonObject(call),
+                            approvalReceipt = receipt, grantedScopes = grantedScopes
                         )
                         when (result) {
                             is ToolResult.Success -> {

@@ -1,6 +1,8 @@
 package com.nexus.agent.domain.orchestration
 
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.policy.ApprovalGate
+import com.nexus.agent.domain.tool.RiskLevel
 import com.nexus.agent.domain.tool.Tool
 import com.nexus.agent.domain.tool.ToolCall
 import com.nexus.agent.domain.tool.ToolOrchestrator
@@ -16,7 +18,8 @@ class ToolLoopTest {
 
     private class FakeTool(
         override val name: String,
-        private val result: ToolResult
+        private val result: ToolResult,
+        override val riskLevel: RiskLevel = RiskLevel.READ
     ) : Tool {
         var calls = 0
         override suspend fun execute(input: JsonObject): ToolResult {
@@ -109,5 +112,42 @@ class ToolLoopTest {
         assertEquals(2, answered.sources.size)
         assertEquals(1, web.calls)
         assertEquals(1, brain.calls)
+    }
+
+    @Test
+    fun commitToolWithoutApprovalIsNotExecuted() = runTest {
+        val commit = FakeTool("commit_tool", ToolResult.Success("x"), riskLevel = RiskLevel.COMMIT)
+        val gate = ApprovalGate()
+        val loop = ToolLoop(ToolOrchestrator(mapOf("commit_tool" to commit), gate), requestApproval = { null })
+        var round = 0
+        val outcome = loop.run(
+            history = emptyList(), model = "m", schemas = emptyList(),
+            propose = { _, _, _ ->
+                round++
+                if (round == 1) Result.success(ToolProposal.Calls(listOf(ToolCall("commit_tool", mapOf("x" to "y")))))
+                else Result.success(ToolProposal.Answer("done"))
+            }
+        )
+        assertTrue(outcome is ToolLoop.Outcome.Answered)
+        assertEquals(0, commit.calls) // never executed without approval
+    }
+
+    @Test
+    fun commitToolWithApprovalExecutes() = runTest {
+        val commit = FakeTool("commit_tool", ToolResult.Success("committed", listOf(ToolSource("commit.md"))), riskLevel = RiskLevel.COMMIT)
+        val gate = ApprovalGate()
+        val loop = ToolLoop(ToolOrchestrator(mapOf("commit_tool" to commit), gate), requestApproval = { req -> gate.approve(req) })
+        var round = 0
+        val outcome = loop.run(
+            history = emptyList(), model = "m", schemas = emptyList(),
+            propose = { _, _, _ ->
+                round++
+                if (round == 1) Result.success(ToolProposal.Calls(listOf(ToolCall("commit_tool", mapOf("x" to "y")))))
+                else Result.success(ToolProposal.Answer("done"))
+            }
+        )
+        val answered = outcome as ToolLoop.Outcome.Answered
+        assertEquals(1, commit.calls)
+        assertEquals(1, answered.sources.size)
     }
 }

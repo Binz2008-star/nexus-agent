@@ -55,6 +55,9 @@ class ToolOrchestrator(
 
     fun toolNames(): Set<String> = tools.keys
 
+    /** The declared risk level of a registered tool, or null when unknown. */
+    fun riskLevelOf(name: String): RiskLevel? = tools[name]?.riskLevel
+
     /** Capability declarations, so callers can introspect risk/scopes without executing. */
     fun capabilities(): List<ToolCapability> =
         tools.values.map { ToolCapability(it.name, it.riskLevel, it.requiredScopes) }
