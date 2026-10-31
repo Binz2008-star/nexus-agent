@@ -22,6 +22,9 @@ import com.nexus.agent.domain.memory.RememberCommandDetector
 import com.nexus.agent.domain.orchestration.ToolLoop
 import com.nexus.agent.domain.orchestration.ToolProposal
 import com.nexus.agent.domain.persona.EmotionPoetry
+import com.nexus.agent.domain.policy.ApprovalGate
+import com.nexus.agent.domain.policy.ApprovalReceipt
+import com.nexus.agent.domain.policy.ApprovalRequest
 import com.nexus.agent.domain.persona.Sentiment
 import com.nexus.agent.domain.persona.SentimentAnalyzer
 import com.nexus.agent.domain.safety.IntentEvaluator
@@ -38,6 +41,7 @@ import com.nexus.agent.domain.tool.WebSearchTool
 import com.nexus.agent.domain.tool.buildContextPrompt
 import com.nexus.agent.domain.wellness.BreathingCompanion
 import com.nexus.agent.domain.wellness.BreathingPattern
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -62,7 +66,8 @@ class ChatViewModel(
     private val loadManager: CognitiveLoadManager,
     private val cultureContext: CultureContext,
     private val neonRepository: NeonRepository? = null,
-    private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() }
+    private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() },
+    private val approvalGate: ApprovalGate = ApprovalGate()
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -119,7 +124,39 @@ class ChatViewModel(
         SafetyPolicy(emotionAnalyzer, behaviorGuard, intentEvaluator, cultureContext, BLOCKED_MESSAGE)
 
     // Model-driven tool loop: the model proposes tools, the orchestrator validates + executes.
-    private val toolLoop = ToolLoop(toolOrchestrator)
+    private val toolLoop = ToolLoop(toolOrchestrator, requestApproval = ::requestApproval)
+
+    // ---- Consent/approval (COMMIT tools pause here until the user approves/rejects) ----
+
+    private val _pendingApproval = MutableStateFlow<ApprovalRequest?>(null)
+    val pendingApproval: StateFlow<ApprovalRequest?> = _pendingApproval.asStateFlow()
+
+    private var pendingDeferred: CompletableDeferred<ApprovalReceipt?>? = null
+
+    /** Suspends the tool loop until the user approves/rejects the pending COMMIT action. */
+    private suspend fun requestApproval(request: ApprovalRequest): ApprovalReceipt? {
+        val deferred = CompletableDeferred<ApprovalReceipt?>()
+        pendingDeferred = deferred
+        _pendingApproval.value = request
+        return deferred.await()
+    }
+
+    /** User approved the pending action — issue a receipt and resume the loop. */
+    fun approvePending() {
+        val request = _pendingApproval.value ?: return
+        _pendingApproval.value = null
+        val deferred = pendingDeferred
+        pendingDeferred = null
+        deferred?.complete(approvalGate.approve(request))
+    }
+
+    /** User rejected the pending action — resume the loop with no receipt. */
+    fun rejectPending() {
+        _pendingApproval.value = null
+        val deferred = pendingDeferred
+        pendingDeferred = null
+        deferred?.complete(null)
+    }
 
     init {
         // Restore the last-used model across restarts.
@@ -586,13 +623,15 @@ class ChatViewModel(
         private val loadManager: CognitiveLoadManager,
         private val cultureContext: CultureContext,
         private val neonRepository: NeonRepository? = null,
-        private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() }
+        private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() },
+        private val approvalGate: ApprovalGate = ApprovalGate()
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return ChatViewModel(
                 repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
-                emotionAnalyzer, loadManager, cultureContext, neonRepository, gmailScopesProvider
+                emotionAnalyzer, loadManager, cultureContext, neonRepository, gmailScopesProvider,
+                approvalGate
             ) as T
         }
     }

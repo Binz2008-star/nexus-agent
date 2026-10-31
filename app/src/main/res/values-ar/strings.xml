@@ -58,4 +58,8 @@
     <string name="gmail_connected_as">مربوط كـ %1$s</string>
     <string name="oauth_client_missing">معرّف عميل Google OAuth غير مُعد بعد</string>
     <string name="mirror_enabled">مزامنة المحادثات إلى Neon (نسخة سحابية)</string>
+    <string name="approval_title">الموافقة على الإجراء</string>
+    <string name="approval_action">يريد NEXUS تشغيل: %1$s</string>
+    <string name="approve">موافقة</string>
+    <string name="reject">رفض</string>
 </resources>

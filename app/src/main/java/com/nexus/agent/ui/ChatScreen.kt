@@ -84,6 +84,8 @@ import com.nexus.agent.domain.neon.NeonConnectionParser
 import com.nexus.agent.domain.persona.AdaptiveTone
 import com.nexus.agent.domain.persona.Tone
 import com.nexus.agent.domain.persona.regionToDialect
+import com.nexus.agent.domain.policy.ApprovalGate
+import com.nexus.agent.domain.policy.ApprovalRequest
 import com.nexus.agent.domain.router.AiModelRouter
 import com.nexus.agent.domain.router.ModelClient
 import com.nexus.agent.domain.tool.KnowledgeSearchTool
@@ -214,13 +216,15 @@ fun ChatScreen(
         val repo = GmailRepository(searchApi = { q, n -> api.searchMessages(q, n) })
         GmailSearchTool(repo)
     }
-    val toolOrchestrator = remember {
+    val approvalGate = remember { ApprovalGate() }
+    val toolOrchestrator = remember(approvalGate) {
         ToolOrchestrator(
             mapOf(
                 webSearchAdapter.name to webSearchAdapter,
                 knowledgeSearchTool.name to knowledgeSearchTool,
                 gmailSearchTool.name to gmailSearchTool
-            )
+            ),
+            approvalGate
         )
     }
 
@@ -230,7 +234,8 @@ fun ChatScreen(
             emotionAnalyzer, loadManager, cultureContext, neonRepository,
             gmailScopesProvider = {
                 if (gmailConnector.isConnected.value) gmailConnector.scopes.toSet() else emptySet()
-            }
+            },
+            approvalGate = approvalGate
         )
     )
 
@@ -242,6 +247,7 @@ fun ChatScreen(
     val gmailConnected by gmailConnector.isConnected.collectAsState()
     val gmailEmail by gmailConnector.email.collectAsState()
     val mirrorEnabled by preferences.mirrorEnabled.collectAsState(initial = false)
+    val pendingApproval by viewModel.pendingApproval.collectAsState()
 
     var showSettings by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
@@ -427,6 +433,14 @@ fun ChatScreen(
                     }
                 }
             }
+        )
+    }
+
+    pendingApproval?.let { request ->
+        ApprovalCard(
+            request = request,
+            onApprove = { viewModel.approvePending() },
+            onReject = { viewModel.rejectPending() }
         )
     }
 }
@@ -716,6 +730,35 @@ private fun SettingsDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        }
+    )
+}
+
+@Composable
+private fun ApprovalCard(
+    request: ApprovalRequest,
+    onApprove: () -> Unit,
+    onReject: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onReject,
+        title = { Text(stringResource(R.string.approval_title)) },
+        text = {
+            Column {
+                Text(stringResource(R.string.approval_action, request.toolName))
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = request.arguments,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = onApprove) { Text(stringResource(R.string.approve)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onReject) { Text(stringResource(R.string.reject)) }
         }
     )
 }
