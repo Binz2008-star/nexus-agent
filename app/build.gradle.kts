@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -37,7 +39,7 @@ android {
     signingConfigs {
         if (!testStorePath.isNullOrBlank()) {
             create("test") {
-                storeFile = java.io.File(testStorePath)
+                storeFile = File(testStorePath)
                 storePassword = System.getenv("TEST_SIGNING_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("TEST_SIGNING_KEY_ALIAS") ?: "nexustest"
                 keyPassword = System.getenv("TEST_SIGNING_KEY_PASSWORD")
