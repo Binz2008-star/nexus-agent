@@ -11,8 +11,8 @@ package com.nexus.agent.domain.neon
  * Relevance is a cheap, local, language-aware match (no embeddings, no extra API calls):
  *  1. normalize (Unicode NFKC, lowercase, strip Arabic diacritics, unify Arabic letter variants);
  *  2. tokenize + drop stopwords;
- *  3. expand query tokens through a small synonym lexicon (favorite/preferred, color/colour, …);
- *  4. score each memory by exact → prefix → character-bigram similarity of its tokens.
+ *  3. score each query token (concept) by its best synonym match — exact → Arabic
+ *     definite-article equivalence → derivational-suffix prefix → character-bigram similarity.
  *
  * Retrieved memories are bounded in count and size, and fenced as *untrusted data* (carried in a
  * system-role message but explicitly marked untrusted) so a memory that happens to contain a
@@ -23,13 +23,10 @@ object MemoryRecall {
     /** Upper bound on the number of query tokens considered when scoring. */
     private const val MAX_TOKENS = 24
 
-    /** Upper bound after synonym expansion. */
-    private const val MAX_EXPANDED_TOKENS = 64
-
     /** Tokens shorter than this (per Unicode character) are ignored as noise. */
     private const val MIN_TOKEN_LENGTH = 2
 
-    /** Per-item content cap injected into the prompt. */
+    /** Per-item content cap injected into the prompt (before escaping). */
     private const val MAX_ITEM_LENGTH = 500
 
     /** Prefix (stemming) match requires both tokens at least this long. */
@@ -38,16 +35,16 @@ object MemoryRecall {
     /** Character-bigram Dice threshold below which two tokens are considered unrelated. */
     private const val BIGRAM_THRESHOLD = 0.6
 
-    /** Score for a prefix match (one token is a strict prefix of the other). */
+    /** Score for a prefix / Arabic-article-equivalent match. */
     private const val PREFIX_SCORE = 0.8
 
     /**
      * Selects the memories most relevant to [query], bounded by [limit]. Returns at most [limit]
-     * items, ordered best-first. Memories with no overlap (exact, prefix, or bigram-fuzzy) are
-     * dropped.
+     * items, ordered best-first. Memories with no overlap (exact, article-equivalent, prefix, or
+     * bigram-fuzzy) are dropped.
      */
     fun selectRelevant(items: List<NeonMemoryItem>, query: String, limit: Int): List<NeonMemoryItem> {
-        val tokens = expand(tokenize(query))
+        val tokens = tokenize(query)
         if (tokens.isEmpty()) return emptyList()
         val bounded = limit.coerceAtLeast(0)
         if (bounded == 0) return emptyList()
@@ -59,25 +56,38 @@ object MemoryRecall {
             .map { (item, _) -> item }
     }
 
+    /** Each query token (concept) contributes at most 1.0 — the best of its synonym variants. */
     private fun score(item: NeonMemoryItem, queryTokens: List<String>): Double {
         val memoryTokens = tokenize(item.content)
         if (memoryTokens.isEmpty()) return 0.0
         return queryTokens.sumOf { q ->
-            memoryTokens.maxOfOrNull { m -> similarity(q, m) } ?: 0.0
+            val variants = SYNONYM_LOOKUP[q] ?: listOf(q)
+            variants.maxOf { variant -> memoryTokens.maxOfOrNull { m -> similarity(variant, m) } ?: 0.0 }
         }
     }
 
-    /** Exact (1.0) → prefix (0.8) → character-bigram Dice (≥ 0.6), else 0. */
+    /** Exact (1.0) → Arabic article equivalence (0.8) → suffix-guarded prefix (0.8) → bigram (≥0.6). */
     private fun similarity(a: String, b: String): Double {
         if (a == b) return 1.0
-        if (a.length >= PREFIX_MIN_LENGTH && b.length >= PREFIX_MIN_LENGTH &&
-            (a.startsWith(b) || b.startsWith(a))
-        ) {
-            return PREFIX_SCORE
-        }
+        if (stripArabicArticle(a) == stripArabicArticle(b)) return PREFIX_SCORE
+        if (prefixMatch(a, b)) return PREFIX_SCORE
         val dice = bigramDice(a, b)
         return if (dice >= BIGRAM_THRESHOLD) dice else 0.0
     }
+
+    /** A prefix match only counts when the remainder is a known derivational suffix (stemming). */
+    private fun prefixMatch(a: String, b: String): Boolean {
+        if (a.length < PREFIX_MIN_LENGTH || b.length < PREFIX_MIN_LENGTH) return false
+        return when {
+            a.length > b.length && a.startsWith(b) -> a.substring(b.length) in DERIVATIONAL_SUFFIXES
+            b.length > a.length && b.startsWith(a) -> b.substring(a.length) in DERIVATIONAL_SUFFIXES
+            else -> false
+        }
+    }
+
+    /** Strips a leading Arabic definite article from longer words ("اللون" → "لون"). */
+    private fun stripArabicArticle(s: String): String =
+        if (s.length > 4 && s.startsWith("ال")) s.substring(2) else s
 
     private fun bigramDice(a: String, b: String): Double {
         if (a.length < 2 || b.length < 2) return 0.0
@@ -110,13 +120,10 @@ object MemoryRecall {
             .replace('ؤ', 'و')
             .replace('ئ', 'ي')
 
-    private fun expand(tokens: List<String>): List<String> =
-        tokens.flatMap { SYNONYM_LOOKUP[it] ?: listOf(it) }.distinct().take(MAX_EXPANDED_TOKENS)
-
     /**
      * Builds the fenced memory context injected into a completion. Retrieved content is treated
      * as untrusted data (prompt-injection defense), consistent with the tool-result/reference
-     * fencing used elsewhere. Item content is HTML-escaped and length-capped so a memory cannot
+     * fencing used elsewhere. Item content is length-capped then HTML-escaped so a memory cannot
      * close the `<memories>` fence early or inflate the prompt. Returns "" when empty.
      */
     fun buildMemoryContext(items: List<NeonMemoryItem>): String {
@@ -129,13 +136,19 @@ object MemoryRecall {
             "<memories>\n$body\n</memories>"
     }
 
-    /** Neutralizes fence delimiters and caps length so untrusted content stays inside the fence. */
+    /** Caps length (before escaping, on a code-point boundary) then neutralizes fence delimiters. */
     private fun sanitize(content: String): String =
-        content
+        truncateAtCodePoint(content, MAX_ITEM_LENGTH)
             .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
-            .take(MAX_ITEM_LENGTH)
+
+    private fun truncateAtCodePoint(s: String, max: Int): String {
+        if (s.length <= max) return s
+        var end = max
+        if (end > 0 && java.lang.Character.isHighSurrogate(s[end - 1])) end--
+        return s.substring(0, end)
+    }
 
     /** Splits on any run of non-letter/non-digit characters (handles Arabic + English + punctuation). */
     private val TOKEN_SEPARATOR = Regex("[^\\p{L}\\p{N}]+")
@@ -145,23 +158,30 @@ object MemoryRecall {
     /** Arabic combining diacritics (harakat) + superscript alef + Quranic annotations. */
     private val ARABIC_DIACRITICS = Regex("[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
 
+    /** English derivational suffixes that make a longer word a legitimate stem of a shorter one. */
+    private val DERIVATIONAL_SUFFIXES = setOf(
+        "s", "es", "ed", "ing", "er", "ers", "est", "ly", "ness", "ment",
+        "tion", "sion", "ity", "able", "ible", "al", "ic", "y", "ied", "ies",
+        "or", "ors", "ive", "ful", "less"
+    )
+
     /**
      * Small synonym lexicon for the concepts a personal assistant most often stores. Expanding the
      * query through these groups lets a differently-worded question ("preferred colour") match a
      * differently-worded fact ("favorite color") without embeddings or an external service.
      */
     private val SYNONYM_GROUPS = listOf(
-        setOf("color", "colour", "colors", "colours", "hue", "shade"),
+        setOf("color", "colour", "colors", "colours"),
         setOf("favorite", "favourite", "favorites", "preferred", "prefer", "prefers", "preference"),
         setOf("name", "named", "called", "call"),
         setOf("job", "work", "works", "working", "profession", "occupation", "career"),
-        setOf("live", "lives", "living", "lived", "reside", "resides", "located", "location", "city", "country", "town", "address"),
+        setOf("live", "lives", "living", "lived", "reside", "resides", "located", "location"),
         setOf("birthday", "born", "birth", "age", "dob"),
         setOf("food", "eat", "eats", "eating", "ate", "meal", "meals", "dish", "dishes", "cuisine"),
         setOf("hobby", "hobbies", "interest", "interests"),
         setOf("family", "mother", "father", "mom", "mum", "dad", "parent", "parents", "brother", "sister", "son", "daughter", "wife", "husband", "kids", "children"),
         setOf("language", "languages", "speak", "speaks", "speaking", "spoken"),
-        setOf("phone", "mobile", "contact", "cell"),
+        setOf("phone", "mobile", "cell"),
         setOf("email", "emails", "mail", "gmail")
     )
 
@@ -186,7 +206,8 @@ object MemoryRecall {
         // Arabic
         "في", "من", "على", "إلى", "عن", "ما", "ماذا", "هو", "هي", "هما", "هم", "هن",
         "أنا", "انا", "أنت", "انت", "نحن", "كان", "كانت", "يكون", "تكون",
-        "التي", "الذي", "الذين", "هذا", "هذه", "ذلك", "تلك", "عند", "عندما", "لدى",
+        "التي", "الذي", "الذين", "هذا", "هذه", "ذلك", "تلك", "عند", "عندما", "عندي", "لدى", "لدي",
+        "المستخدم", "المستخدمة",
         "مع", "لم", "لن", "لا", "نعم", "بلى", "قد", "سوف", "ثم", "أو", "او", "و", "ف",
         "حتى", "كل", "بعض", "غير", "إن", "ان", "أن", "إذا", "اذا", "لو", "يا", "أي", "اي",
         "هل", "أين", "اين", "كيف", "متى", "لماذا", "كم"

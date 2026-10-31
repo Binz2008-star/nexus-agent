@@ -128,6 +128,13 @@ class MemoryRecallTest {
     }
 
     @Test
+    fun arabicDefiniteArticleVariantsMatch() {
+        // "لون" (no article) still matches a fact stored as "اللون" (with article).
+        val items = listOf(item("اللون المفضل هو الأزرق"))
+        assertTrue(MemoryRecall.selectRelevant(items, "ما هو لون المفضل؟", 5).isNotEmpty())
+    }
+
+    @Test
     fun unrelatedQuestionDoesNotRecall() {
         val items = listOf(item("The user's favorite color is blue"))
         assertTrue(MemoryRecall.selectRelevant(items, "What is the user's phone number?", 5).isEmpty())
