@@ -39,6 +39,56 @@ class DeepSeekClient(
         onDelta: suspend (String) -> Unit
     ): Result<String> = completeInternal(history, model, stream = true, onDelta = onDelta)
 
+    override suspend fun completeWithTools(
+        history: List<ChatMessage>,
+        model: String,
+        tools: List<FunctionTool>
+    ): Result<CompletionResult> {
+        val key = apiKeyProvider()
+            ?: return Result.failure(IllegalStateException("No DeepSeek API key configured"))
+
+        val messages = history.map {
+            ApiMessage(
+                role = when (it.role) {
+                    ChatMessage.Role.USER -> "user"
+                    ChatMessage.Role.ASSISTANT -> "assistant"
+                    ChatMessage.Role.SYSTEM -> "system"
+                },
+                content = it.text
+            )
+        }
+        val requestBody = ChatCompletionRequest(model = model, messages = messages, tools = tools, toolChoice = "auto")
+        val request = Request.Builder()
+            .url("$BASE_URL/chat/completions")
+            .header("Authorization", "Bearer $key")
+            .header("Content-Type", "application/json")
+            .post(json.encodeToString(requestBody).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+
+        return try {
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return Result.failure(IOException("DeepSeek API error ${response.code}"))
+                }
+                val body = response.body ?: return Result.failure(IOException("Empty body"))
+                val parsed = json.decodeFromString<ChatCompletionResponse>(body.string())
+                val message = parsed.choices.firstOrNull()?.message
+                val toolCalls = message?.toolCalls
+                if (!toolCalls.isNullOrEmpty()) {
+                    Result.success(CompletionResult.ToolCallRequested(toolCalls))
+                } else {
+                    val content = message?.content
+                        ?: return Result.failure(IOException("Empty completion from DeepSeek"))
+                    Result.success(CompletionResult.Answer(content))
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private suspend fun completeInternal(
         history: List<ChatMessage>,
         model: String,

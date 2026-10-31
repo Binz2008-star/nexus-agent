@@ -54,6 +54,15 @@ class ChatRepositoryTest {
             if (r.isSuccess) onDelta(r.getOrThrow())
             return r
         }
+        override suspend fun completeWithTools(
+            history: List<ChatMessage>,
+            model: String,
+            tools: List<com.nexus.agent.data.network.FunctionTool>
+        ): Result<com.nexus.agent.data.network.CompletionResult> {
+            val r = complete(history, model)
+            return if (r.isSuccess) Result.success(com.nexus.agent.data.network.CompletionResult.Answer(r.getOrThrow()))
+            else Result.failure(r.exceptionOrNull() ?: Exception("no more"))
+        }
     }
 
     private fun repo(dao: FakeDao, client: FakeClient) =
