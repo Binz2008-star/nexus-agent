@@ -193,10 +193,11 @@ class GoogleAuthManager(
 
         try {
             val email = resp.idToken?.let { emailFromIdToken(it) }
-            // Account isolation: if a different Google account is authorized, drop the previous
-            // account's token so it is never mixed into the new session.
+            // Account isolation: if the account changed — or its identity can't be verified —
+            // drop the previous account's token so tokens/email are never mixed across accounts.
             val existingEmail = secretStorage.readGoogleEmail()
-            if (existingEmail != null && email != null && existingEmail != email) {
+            val accountChanged = existingEmail != null && (email == null || existingEmail != email)
+            if (accountChanged) {
                 secretStorage.clearGoogleRefreshToken()
                 secretStorage.clearGoogleEmail()
                 cachedAccessToken = null

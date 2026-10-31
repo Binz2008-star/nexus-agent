@@ -28,11 +28,17 @@ class ToolOrchestrator(
     suspend fun execute(
         toolName: String,
         input: JsonObject,
-        approvalReceipt: ApprovalReceipt? = null
+        approvalReceipt: ApprovalReceipt? = null,
+        grantedScopes: Set<String> = emptySet()
     ): ToolResult {
         // Task-execution/mutation tools are explicitly blocked (never registered, never run).
         if (toolName in BLOCKED_TOOLS) return ToolResult.Blocked("Blocked tool: $toolName")
         val tool = tools[toolName] ?: return ToolResult.Failure("unknown_tool")
+        // Scope check: every required scope must be granted before execution.
+        val missing = tool.requiredScopes.filterNot { it in grantedScopes }
+        if (missing.isNotEmpty()) {
+            return ToolResult.Blocked("Tool '$toolName' requires scope(s): ${missing.joinToString()}")
+        }
         // Default-deny: COMMIT-level tools require a valid, unconsumed approval receipt.
         if (tool.riskLevel == RiskLevel.COMMIT) {
             val receipt = approvalReceipt

@@ -57,7 +57,8 @@ class ChatViewModel(
     private val emotionAnalyzer: EmotionAnalyzer,
     private val loadManager: CognitiveLoadManager,
     private val cultureContext: CultureContext,
-    private val neonRepository: NeonRepository? = null
+    private val neonRepository: NeonRepository? = null,
+    private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() }
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -380,10 +381,14 @@ class ChatViewModel(
                 update(TaskStatus.Running(startedAt, "searching"))
                 repository.persistUserMessage(conversationId, text)
 
-                val toolResult = toolOrchestrator.execute(TOOL_GMAIL, buildJsonObject {
-                    put("query", JsonPrimitive(gmailQuery(text)))
-                    put("max_results", JsonPrimitive("10"))
-                })
+                val toolResult = toolOrchestrator.execute(
+                    TOOL_GMAIL,
+                    buildJsonObject {
+                        put("query", JsonPrimitive(gmailQuery(text)))
+                        put("max_results", JsonPrimitive("10"))
+                    },
+                    grantedScopes = gmailScopesProvider()
+                )
                 if (toolResult is ToolResult.Blocked) {
                     _errorMessage.value = toolResult.reason
                     update(TaskStatus.Failed("blocked"))
@@ -535,13 +540,14 @@ class ChatViewModel(
         private val emotionAnalyzer: EmotionAnalyzer,
         private val loadManager: CognitiveLoadManager,
         private val cultureContext: CultureContext,
-        private val neonRepository: NeonRepository? = null
+        private val neonRepository: NeonRepository? = null,
+        private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() }
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return ChatViewModel(
                 repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
-                emotionAnalyzer, loadManager, cultureContext, neonRepository
+                emotionAnalyzer, loadManager, cultureContext, neonRepository, gmailScopesProvider
             ) as T
         }
     }

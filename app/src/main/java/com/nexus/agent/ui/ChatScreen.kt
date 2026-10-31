@@ -227,7 +227,10 @@ fun ChatScreen(
     val viewModel: ChatViewModel = viewModel(
         factory = ChatViewModel.Factory(
             repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
-            emotionAnalyzer, loadManager, cultureContext, neonRepository
+            emotionAnalyzer, loadManager, cultureContext, neonRepository,
+            gmailScopesProvider = {
+                if (gmailConnector.isConnected.value) gmailConnector.scopes.toSet() else emptySet()
+            }
         )
     )
 

@@ -44,4 +44,15 @@ class ToolCallParserTest {
         val obj = ToolCallParser.toJsonObject(call)
         assertEquals(JsonPrimitive("hi"), obj["query"])
     }
+
+    @Test
+    fun nestedArgumentDoesNotDropPrimitiveArguments() {
+        val call = ToolCallParser.parse(
+            name = "web_search",
+            argumentsJson = """{"query":"hi","nested":{"a":1}}"""
+        )
+        assertEquals("web_search", call?.name)
+        assertEquals("hi", call?.arguments?.get("query"))
+        assertTrue(!call!!.arguments.containsKey("nested"))
+    }
 }

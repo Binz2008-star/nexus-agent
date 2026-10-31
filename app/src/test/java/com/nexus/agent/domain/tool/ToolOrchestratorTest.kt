@@ -89,6 +89,21 @@ class ToolOrchestratorTest {
     }
 
     @Test
+    fun scopedToolIsBlockedWithoutGrantedScopes() = runBlocking {
+        val tool = FakeTool("gmail", ToolResult.Success("x"), requiredScopes = listOf("gmail.readonly"))
+        val orch = ToolOrchestrator(mapOf("gmail" to tool))
+
+        // No granted scopes → default-denied.
+        assertTrue(orch.execute("gmail", buildJsonObject { }) is ToolResult.Blocked)
+        assertEquals(0, tool.calls)
+
+        // Granted scopes → executes.
+        val ok = orch.execute("gmail", buildJsonObject { }, grantedScopes = setOf("gmail.readonly"))
+        assertTrue(ok is ToolResult.Success)
+        assertEquals(1, tool.calls)
+    }
+
+    @Test
     fun capabilitiesExposeRiskAndScopes() {
         val read = FakeTool("read", ToolResult.Success("x"))
         val gmail = FakeTool("gmail", ToolResult.Success("x"), requiredScopes = listOf("gmail.readonly"))

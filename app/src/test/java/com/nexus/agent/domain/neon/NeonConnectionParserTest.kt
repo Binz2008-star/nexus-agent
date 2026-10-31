@@ -70,4 +70,16 @@ class NeonConnectionParserTest {
         assertTrue(masked.contains("user=nexus"))
         assertFalse(masked.contains("password=pw"))
     }
+
+    @Test
+    fun uriFormEncodesCredentials() {
+        val c = NeonConnectionParser.parse("postgresql://user:p@ss@ep-x.aws.neon.tech/neondb?sslmode=require")
+        assertTrue(c?.jdbcUrl?.contains("password=p%40ss") == true)
+    }
+
+    @Test
+    fun hasMaskedPasswordDetectsPlaceholder() {
+        assertTrue(NeonConnectionParser.hasMaskedPassword("jdbc:postgresql://h/db?sslmode=require&user=u&password=${NeonConnectionParser.MASKED_PASSWORD}"))
+        assertFalse(NeonConnectionParser.hasMaskedPassword("jdbc:postgresql://h/db?sslmode=require&user=u&password=realpw"))
+    }
 }

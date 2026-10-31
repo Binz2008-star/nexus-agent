@@ -71,8 +71,8 @@ object NeonConnectionParser {
         val params = mutableListOf<String>()
         if (query.isNotBlank()) params.add(query)
         userInfo?.let {
-            val user = it.substringBefore(':')
-            val password = it.substringAfter(':', "")
+            val user = percentEncode(it.substringBefore(':'))
+            val password = percentEncode(it.substringAfter(':', ""))
             if (user.isNotBlank()) params.add("user=$user")
             if (password.isNotBlank()) params.add("password=$password")
         }
@@ -108,5 +108,17 @@ object NeonConnectionParser {
         val slash = afterScheme.indexOf('/')
         if (slash < 0) return null
         return afterScheme.substring(slash + 1).substringBefore('?').takeIf { it.isNotBlank() }
+    }
+
+    /** RFC 3986 percent-encoding for credentials spliced into a JDBC query string. */
+    private fun percentEncode(value: String): String {
+        val sb = StringBuilder()
+        for (byte in value.toByteArray(Charsets.UTF_8)) {
+            val c = byte.toInt() and 0xFF
+            val unreserved = (c in 'A'.code..'Z'.code) || (c in 'a'.code..'z'.code) ||
+                (c in '0'.code..'9'.code) || c == '-'.code || c == '_'.code || c == '.'.code || c == '~'.code
+            if (unreserved) sb.append(c.toChar()) else sb.append('%').append("%02X".format(c))
+        }
+        return sb.toString()
     }
 }
