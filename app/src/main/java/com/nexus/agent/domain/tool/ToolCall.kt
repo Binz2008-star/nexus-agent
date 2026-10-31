@@ -5,7 +5,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitiveOrNull
 
 /**
  * A tool invocation proposed by the model (function-calling): a tool [name] plus string
@@ -36,7 +35,7 @@ object ToolCallParser {
             try {
                 json.parseToJsonElement(raw).jsonObject
                     .mapNotNull { (key, value) ->
-                        value.jsonPrimitiveOrNull?.content?.let { key to it }
+                        (value as? JsonPrimitive)?.content?.let { key to it }
                     }
                     .toMap()
             } catch (e: Exception) {
