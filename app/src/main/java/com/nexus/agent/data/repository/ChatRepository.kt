@@ -128,6 +128,16 @@ class ChatRepository(
     }
 
     /**
+     * Builds the full message list for a completion (system prompts + ordered conversation
+     * history), exposed for the model-driven tool loop. Runs on [Dispatchers.IO].
+     */
+    suspend fun buildHistory(conversationId: Long, context: String? = null): List<ChatMessage> =
+        withContext(Dispatchers.IO) {
+            val history = messageDao.getByConversationOnce(conversationId).map { it.toDomain() }
+            buildHistoryWithSystem(history, context)
+        }
+
+    /**
      * Streams a completion against the existing conversation history (which must already
      * include the user message), optionally grounding the answer in [context] (tool excerpts).
      */

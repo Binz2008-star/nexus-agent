@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.nexus.agent.data.local.ConversationEntity
+import com.nexus.agent.data.network.CompletionResult
 import com.nexus.agent.data.repository.AppPreferencesRepository
 import com.nexus.agent.data.repository.ChatRepository
 import com.nexus.agent.data.repository.NeonRepository
@@ -18,6 +19,8 @@ import com.nexus.agent.domain.commands.Command
 import com.nexus.agent.domain.commands.CommandDetector
 import com.nexus.agent.domain.commands.GreetingDetector
 import com.nexus.agent.domain.memory.RememberCommandDetector
+import com.nexus.agent.domain.orchestration.ToolLoop
+import com.nexus.agent.domain.orchestration.ToolProposal
 import com.nexus.agent.domain.persona.EmotionPoetry
 import com.nexus.agent.domain.persona.Sentiment
 import com.nexus.agent.domain.persona.SentimentAnalyzer
@@ -27,6 +30,7 @@ import com.nexus.agent.domain.safety.UserBehaviorGuard
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.domain.tool.KnowledgeTool
 import com.nexus.agent.domain.tool.TaskStatus
+import com.nexus.agent.domain.tool.ToolCallParser
 import com.nexus.agent.domain.tool.ToolOrchestrator
 import com.nexus.agent.domain.tool.ToolResult
 import com.nexus.agent.domain.tool.WebSearchOutcome
@@ -113,6 +117,9 @@ class ChatViewModel(
     // reaches the model/tool layer — no execution path bypasses it.
     private val safetyPolicy =
         SafetyPolicy(emotionAnalyzer, behaviorGuard, intentEvaluator, cultureContext, BLOCKED_MESSAGE)
+
+    // Model-driven tool loop: the model proposes tools, the orchestrator validates + executes.
+    private val toolLoop = ToolLoop(toolOrchestrator)
 
     init {
         // Restore the last-used model across restarts.
@@ -254,56 +261,94 @@ class ChatViewModel(
     }
 
     private fun launchAgentTask(conversationId: Long, text: String, generation: Long) {
+        // The agentic path now uses the model-driven tool loop (with a scripted fallback).
+        launchModelDrivenTask(conversationId, text, generation)
+    }
+
+    private fun launchModelDrivenTask(conversationId: Long, text: String, generation: Long) {
         _streamingText.value = ""
         _errorMessage.value = null
         taskRunner.run { update ->
             try {
                 val startedAt = System.currentTimeMillis()
-                update(TaskStatus.Running(startedAt, "searching"))
+                update(TaskStatus.Running(startedAt, "thinking"))
                 repository.persistUserMessage(conversationId, text)
 
-                val webResult = toolOrchestrator.execute(TOOL_WEB_SEARCH, buildJsonObject {
-                    put("query", JsonPrimitive(text.trim()))
-                    put("count", JsonPrimitive("5"))
-                })
-                val brainResult = toolOrchestrator.execute(TOOL_SECOND_BRAIN, buildJsonObject {
-                    put("query", JsonPrimitive(text.trim()))
-                    put("top_k", JsonPrimitive("8"))
-                })
-                if (webResult is ToolResult.Blocked || brainResult is ToolResult.Blocked) {
-                    _errorMessage.value = (webResult as? ToolResult.Blocked)?.reason
-                        ?: (brainResult as? ToolResult.Blocked)?.reason
-                    update(TaskStatus.Failed("blocked"))
-                    return@run
-                }
-
-                // Merge web + Second Brain grounding. The Second Brain search is best-effort
-                // (a missing Neon config simply contributes no sources).
-                val sources = (webResult as? ToolResult.Success)?.sources.orEmpty() +
-                    (brainResult as? ToolResult.Success)?.sources.orEmpty()
-                val context = buildList {
-                    if (sources.isNotEmpty()) add(buildContextPrompt(sources))
-                    empatheticNote(text)?.let { add(it) }
-                }.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
-                lastContext = context
-
-                update(TaskStatus.Running(startedAt, "thinking"))
-                val result = repository.completeWithContext(
-                    conversationId, _selectedModel.value, context
-                ) { delta -> _streamingText.value += delta }
-                _streamingText.value = ""
-
-                when (result) {
-                    is SendResult.Success -> update(TaskStatus.Completed(sources))
-                    is SendResult.Failure -> {
-                        _errorMessage.value = result.errorCode
-                        update(TaskStatus.Failed(result.errorCode))
+                val history = repository.buildHistory(conversationId)
+                val schemas = toolOrchestrator.functionSchemas()
+                val outcome = toolLoop.run(
+                    history, _selectedModel.value, schemas,
+                    propose = { h, m, s -> repository.completeWithTools(h, m, s).map { it.toProposal() } }
+                )
+                when (outcome) {
+                    is ToolLoop.Outcome.Answered -> {
+                        repository.persistAssistantMessage(conversationId, outcome.content)
+                        update(TaskStatus.Completed(outcome.sources))
+                    }
+                    is ToolLoop.Outcome.Failed -> {
+                        runScriptedGrounding(conversationId, text, update, startedAt)
                     }
                 }
             } finally {
                 if (generation == taskGeneration) _agentBusy.value = false
             }
         }
+    }
+
+    /** Fallback: the pre-loop scripted web + Second Brain grounding. */
+    private suspend fun runScriptedGrounding(
+        conversationId: Long,
+        text: String,
+        update: (TaskStatus) -> Unit,
+        startedAt: Long
+    ) {
+        update(TaskStatus.Running(startedAt, "searching"))
+        val webResult = toolOrchestrator.execute(TOOL_WEB_SEARCH, buildJsonObject {
+            put("query", JsonPrimitive(text.trim()))
+            put("count", JsonPrimitive("5"))
+        })
+        val brainResult = toolOrchestrator.execute(TOOL_SECOND_BRAIN, buildJsonObject {
+            put("query", JsonPrimitive(text.trim()))
+            put("top_k", JsonPrimitive("8"))
+        })
+        if (webResult is ToolResult.Blocked || brainResult is ToolResult.Blocked) {
+            _errorMessage.value = (webResult as? ToolResult.Blocked)?.reason
+                ?: (brainResult as? ToolResult.Blocked)?.reason
+            update(TaskStatus.Failed("blocked"))
+            return
+        }
+
+        // Merge web + Second Brain grounding. The Second Brain search is best-effort
+        // (a missing Neon config simply contributes no sources).
+        val sources = (webResult as? ToolResult.Success)?.sources.orEmpty() +
+            (brainResult as? ToolResult.Success)?.sources.orEmpty()
+        val context = buildList {
+            if (sources.isNotEmpty()) add(buildContextPrompt(sources))
+            empatheticNote(text)?.let { add(it) }
+        }.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
+        lastContext = context
+
+        update(TaskStatus.Running(startedAt, "thinking"))
+        val result = repository.completeWithContext(
+            conversationId, _selectedModel.value, context
+        ) { delta -> _streamingText.value += delta }
+        _streamingText.value = ""
+
+        when (result) {
+            is SendResult.Success -> update(TaskStatus.Completed(sources))
+            is SendResult.Failure -> {
+                _errorMessage.value = result.errorCode
+                update(TaskStatus.Failed(result.errorCode))
+            }
+        }
+    }
+
+    /** Maps a data-layer completion result to the domain tool proposal. */
+    private fun CompletionResult.toProposal(): ToolProposal = when (this) {
+        is CompletionResult.Answer -> ToolProposal.Answer(content)
+        is CompletionResult.ToolCallRequested -> ToolProposal.Calls(
+            toolCalls.mapNotNull { ToolCallParser.parse(it.function.name, it.function.arguments) }
+        )
     }
 
     /**
