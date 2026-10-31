@@ -1,5 +1,6 @@
 package com.nexus.agent.domain.tool
 
+import com.nexus.agent.domain.policy.ApprovalReceipt
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -61,12 +62,20 @@ class ToolOrchestratorTest {
     }
 
     @Test
-    fun commitLevelToolIsDefaultDenied() = runBlocking {
+    fun commitLevelToolRequiresApprovalReceipt() = runBlocking {
         val tool = FakeTool(result = ToolResult.Success("x"), riskLevel = RiskLevel.COMMIT)
         val orch = ToolOrchestrator(mapOf("commit_tool" to tool))
-        val result = orch.execute("commit_tool", buildJsonObject { })
-        assertTrue(result is ToolResult.Blocked)
+
+        // No receipt → default-denied.
+        val blocked = orch.execute("commit_tool", buildJsonObject { })
+        assertTrue(blocked is ToolResult.Blocked)
         assertEquals(0, tool.calls)
+
+        // With a receipt → executes.
+        val receipt = ApprovalReceipt("r1", 0L, Long.MAX_VALUE)
+        val success = orch.execute("commit_tool", buildJsonObject { }, receipt)
+        assertTrue(success is ToolResult.Success)
+        assertEquals(1, tool.calls)
     }
 
     @Test

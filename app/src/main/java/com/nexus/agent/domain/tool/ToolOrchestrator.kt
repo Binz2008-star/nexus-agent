@@ -1,5 +1,6 @@
 package com.nexus.agent.domain.tool
 
+import com.nexus.agent.domain.policy.ApprovalReceipt
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -20,13 +21,17 @@ sealed interface TaskStatus {
  */
 class ToolOrchestrator(private val tools: Map<String, Tool>) {
 
-    suspend fun execute(toolName: String, input: JsonObject): ToolResult {
+    suspend fun execute(
+        toolName: String,
+        input: JsonObject,
+        approvalReceipt: ApprovalReceipt? = null
+    ): ToolResult {
         // Task-execution/mutation tools are explicitly blocked (never registered, never run).
         if (toolName in BLOCKED_TOOLS) return ToolResult.Blocked("Blocked tool: $toolName")
         val tool = tools[toolName] ?: return ToolResult.Failure("unknown_tool")
-        // Default-deny: COMMIT-level tools require an explicit approval receipt, which is not
-        // wired yet — refuse them outright rather than execute without authorization.
-        if (tool.riskLevel == RiskLevel.COMMIT) {
+        // Default-deny: COMMIT-level tools require an explicit approval receipt. The caller
+        // validates freshness + one-shot via ApprovalGate before presenting the receipt here.
+        if (tool.riskLevel == RiskLevel.COMMIT && approvalReceipt == null) {
             return ToolResult.Blocked("Tool '$toolName' requires explicit approval (COMMIT)")
         }
         return tool.execute(input)
