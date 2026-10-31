@@ -5,6 +5,7 @@ import com.nexus.agent.data.local.ConversationEntity
 import com.nexus.agent.data.local.MessageDao
 import com.nexus.agent.data.local.MessageEntity
 import com.nexus.agent.data.network.ChatCompletionClient
+import com.nexus.agent.data.network.CompletionResult
 import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.router.AiModelRouter
 import kotlinx.coroutines.CancellationException
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 
 sealed class SendResult {
     data object Success : SendResult()
@@ -220,6 +222,18 @@ class ChatRepository(
     ): Result<String> =
         if (router != null) router.routeStream(history, model, onDelta)
         else client.completeStream(history, model, onDelta)
+
+    /**
+     * Tool-aware (function-calling) completion. Runs on [Dispatchers.IO]. The model either
+     * answers directly or requests tool calls; the caller (ToolLoop) validates + executes.
+     */
+    suspend fun completeWithTools(
+        history: List<ChatMessage>,
+        model: String,
+        tools: List<JsonObject>
+    ): Result<CompletionResult> = withContext(Dispatchers.IO) {
+        client.completeWithTools(history, model, tools)
+    }
 
     private suspend fun buildHistoryWithSystem(
         history: List<ChatMessage>,
