@@ -64,4 +64,15 @@ class SecondBrainSqlTest {
         assertTrue(SecondBrainSql.INSERT_CONVERSATION_SQL.contains("?"))
         assertTrue(!SecondBrainSql.SEARCH_CHUNKS_SQL.contains("ILIKE '%"))
     }
+
+    @Test
+    fun personalMemorySaveAndRecallTargetNexusMemoryNotSecondBrain() {
+        // Saving and recalling a personal memory must hit personal-ai-core.nexus_memory — a
+        // separate store from the Second Brain search tables (chunks_v4 / memory).
+        assertTrue(SecondBrainSql.INSERT_MEMORY_SQL.contains("nexus_memory"))
+        assertTrue(SecondBrainSql.SELECT_MEMORY_SQL.contains("nexus_memory"))
+        assertTrue(!SecondBrainSql.SELECT_MEMORY_SQL.contains("FROM memory"))
+        assertTrue(SecondBrainSql.SEARCH_CHUNKS_SQL.contains("chunks_v4"))
+        assertTrue(SecondBrainSql.SEARCH_MEMORY_SQL.contains("FROM memory"))
+    }
 }

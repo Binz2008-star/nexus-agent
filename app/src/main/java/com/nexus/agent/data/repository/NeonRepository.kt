@@ -1,6 +1,7 @@
 package com.nexus.agent.data.repository
 
 import com.nexus.agent.data.remote.NeonJdbc
+import com.nexus.agent.domain.neon.MemoryRecall
 import com.nexus.agent.domain.neon.NeonMemoryItem
 import com.nexus.agent.domain.neon.SecondBrainSql
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
@@ -105,6 +106,19 @@ class NeonRepository(
             }
         }
 
+    /**
+     * Retrieves the personal memories most relevant to [query], bounded by [limit], for injection
+     * into a conversation. Reads `personal-ai-core.nexus_memory` via the write role (the same
+     * store [saveMemory] writes to) — *not* the Second Brain `second-brain` database, so recall is
+     * independent of Second Brain search. Reuses [loadMemory] for the bounded fetch, then ranks by
+     * relevance. Degrades gracefully to a failure on any database outage (never throws).
+     */
+    suspend fun recallMemory(query: String, limit: Int = DEFAULT_RECALL_LIMIT): Result<List<NeonMemoryItem>> =
+        loadMemory(RECENT_WINDOW).fold(
+            onSuccess = { recent -> Result.success(MemoryRecall.selectRelevant(recent, query, limit)) },
+            onFailure = { Result.failure(it) }
+        )
+
     /** Best-effort mirror — ignores every failure so it can never break the chat flow. */
     override suspend fun mirror(sessionId: String, role: String, content: String) {
         saveConversationMessage(sessionId, role, content)
@@ -116,5 +130,11 @@ class NeonRepository(
 
     companion object {
         const val ERROR_NO_CONNECTION = "no_connection"
+
+        /** Default number of memories surfaced to a conversation. */
+        const val DEFAULT_RECALL_LIMIT = 8
+
+        /** Recent-memory window fetched before local relevance ranking (≤ loadMemory's 200 cap). */
+        private const val RECENT_WINDOW = 100
     }
 }
