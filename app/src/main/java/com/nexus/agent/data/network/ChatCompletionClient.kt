@@ -1,6 +1,7 @@
 package com.nexus.agent.data.network
 
 import com.nexus.agent.domain.model.ChatMessage
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Result of a tool-aware completion: either a plain text answer, or a request to run tools
@@ -34,6 +35,6 @@ interface ChatCompletionClient {
     suspend fun completeWithTools(
         history: List<ChatMessage>,
         model: String,
-        tools: List<FunctionTool>
+        tools: List<JsonObject>
     ): Result<CompletionResult>
 }

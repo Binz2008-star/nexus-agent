@@ -434,6 +434,9 @@ private suspend fun saveNeonUrl(
     prefName: String
 ) {
     val trimmed = raw.trim()
+    // Never persist a value that still carries the masked password placeholder — an edited
+    // field must have the real password re-entered (otherwise the credential would be destroyed).
+    if (NeonConnectionParser.hasMaskedPassword(trimmed)) return
     val parsed = NeonConnectionParser.parse(trimmed)
     when {
         // Store the NORMALIZED jdbc:postgresql:// URL so pgjdbc's acceptsURL() recognizes it —

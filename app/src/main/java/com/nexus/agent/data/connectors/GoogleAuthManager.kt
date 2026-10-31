@@ -118,6 +118,9 @@ class GoogleAuthManager(
             .setScopes(*allScopes.toTypedArray())
             .setCodeVerifier(verifier, challenge, CodeVerifierUtil.getCodeVerifierChallengeMethod())
             .setState(state)
+            // Always request offline access + force consent so a refresh token is returned on
+            // every authorization (including after disconnect), not just the first.
+            .setAdditionalParameters(mapOf("access_type" to "offline", "prompt" to "consent"))
             .build()
 
         CustomTabsIntent.Builder().build().launchUrl(context, request.toUri())

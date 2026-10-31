@@ -2,6 +2,8 @@ package com.nexus.agent.data.network
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,11 +14,18 @@ class DeepSeekModelsTest {
 
     @Test
     fun requestWithToolsSerializesToolSchema() {
-        val tool = FunctionTool(function = FunctionDef("web_search", "Search the web"))
+        val schema = buildJsonObject {
+            put("type", "function")
+            put("function", buildJsonObject {
+                put("name", "web_search")
+                put("description", "Search the web")
+                put("parameters", buildJsonObject { put("type", "object") })
+            })
+        }
         val request = ChatCompletionRequest(
             model = "deepseek-flash",
             messages = listOf(ApiMessage("user", "hi")),
-            tools = listOf(tool),
+            tools = listOf(schema),
             toolChoice = "auto"
         )
         val s = json.encodeToString(request)

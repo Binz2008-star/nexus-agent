@@ -1,6 +1,8 @@
 package com.nexus.agent.domain.tool
 
+import com.nexus.agent.domain.policy.ApprovalGate
 import com.nexus.agent.domain.policy.ApprovalReceipt
+import com.nexus.agent.domain.policy.ApprovalRequest
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -64,17 +66,25 @@ class ToolOrchestratorTest {
     @Test
     fun commitLevelToolRequiresApprovalReceipt() = runBlocking {
         val tool = FakeTool(result = ToolResult.Success("x"), riskLevel = RiskLevel.COMMIT)
-        val orch = ToolOrchestrator(mapOf("commit_tool" to tool))
+        val gate = ApprovalGate()
+        val orch = ToolOrchestrator(mapOf("commit_tool" to tool), gate)
 
         // No receipt → default-denied.
-        val blocked = orch.execute("commit_tool", buildJsonObject { })
-        assertTrue(blocked is ToolResult.Blocked)
+        assertTrue(orch.execute("commit_tool", buildJsonObject { }) is ToolResult.Blocked)
         assertEquals(0, tool.calls)
 
-        // With a receipt → executes.
-        val receipt = ApprovalReceipt("r1", 0L, Long.MAX_VALUE)
-        val success = orch.execute("commit_tool", buildJsonObject { }, receipt)
-        assertTrue(success is ToolResult.Success)
+        // A forged receipt (never issued by the gate) → denied.
+        val forged = ApprovalReceipt("forged", 0L, Long.MAX_VALUE)
+        assertTrue(orch.execute("commit_tool", buildJsonObject { }, forged) is ToolResult.Blocked)
+        assertEquals(0, tool.calls)
+
+        // A valid receipt issued by the gate → executes.
+        val receipt = gate.approve(ApprovalRequest("r1", "commit_tool", "args"))
+        assertTrue(orch.execute("commit_tool", buildJsonObject { }, receipt) is ToolResult.Success)
+        assertEquals(1, tool.calls)
+
+        // The same receipt cannot be replayed (one-shot).
+        assertTrue(orch.execute("commit_tool", buildJsonObject { }, receipt) is ToolResult.Blocked)
         assertEquals(1, tool.calls)
     }
 

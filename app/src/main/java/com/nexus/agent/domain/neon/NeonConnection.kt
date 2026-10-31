@@ -91,7 +91,13 @@ object NeonConnectionParser {
      * replaced with a placeholder so decrypted credentials never appear in the UI or logs.
      */
     fun maskCredentials(url: String): String =
-        url.replace(Regex("(password=)[^&]*", RegexOption.IGNORE_CASE), "$1••••••")
+        url.replace(Regex("(password=)[^&]*", RegexOption.IGNORE_CASE), "$1$MASKED_PASSWORD")
+
+    /** True when a value still carries the masked placeholder (i.e. the real password was not re-entered). */
+    fun hasMaskedPassword(url: String): Boolean =
+        url.contains("password=$MASKED_PASSWORD", ignoreCase = true)
+
+    const val MASKED_PASSWORD = "••••••"
 
     private fun extractHost(url: String): String? =
         url.substringAfter("://", "").substringBefore('/').substringBefore('?')

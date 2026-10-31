@@ -6,6 +6,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -42,7 +43,7 @@ class DeepSeekClient(
     override suspend fun completeWithTools(
         history: List<ChatMessage>,
         model: String,
-        tools: List<FunctionTool>
+        tools: List<JsonObject>
     ): Result<CompletionResult> {
         val key = apiKeyProvider()
             ?: return Result.failure(IllegalStateException("No DeepSeek API key configured"))
@@ -57,7 +58,13 @@ class DeepSeekClient(
                 content = it.text
             )
         }
-        val requestBody = ChatCompletionRequest(model = model, messages = messages, tools = tools, toolChoice = "auto")
+        val requestBody = ChatCompletionRequest(
+            model = model,
+            messages = messages,
+            thinking = ThinkingConfig(type = "disabled"),
+            tools = tools,
+            toolChoice = "auto"
+        )
         val request = Request.Builder()
             .url("$BASE_URL/chat/completions")
             .header("Authorization", "Bearer $key")

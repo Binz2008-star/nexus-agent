@@ -1,5 +1,6 @@
 package com.nexus.agent.domain.tool
 
+import com.nexus.agent.domain.policy.ApprovalGate
 import com.nexus.agent.domain.policy.ApprovalReceipt
 import kotlinx.serialization.json.JsonObject
 
@@ -19,7 +20,10 @@ sealed interface TaskStatus {
  * Tool *selection* is intentionally simple right now (the caller picks the tool); a
  * model-driven decision loop is a later step.
  */
-class ToolOrchestrator(private val tools: Map<String, Tool>) {
+class ToolOrchestrator(
+    private val tools: Map<String, Tool>,
+    private val approvalGate: ApprovalGate? = null
+) {
 
     suspend fun execute(
         toolName: String,
@@ -29,10 +33,16 @@ class ToolOrchestrator(private val tools: Map<String, Tool>) {
         // Task-execution/mutation tools are explicitly blocked (never registered, never run).
         if (toolName in BLOCKED_TOOLS) return ToolResult.Blocked("Blocked tool: $toolName")
         val tool = tools[toolName] ?: return ToolResult.Failure("unknown_tool")
-        // Default-deny: COMMIT-level tools require an explicit approval receipt. The caller
-        // validates freshness + one-shot via ApprovalGate before presenting the receipt here.
-        if (tool.riskLevel == RiskLevel.COMMIT && approvalReceipt == null) {
-            return ToolResult.Blocked("Tool '$toolName' requires explicit approval (COMMIT)")
+        // Default-deny: COMMIT-level tools require a valid, unconsumed approval receipt.
+        if (tool.riskLevel == RiskLevel.COMMIT) {
+            val receipt = approvalReceipt
+                ?: return ToolResult.Blocked("Tool '$toolName' requires explicit approval (COMMIT)")
+            val gate = approvalGate
+                ?: return ToolResult.Blocked("Tool '$toolName' has no approval gate (COMMIT)")
+            if (!gate.isAuthorized(receipt)) {
+                return ToolResult.Blocked("Tool '$toolName' approval expired or invalid")
+            }
+            gate.consume(receipt) // one-shot — a receipt cannot authorize twice
         }
         return tool.execute(input)
     }

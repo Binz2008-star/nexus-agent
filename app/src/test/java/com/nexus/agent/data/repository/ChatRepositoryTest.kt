@@ -57,7 +57,7 @@ class ChatRepositoryTest {
         override suspend fun completeWithTools(
             history: List<ChatMessage>,
             model: String,
-            tools: List<com.nexus.agent.data.network.FunctionTool>
+            tools: List<kotlinx.serialization.json.JsonObject>
         ): Result<com.nexus.agent.data.network.CompletionResult> {
             val r = complete(history, model)
             return if (r.isSuccess) Result.success(com.nexus.agent.data.network.CompletionResult.Answer(r.getOrThrow()))
