@@ -79,8 +79,13 @@ class ToolOrchestratorTest {
         assertEquals(0, tool.calls)
 
         // A valid receipt issued by the gate → executes.
-        val receipt = gate.approve(ApprovalRequest("r1", "commit_tool", "args"))
+        val receipt = gate.approve(ApprovalRequest("r1", "commit_tool", "{}"))
         assertTrue(orch.execute("commit_tool", buildJsonObject { }, receipt) is ToolResult.Success)
+        assertEquals(1, tool.calls)
+
+        // A receipt issued for different arguments must not authorize.
+        val mismatched = gate.approve(ApprovalRequest("r2", "commit_tool", "{\"to\":\"other\"}"))
+        assertTrue(orch.execute("commit_tool", buildJsonObject { }, mismatched) is ToolResult.Blocked)
         assertEquals(1, tool.calls)
 
         // The same receipt cannot be replayed (one-shot).

@@ -55,13 +55,14 @@ class ToolLoop(
                 is ToolProposal.Calls -> {
                     val notes = mutableListOf<String>()
                     for (call in proposal.calls) {
-                        // COMMIT-level tools need an approval receipt before execution.
+                        val input = ToolCallParser.toJsonObject(call)
+                        // COMMIT-level tools need an approval receipt bound to this exact call.
                         var receipt: ApprovalReceipt? = null
                         if (orchestrator.riskLevelOf(call.name) == RiskLevel.COMMIT) {
                             val request = ApprovalRequest(
                                 id = "call-${call.name}-${System.nanoTime()}",
                                 toolName = call.name,
-                                arguments = call.arguments.toString()
+                                arguments = input.toString()
                             )
                             receipt = requestApproval(request)
                             if (receipt == null) {
@@ -70,7 +71,7 @@ class ToolLoop(
                             }
                         }
                         val result = orchestrator.execute(
-                            call.name, ToolCallParser.toJsonObject(call),
+                            call.name, input,
                             approvalReceipt = receipt, grantedScopes = grantedScopes
                         )
                         when (result) {

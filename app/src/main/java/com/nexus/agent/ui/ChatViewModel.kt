@@ -131,6 +131,7 @@ class ChatViewModel(
     private val _pendingApproval = MutableStateFlow<ApprovalRequest?>(null)
     val pendingApproval: StateFlow<ApprovalRequest?> = _pendingApproval.asStateFlow()
 
+    @Volatile
     private var pendingDeferred: CompletableDeferred<ApprovalReceipt?>? = null
 
     /** Suspends the tool loop until the user approves/rejects the pending COMMIT action. */
@@ -152,6 +153,15 @@ class ChatViewModel(
 
     /** User rejected the pending action — resume the loop with no receipt. */
     fun rejectPending() {
+        if (_pendingApproval.value == null) return
+        _pendingApproval.value = null
+        val deferred = pendingDeferred
+        pendingDeferred = null
+        deferred?.complete(null)
+    }
+
+    /** Clears any in-flight approval (rejection) so a stale card/dangling deferred can't linger. */
+    private fun clearPendingApproval() {
         _pendingApproval.value = null
         val deferred = pendingDeferred
         pendingDeferred = null
@@ -166,6 +176,7 @@ class ChatViewModel(
     }
 
     override fun onCleared() {
+        clearPendingApproval()
         taskRunner.close()
         super.onCleared()
     }
@@ -293,6 +304,7 @@ class ChatViewModel(
 
     fun cancelTask() {
         taskRunner.cancel()
+        clearPendingApproval()
         _streamingText.value = ""
         _agentBusy.value = false
     }

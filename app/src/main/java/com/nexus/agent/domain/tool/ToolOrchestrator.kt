@@ -45,7 +45,7 @@ class ToolOrchestrator(
                 ?: return ToolResult.Blocked("Tool '$toolName' requires explicit approval (COMMIT)")
             val gate = approvalGate
                 ?: return ToolResult.Blocked("Tool '$toolName' has no approval gate (COMMIT)")
-            if (!gate.isAuthorized(receipt)) {
+            if (!gate.isAuthorized(receipt, toolName, input.toString())) {
                 return ToolResult.Blocked("Tool '$toolName' approval expired or invalid")
             }
             gate.consume(receipt) // one-shot — a receipt cannot authorize twice
