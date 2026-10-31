@@ -4,16 +4,25 @@ A standalone Android AI assistant built with Kotlin and Jetpack Compose. It is a
 private-by-default chat app backed by your own [DeepSeek](https://platform.deepseek.com)
 API key — no Termux, no third-party backend, no bundled credentials.
 
-> Status: **in development**. The chat, streaming, persistence, encrypted key storage,
-> and localization are implemented and CI-verified. Not yet published to any store.
+> Status: **in development**. Chat, streaming, persistence, encrypted key storage, tool-calling,
+> Neon (Postgres) integration, personal-memory recall, and the Gmail connector are implemented
+> and CI-verified. Not yet published to any store.
 
 ## Features
 
 - **Chat with DeepSeek** — `deepseek-v4-pro` and `deepseek-flash` models, streaming
   (token-by-token) responses.
-- **Local history** — conversation persisted on-device with Room.
-- **Encrypted API key** — your DeepSeek key is stored as AES-256-GCM ciphertext in the
-  Android Keystore; the plaintext is never written to disk.
+- **Model-driven tool calling** — the model proposes tools; a local policy layer validates them;
+  COMMIT-level actions require explicit user approval (function calling + an approval card).
+- **Personal memory** — save approved facts and recall them into later conversations (bounded,
+  relevance-ranked, fenced as untrusted data).
+- **Second Brain search** — read-only knowledge search over Neon Postgres (`chunks_v4` + `memory`)
+  with trigram-ranked matching.
+- **Gmail connector** — read-only inbox search (OAuth 2.0 + PKCE); unauthorized access stays
+  blocked.
+- **Local history** — conversations persisted on-device with Room; optional opt-in Neon mirror.
+- **Encrypted secrets** — DeepSeek key, Neon URLs, and the Google refresh token stored as
+  AES-256-GCM ciphertext in the Android Keystore; plaintext is never written to disk.
 - **Arabic & English** — full string resources with RTL support; follows the system locale.
 - **Light & dark theme** — follows the system setting.
 - **Minimal permissions** — only `INTERNET`.
@@ -23,18 +32,30 @@ API key — no Termux, no third-party backend, no bundled credentials.
 ```
 com.nexus.agent
 ├── ui/            Compose screens + ViewModels (ChatScreen, ChatViewModel) + theme
-├── domain/model/  ChatMessage
+├── domain/
+│   ├── model/     ChatMessage, GmailMessage, KnowledgeResult, WebSearchResult
+│   ├── tool/      Tool contract, ToolOrchestrator, ToolSchema, per-tool impls
+│   ├── orchestration/  ToolLoop (model-driven propose→validate→execute→fence→answer)
+│   ├── policy/    ApprovalGate (COMMIT consent receipts)
+│   ├── neon/      SecondBrainSql, NeonConnection(Parser), CredentialFileParser, MemoryRecall
+│   ├── connectors/  Connector, GmailConnector, GoogleConnector, PendingOAuthSession
+│   ├── safety/    SafetyPolicy, IntentEvaluator, UserBehaviorGuard, SensitiveTopicDetector
+│   ├── router/    AiModelRouter (provider selection)
+│   └── …          persona, emotion, cognitive, culture, memory, commands, wellness
 ├── data/
-│   ├── network/   DeepSeekClient (OkHttp + kotlinx.serialization), SSE parsing
-│   ├── local/     Room (MessageEntity, MessageDao, NexusDatabase)
-│   └── repository/ ChatRepository, SecretStorageRepository (DataStore + CryptoEngine)
+│   ├── network/   DeepSeekClient (OkHttp + kotlinx.serialization, SSE + function calling)
+│   ├── local/     Room (MessageEntity, MessageDao, ConversationDao, NexusDatabase)
+│   ├── remote/    NeonJdbcClient (pgjdbc), GmailApiClient, WebSearchApiClient
+│   ├── connectors/ GoogleAuthManager (AppAuth PKCE, encrypted refresh token)
+│   └── repository/ ChatRepository, NeonRepository, GmailRepository, WebSearchRepository,
+│                   SecretStorageRepository, AppPreferencesRepository
 └── security/      Android Keystore AES-GCM (CryptoEngine, AesGcmCipher, …)
 ```
 
-Data flows: `ChatScreen` → `ChatViewModel` → `ChatRepository` → (`DeepSeekClient` for
-network, `MessageDao` for persistence). API-key reads go through `SecretStorageRepository`,
-which decrypts on demand and returns explicit states (`Present` / `Missing` / `Corrupted` /
-`KeyUnavailable`) instead of silently failing.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full pipeline (tool loop, Neon
+two-store layout, memory recall, Gmail, and context construction) and
+[`docs/PRODUCTION-HARDENING.md`](docs/PRODUCTION-HARDENING.md) for the security review and
+backend-API/role-permission/branch-protection proposals.
 
 ## Tech stack
 
@@ -75,16 +96,22 @@ artifact (14-day retention).
 
 1. Install the debug APK (or build it yourself).
 2. Create an API key at <https://platform.deepseek.com/api_keys>.
-3. Open the app → **Settings** → paste the key → **Save**.
+3. Open the app → **Settings** → paste the key (or **Import from file** to load the DeepSeek
+   key and the Neon read/write URLs in one step) → **Save**.
+4. Optionally connect Gmail (requires a registered Google OAuth client id) and enable the
+   Neon Second Brain / memory URLs.
 
-The key is stored encrypted on-device. **Never commit a key** — there is no bundled or
-default key, and no key is ever logged.
+Secrets are stored encrypted on-device. **Never commit a key or a Neon URL** — there is no
+bundled or default credential, and no credential is ever logged or embedded in the APK.
 
 ## Security model
 
-- The API key is encrypted with AES-256-GCM using a **non-exportable** key held in the
-  Android Keystore (hardware-backed where available). Only ciphertext is persisted in
-  DataStore. Message bodies and clipboard-style secrets are never logged.
+- The API key, Neon connection URLs, and the Google refresh token are encrypted with
+  AES-256-GCM using a **non-exportable** key held in the Android Keystore (hardware-backed
+  where available). Only ciphertext is persisted. Message bodies and clipboard-style secrets are
+  never logged.
+- Neon URLs accept only `sslmode=require/verify-ca/verify-full`; the password is masked
+  (`password=••••••`) for display.
 - A client-side key cannot be made impossible to extract from a compromised device or a
   debugger attached to the app; treat the key as revocable and **rotate it** if it is ever
   exposed.
@@ -92,19 +119,22 @@ default key, and no key is ever logged.
 
 ## Testing
 
-- **JVM unit tests** — crypto format/cipher, secret storage (DataStore round-trip, corruption,
-  invalidation), Room entity mapping, and repository send/retry (with fake client/DAO).
+- **JVM unit tests** — crypto format/cipher, secret storage, Room entity mapping, repository
+  send/retry, Neon repository (search/save/recall, failure mapping), the tool loop (scope
+  propagation, approval + replay prevention), memory recall relevance/fencing, and credential
+  import validation.
 - **Instrumentation tests** — Android Keystore round-trip, non-exportability, and key
   invalidation on an API 34 emulator.
 
 Tests use fakes and in-memory doubles — they never send real requests or consume credits.
 
-## Limitations / roadmap
+## Limitations
 
 - Conversation history survives config changes and app restarts (Room), but an **in-flight
   request does not survive process death**.
-- Streaming is implemented but needs a **real-device + live-key** check for UX polish
-  (token-by-token rendering, the brief completion flicker).
-- Planned: onboarding/first-launch flow, an explicit language switch (today it follows the
-  system locale), theme override (system/light/dark), and a settings screen for model choice.
-- Not planned for now: tool-calling/device-control, accounts integration, billing.
+- Personal-memory recall uses token-overlap relevance (no embeddings), so paraphrased or
+  cross-language recall is not yet supported.
+- Gmail OAuth needs a **real Google client id + on-device redirect test** (CI cannot exercise it).
+- Direct Android→PostgreSQL JDBC access; a backend API boundary is proposed in
+  [`docs/PRODUCTION-HARDENING.md`](docs/PRODUCTION-HARDENING.md).
+- Streaming and the model-driven loop need a **real-device + live-key** pass for UX polish.
