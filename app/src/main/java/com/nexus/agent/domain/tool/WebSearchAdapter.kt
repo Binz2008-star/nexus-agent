@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonPrimitive
 class WebSearchAdapter(private val webSearchTool: WebSearchTool) : Tool {
 
     override val name: String = "web_search"
+    override val description: String = "Search the web for up-to-date information."
 
     override suspend fun execute(input: JsonObject): ToolResult {
         val query = (input["query"] as? JsonPrimitive)

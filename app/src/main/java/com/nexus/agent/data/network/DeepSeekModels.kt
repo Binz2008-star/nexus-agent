@@ -2,6 +2,8 @@ package com.nexus.agent.data.network
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 
 // ---- Request (non-streaming) ----
 
@@ -10,7 +12,9 @@ data class ChatCompletionRequest(
     val model: String,
     val messages: List<ApiMessage>,
     @SerialName("thinking") val thinking: ThinkingConfig? = null,
-    val stream: Boolean = false
+    val stream: Boolean = false,
+    val tools: List<FunctionTool>? = null,
+    @SerialName("tool_choice") val toolChoice: String? = null
 )
 
 @Serializable
@@ -21,7 +25,37 @@ data class ThinkingConfig(
 @Serializable
 data class ApiMessage(
     val role: String,
-    val content: String
+    // Nullable: assistant messages that carry a tool call have no text content.
+    val content: String? = null,
+    @SerialName("tool_calls") val toolCalls: List<ToolCallDto>? = null
+)
+
+// ---- Function-calling (request + response) ----
+
+@Serializable
+data class FunctionTool(
+    val type: String = "function",
+    val function: FunctionDef
+)
+
+@Serializable
+data class FunctionDef(
+    val name: String,
+    val description: String = "",
+    val parameters: JsonObject = buildJsonObject { }
+)
+
+@Serializable
+data class ToolCallDto(
+    val id: String = "",
+    val type: String = "function",
+    val function: FunctionCallDto
+)
+
+@Serializable
+data class FunctionCallDto(
+    val name: String = "",
+    val arguments: String = "" // JSON object serialized as a string
 )
 
 // ---- Response (non-streaming) ----

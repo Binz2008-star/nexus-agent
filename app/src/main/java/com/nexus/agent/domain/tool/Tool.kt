@@ -33,6 +33,9 @@ enum class RiskLevel { READ, ANALYZE, PREPARE, COMMIT }
 interface Tool {
     val name: String
 
+    /** Human/agent-facing description used in function-calling schemas. */
+    val description: String get() = ""
+
     /** Consequence level. Defaults to READ — new tools are safe by default. */
     val riskLevel: RiskLevel get() = RiskLevel.READ
 

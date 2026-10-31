@@ -43,6 +43,10 @@ class ToolOrchestrator(private val tools: Map<String, Tool>) {
     fun capabilities(): List<ToolCapability> =
         tools.values.map { ToolCapability(it.name, it.riskLevel, it.requiredScopes) }
 
+    /** Function-calling schemas for model-driven tool selection. */
+    fun functionSchemas(): List<JsonObject> =
+        tools.values.map { ToolSchema.forTool(it.name, it.description) }
+
     companion object {
         /** Tools that must never execute, even if the model requests them. */
         val BLOCKED_TOOLS = setOf("agent_task", "apply_patch", "replace_block", "shell")

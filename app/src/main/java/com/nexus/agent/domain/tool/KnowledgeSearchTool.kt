@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonPrimitive
 class KnowledgeSearchTool(private val knowledgeTool: KnowledgeTool) : Tool {
 
     override val name: String = "second_brain_search"
+    override val description: String = "Search the user's Second Brain knowledge base."
 
     override suspend fun execute(input: JsonObject): ToolResult {
         val query = (input["query"] as? JsonPrimitive)

@@ -25,6 +25,8 @@ class GmailSearchTool(private val gmail: GmailTool) : Tool {
 
     override val name: String = "gmail_search"
 
+    override val description: String = "Search the user's Gmail inbox (read-only)."
+
     override val requiredScopes: List<String> get() = listOf(GMAIL_READONLY_SCOPE)
 
     override suspend fun execute(input: JsonObject): ToolResult {
