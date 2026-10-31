@@ -128,6 +128,9 @@ bundled or default credential, and no credential is ever logged or embedded in t
 
 Tests use fakes and in-memory doubles — they never send real requests or consume credits.
 
+A manual on-device checklist (DeepSeek, Gmail OAuth, Neon, memory recall) is in
+[`docs/MANUAL-TEST-CHECKLIST.md`](docs/MANUAL-TEST-CHECKLIST.md).
+
 ## Limitations
 
 - Conversation history survives config changes and app restarts (Room), but an **in-flight
