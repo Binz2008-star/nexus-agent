@@ -28,8 +28,27 @@ android {
         manifestPlaceholders["appAuthRedirectScheme"] = "com.nexus.agent"
     }
 
-    // Debug builds use the default Android debug keystore (auto-generated, per-developer/CI).
-    // A private key is intentionally NOT tracked in the repo (supply-chain risk, R2/TD-002).
+    // Stable test-signing identity for CI-generated APKs. The keystore + passwords are injected
+    // at build time from GitHub Actions encrypted secrets (never committed), so every CI build
+    // uses the SAME test certificate — enabling in-place APK upgrades. This is a dedicated TEST
+    // key, distinct from any future production release key. When the secrets are absent (local
+    // builds), it falls back to the default Android debug keystore so local dev is unaffected.
+    val testStorePath = System.getenv("TEST_SIGNING_KEYSTORE")
+    signingConfigs {
+        if (!testStorePath.isNullOrBlank()) {
+            create("test") {
+                storeFile = java.io.File(testStorePath)
+                storePassword = System.getenv("TEST_SIGNING_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("TEST_SIGNING_KEY_ALIAS") ?: "nexustest"
+                keyPassword = System.getenv("TEST_SIGNING_KEY_PASSWORD")
+            }
+        }
+    }
+    val testSigningConfig = signingConfigs.findByName("test")
+
+    // Debug builds use the default Android debug keystore (auto-generated, per-developer/CI),
+    // unless the stable test signing config is available (CI). A private key is intentionally
+    // NOT tracked in the repo (supply-chain risk, R2/TD-002).
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -37,6 +56,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+        debug {
+            if (testSigningConfig != null) {
+                signingConfig = testSigningConfig
+            }
         }
     }
 
