@@ -8,15 +8,23 @@ have been executed** (no device is attached to the build host); items below are 
 
 ## Prerequisites
 
-1. Install the latest debug APK (commit `f76335d`, run `41251306352`):
+1. Install the latest debug APK (commit `5b0663f`, run `41253616969`):
    - Artifact: `nexus-agent-debug-apk` → `app-debug.apk`
-   - Web link: https://github.com/Binz2008-star/nexus-agent/actions/runs/41251306352/artifacts/13061298075
-   - SHA-256: `6d4261aed0e17060c2d5993a5cf69fcecad33619c34f0070c1ebf5f9ae7b0df8`
+   - Web link: https://github.com/Binz2008-star/nexus-agent/actions/runs/41253616969/artifacts/13062636468
    - `adb install app-debug.apk` (minSdk 26 / Android 8.0+)
 2. Settings → **Import from file** → pick the rotated `nexus-neon-rotation.txt`
    (fills DeepSeek key + Neon read/write URLs) → **Save**. Values are stored encrypted.
-3. (Gmail) A Google OAuth client id must be present in the build (`GOOGLE_OAUTH_CLIENT_ID`) and
-   the redirect URI `com.nexus.agent:/oauth2redirect` registered.
+3. (Gmail) A Google OAuth client id must be present in the build (`GOOGLE_OAUTH_CLIENT_ID`) —
+   see [`docs/OAUTH-SETUP.md`](OAUTH-SETUP.md) for the exact Google Cloud configuration.
+
+### Signing (stable)
+
+CI builds are now signed with a pinned **test** certificate (`CN=Nexus Test Signing`, SHA-1
+`15:88:D3:C3:46:01:62:71:66:76:5C:05:64:20:79:04:BD:CB:40:34`), so **subsequent** builds share one
+identity and `adb install -r` upgrades work in place. The one-time exception: an APK installed
+from *before* this change was signed with a different (ephemeral debug) key, so that first upgrade
+requires `adb uninstall com.nexus.agent` (clears on-device Room history; the optional Neon mirror
+is unaffected). After that first upgrade, no uninstalls are needed.
 
 ## 1. DeepSeek live chat + function calling
 

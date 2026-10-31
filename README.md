@@ -90,7 +90,10 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 GitHub Actions (`.github/workflows/build.yml`) builds the debug APK and runs both the JVM
 unit tests and the API 34 emulator instrumentation tests on every push/PR to `main`, with a
 least-privilege `contents: read` permission. The debug APK is uploaded as a workflow
-artifact (14-day retention).
+artifact (14-day retention). CI debug builds are signed with a pinned **test** certificate
+(stored as a GitHub Actions secret, never committed) so that in-place APK upgrades keep a
+consistent signing identity. Gmail OAuth configuration is documented in
+[`docs/OAUTH-SETUP.md`](docs/OAUTH-SETUP.md).
 
 ## Setup
 
