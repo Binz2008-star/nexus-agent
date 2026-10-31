@@ -89,6 +89,7 @@ import com.nexus.agent.domain.policy.ApprovalRequest
 import com.nexus.agent.domain.router.AiModelRouter
 import com.nexus.agent.domain.router.ModelClient
 import com.nexus.agent.domain.tool.KnowledgeSearchTool
+import com.nexus.agent.domain.tool.MemorySaveTool
 import com.nexus.agent.domain.tool.TaskStatus
 import com.nexus.agent.domain.tool.ToolOrchestrator
 import com.nexus.agent.domain.tool.WebSearchAdapter
@@ -216,13 +217,17 @@ fun ChatScreen(
         val repo = GmailRepository(searchApi = { q, n -> api.searchMessages(q, n) })
         GmailSearchTool(repo)
     }
+    val memorySaveTool = remember(neonRepository) {
+        MemorySaveTool(save = { content -> neonRepository.saveMemory("fact", content) })
+    }
     val approvalGate = remember { ApprovalGate() }
-    val toolOrchestrator = remember(approvalGate) {
+    val toolOrchestrator = remember(approvalGate, memorySaveTool) {
         ToolOrchestrator(
             mapOf(
                 webSearchAdapter.name to webSearchAdapter,
                 knowledgeSearchTool.name to knowledgeSearchTool,
-                gmailSearchTool.name to gmailSearchTool
+                gmailSearchTool.name to gmailSearchTool,
+                memorySaveTool.name to memorySaveTool
             ),
             approvalGate
         )
