@@ -79,10 +79,14 @@ embedded in the APK.
 ### Personal-memory recall
 
 `NeonRepository.recallMemory(query, limit)` fetches a bounded recent window from
-`personal-ai-core.nexus_memory` (reusing `loadMemory`), ranks by query-token overlap
-(`MemoryRecall.selectRelevant`), and the ViewModel injects a fenced `<memories>` context. This is
-**independent** of Second Brain search: saving and recalling a fact use `nexus_memory`, not
-`chunks_v4`/`memory`.
+`personal-ai-core.nexus_memory` (reusing `loadMemory`), ranks relevance with `MemoryRecall`, and
+the ViewModel injects a fenced `<memories>` context. This is **independent** of Second Brain
+search: saving and recalling a fact use `nexus_memory`, not `chunks_v4`/`memory`.
+
+`MemoryRecall` relevance is a local, language-aware fuzzy match (no embeddings, no extra API
+calls): Unicode normalization (NFKC + lowercase + Arabic diacritic stripping + letter
+unification), stopword removal, a small synonym lexicon (favorite/preferred, color/colour,
+job/work, …), and exact → prefix → character-bigram similarity scoring.
 
 ## Gmail connector
 
@@ -110,8 +114,9 @@ execution carry identical instructions.
 
 ## Remaining limitations
 
-- Personal-memory recall uses token-overlap (substring) relevance — no embeddings. Semantic
-  recall (paraphrases, cross-language) is out of scope.
+- Personal-memory recall uses lexical fuzzy matching (normalization + synonym lexicon + prefix +
+  character-bigram). It does not use embeddings, so a true paraphrase that shares no surface form
+  or listed synonym will not match. Cross-language recall is not supported.
 - Direct Android→PostgreSQL JDBC; a backend API boundary is proposed (see
   `docs/PRODUCTION-HARDENING.md`).
 - OAuth is single-account per connector set; a real Google client id + on-device redirect test is

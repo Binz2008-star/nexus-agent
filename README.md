@@ -132,8 +132,9 @@ Tests use fakes and in-memory doubles — they never send real requests or consu
 
 - Conversation history survives config changes and app restarts (Room), but an **in-flight
   request does not survive process death**.
-- Personal-memory recall uses token-overlap relevance (no embeddings), so paraphrased or
-  cross-language recall is not yet supported.
+- Personal-memory recall uses local fuzzy matching (Unicode/Arabic normalization + a synonym
+  lexicon + prefix/bigram similarity) — no embeddings, so a paraphrase with no shared surface
+  form or listed synonym won't match, and cross-language recall is not supported.
 - Gmail OAuth needs a **real Google client id + on-device redirect test** (CI cannot exercise it).
 - Direct Android→PostgreSQL JDBC access; a backend API boundary is proposed in
   [`docs/PRODUCTION-HARDENING.md`](docs/PRODUCTION-HARDENING.md).

@@ -102,4 +102,52 @@ class MemoryRecallTest {
         assertTrue(ctx.length < 5000)
         assertTrue(!ctx.contains("x".repeat(1000)))
     }
+
+    // ---- Semantic / differently-worded recall (task 3) ----
+
+    @Test
+    fun differentlyWordedEnglishQuestionRecallsSameFact() {
+        val items = listOf(item("The user's favorite color is blue"))
+        val relevant = MemoryRecall.selectRelevant(items, "What is the user's preferred colour?", 5)
+        assertTrue(relevant.isNotEmpty())
+        assertEquals("The user's favorite color is blue", relevant[0].content)
+    }
+
+    @Test
+    fun differentlyWordedJobQuestionRecallsSameFact() {
+        val items = listOf(item("The user works as a software engineer"))
+        val relevant = MemoryRecall.selectRelevant(items, "What is the user's job?", 5)
+        assertTrue(relevant.isNotEmpty())
+    }
+
+    @Test
+    fun arabicQuestionRecallsSameFact() {
+        val items = listOf(item("اللون المفضل لدى المستخدم هو الأزرق"))
+        val relevant = MemoryRecall.selectRelevant(items, "ما هو اللون المفضل عندي؟", 5)
+        assertTrue(relevant.isNotEmpty())
+    }
+
+    @Test
+    fun unrelatedQuestionDoesNotRecall() {
+        val items = listOf(item("The user's favorite color is blue"))
+        assertTrue(MemoryRecall.selectRelevant(items, "What is the user's phone number?", 5).isEmpty())
+    }
+
+    @Test
+    fun prefixStemmingMatchesMorphologicalVariants() {
+        val items = listOf(item("The user enjoys software engineering"))
+        assertTrue(MemoryRecall.selectRelevant(items, "engineer", 5).isNotEmpty())
+    }
+
+    @Test
+    fun normalizeStripsArabicDiacriticsAndUnifiesLetters() {
+        assertEquals("مفضله", MemoryRecall.normalize("مُفَضَّلَة"))
+        assertEquals("الوان", MemoryRecall.normalize("أَلْوَان"))
+        assertEquals("موسي", MemoryRecall.normalize("مُوسَى"))
+    }
+
+    @Test
+    fun normalizeLowercasesEnglish() {
+        assertEquals("favorite color", MemoryRecall.normalize("Favorite COLOR"))
+    }
 }
