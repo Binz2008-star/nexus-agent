@@ -51,6 +51,9 @@ class ConversationIntegrityWorker(
             val counts = LocalConversationCounts(chats, messages, orphaned)
             val startedChats = inputData.getInt(KEY_INITIAL_CHAT_COUNT, -1)
             val startedMessages = inputData.getInt(KEY_INITIAL_MESSAGE_COUNT, -1)
+            if (startedChats < 0 || startedMessages < 0) {
+                return@withContext Result.failure(workDataOf(KEY_ERROR_CODE to "snapshot_required"))
+            }
             if ((startedChats >= 0 && startedChats != chats) ||
                 (startedMessages >= 0 && startedMessages != messages)) {
                 return@withContext Result.failure(workDataOf(KEY_ERROR_CODE to "data_changed_during_audit"))
