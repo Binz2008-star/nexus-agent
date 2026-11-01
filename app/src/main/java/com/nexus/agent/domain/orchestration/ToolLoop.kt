@@ -54,7 +54,9 @@ class ToolLoop(
         val sources = mutableListOf<ToolSource>()
         val evidence = mutableListOf<ActionEvidence>()
         var successfulActions = 0
-        var verifiedActions = 0
+        // A verified postcondition is valid only for the latest attempted action.
+        // Any subsequent call may invalidate the previously checked external state.
+        var postconditionVerified = false
         var attemptedActions = 0
         var failedActions = 0
 
@@ -76,7 +78,7 @@ class ToolLoop(
                         )
                         return@repeat
                     }
-                    if (taskContract.independentVerificationRequired && verifiedActions == 0) {
+                    if (taskContract.independentVerificationRequired && !postconditionVerified) {
                         failedActions++
                         if (failedActions >= taskContract.maxFailedActions) {
                             return Outcome.Failed("failure_budget_exceeded")
@@ -101,6 +103,11 @@ class ToolLoop(
                             return Outcome.Failed("action_budget_exceeded")
                         }
                         attemptedActions++
+                        if (taskContract.independentVerificationRequired) {
+                            // Clear stale success *before* approval/policy checks: a denied,
+                            // failed or unverified later operation cannot inherit it.
+                            postconditionVerified = false
+                        }
                         val input = ToolCallParser.toJsonObject(call)
                         // Approval and scope policy stay with the original orchestrator.
                         var receipt: ApprovalReceipt? = null
@@ -140,7 +147,9 @@ class ToolLoop(
                                         false
                                     }
                                 }
-                                if (verified) verifiedActions++
+                                if (taskContract.independentVerificationRequired) {
+                                    postconditionVerified = verified
+                                }
                                 evidence += ActionEvidence(call.name, if (verified) {
                                     ActionEvidenceStatus.VERIFIED
                                 } else ActionEvidenceStatus.EXECUTED)
