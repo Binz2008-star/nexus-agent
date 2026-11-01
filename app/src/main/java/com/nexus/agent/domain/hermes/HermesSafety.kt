@@ -50,8 +50,9 @@ object HermesSafety {
         val trimmed = raw?.trim().orEmpty()
         if (trimmed.isEmpty()) return ""
         val withScheme = if (trimmed.contains("://")) trimmed else "https://$trimmed"
-        val url = withScheme.toHttpUrlOrNull() ?: return trimmed
-        val host = url.host ?: return trimmed
+        // Fail closed: never persist unparseable input (which may still contain userinfo) as-is.
+        val url = withScheme.toHttpUrlOrNull() ?: return ""
+        val host = url.host ?: return ""
         return origin(url, url.scheme, host)
     }
 

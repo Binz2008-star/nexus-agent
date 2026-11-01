@@ -43,6 +43,7 @@ class HermesRepository(
 
     /** Verifies the backend advertises the Runs API and is healthy; updates [connectionState]. */
     suspend fun verifyConnection(): HermesConnectionState {
+        val previous = _connectionState.value
         _connectionState.value = HermesConnectionState.Verifying
         val outcome: Result<Unit> = try {
             val capabilities = client.capabilities().getOrThrow()
@@ -53,6 +54,8 @@ class HermesRepository(
             if (!health.isOk) throw IllegalStateException(HermesError.ERR_UNHEALTHY)
             Result.success(Unit)
         } catch (e: CancellationException) {
+            // Don't leave the state stuck at "Verifying" if the awaiting coroutine is cancelled.
+            _connectionState.value = previous
             throw e
         } catch (e: Throwable) {
             Result.failure(e)

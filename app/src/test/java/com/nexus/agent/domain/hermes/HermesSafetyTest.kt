@@ -89,4 +89,10 @@ class HermesSafetyTest {
     fun `sanitizeForStorage returns empty for blank input`() {
         assertEquals("", HermesSafety.sanitizeForStorage("   "))
     }
+
+    @Test
+    fun `sanitizeForStorage fails closed on unparseable input`() {
+        // Unparseable input that could still carry userinfo must NOT be persisted as-is.
+        assertEquals("", HermesSafety.sanitizeForStorage("http://user:pass@host:badport"))
+    }
 }

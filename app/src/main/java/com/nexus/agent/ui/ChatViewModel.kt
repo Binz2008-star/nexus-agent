@@ -485,11 +485,18 @@ class ChatViewModel(
                     return@run
                 }
                 runId = created.runId
+                if (runId.isBlank()) {
+                    _errorMessage.value = "hermes_no_run_id"
+                    update(TaskStatus.Failed("hermes_no_run_id"))
+                    return@run
+                }
                 hermesRunId = runId
                 hermesAudit?.append("create_run", runId)
                 update(TaskStatus.Running(System.currentTimeMillis(), "running"))
 
                 val answer = StringBuilder()
+                var terminal: HermesRunEvent? = null
+                val seenApprovals = mutableSetOf<Pair<String, Int>>()
                 val result = repo.streamRunEvents(runId) { event ->
                     when (event) {
                         is HermesRunEvent.Delta -> {
@@ -506,35 +513,37 @@ class ChatViewModel(
                                 mapOf("tool" to event.tool, "error_code" to if (event.error) "error" else "ok")
                             )
                         is HermesRunEvent.ApprovalRequested -> {
-                            val approved = awaitHermesApproval(event)
-                            hermesAudit?.append(
-                                if (approved) "approval_approved" else "approval_denied",
-                                runId, mapOf("tool" to (event.tool ?: ""))
-                            )
-                            val requestId = event.requestId
-                            if (requestId.isNullOrBlank()) {
-                                // No control id to echo — fail closed by stopping the run.
-                                hermesAudit?.append("approval_error", runId, mapOf("reason" to "missing_request_id"))
-                                repo.stopRun(runId)
-                            } else {
-                                repo.approveRun(
-                                    runId,
-                                    HermesApprovalRequest(
-                                        requestId,
-                                        event.executionGeneration,
-                                        if (approved) HermesApprovalRequest.CHOICE_ONCE else HermesApprovalRequest.CHOICE_DENY
+                            val key = (event.requestId ?: "") to event.executionGeneration
+                            // Dedupe: a re-emitted approval (after reconnect) must not re-prompt.
+                            if (seenApprovals.add(key)) {
+                                val approved = awaitHermesApproval(event)
+                                val requestId = event.requestId
+                                val choice = if (approved) HermesApprovalRequest.CHOICE_ONCE else HermesApprovalRequest.CHOICE_DENY
+                                if (requestId.isNullOrBlank()) {
+                                    hermesAudit?.append("approval_error", runId, mapOf("reason" to "missing_request_id"))
+                                    repo.stopRun(runId)
+                                } else {
+                                    val r = repo.approveRun(
+                                        runId,
+                                        HermesApprovalRequest(requestId, event.executionGeneration, choice)
                                     )
-                                )
+                                    hermesAudit?.append(
+                                        if (r.isSuccess) (if (approved) "approval_approved" else "approval_denied") else "approval_error",
+                                        runId, mapOf("tool" to (event.tool ?: ""))
+                                    )
+                                    if (r.isFailure) repo.stopRun(runId)
+                                }
                             }
                         }
                         is HermesRunEvent.Completed -> {
                             answer.setLength(0)
                             answer.append(event.output)
                             _streamingText.value = event.output
+                            terminal = event
                         }
-                        is HermesRunEvent.Failed -> Unit
-                        is HermesRunEvent.Cancelled -> Unit
-                        is HermesRunEvent.Interrupted -> Unit
+                        is HermesRunEvent.Failed -> terminal = event
+                        is HermesRunEvent.Cancelled -> terminal = event
+                        is HermesRunEvent.Interrupted -> terminal = event
                         is HermesRunEvent.Interim -> Unit
                         is HermesRunEvent.Unknown -> Unit
                     }
@@ -542,16 +551,31 @@ class ChatViewModel(
 
                 when {
                     result.isSuccess -> {
-                        val final = answer.toString()
-                        if (final.isNotBlank()) repository.persistAssistantMessage(conversationId, final)
-                        _streamingText.value = ""
-                        update(TaskStatus.Completed(emptyList()))
+                        // A remotely-failed/cancelled/interrupted run is NOT success — only persist
+                        // + complete on a real Completed terminal event.
+                        when (val t = terminal) {
+                            is HermesRunEvent.Completed -> {
+                                val final = answer.toString()
+                                if (final.isNotBlank()) repository.persistAssistantMessage(conversationId, final)
+                                _streamingText.value = ""
+                                update(TaskStatus.Completed(emptyList()))
+                            }
+                            is HermesRunEvent.Failed -> failHermesRun("hermes_run_failed", update)
+                            is HermesRunEvent.Cancelled -> failHermesRun("hermes_run_cancelled", update)
+                            is HermesRunEvent.Interrupted -> failHermesRun("hermes_run_interrupted", update)
+                            else -> {
+                                val final = answer.toString()
+                                if (final.isNotBlank()) repository.persistAssistantMessage(conversationId, final)
+                                _streamingText.value = ""
+                                update(TaskStatus.Completed(emptyList()))
+                            }
+                        }
                     }
                     result.isFailure -> {
                         val e = result.exceptionOrNull()
                         if (e is CancellationException) throw e
-                        // Best-effort: stop a run that may still be executing server-side.
-                        runId?.let { repo.stopRun(it) }
+                        // Do NOT stop the run on plain connectivity exhaustion — the remote run may
+                        // still be executing healthily server-side. Explicit cancel stops it via cancelTask.
                         val code = HermesError.codeOf(e ?: Exception("unknown"))
                         _errorMessage.value = code
                         update(TaskStatus.Failed(code))
@@ -560,13 +584,22 @@ class ChatViewModel(
             } catch (e: CancellationException) {
                 throw e
             } finally {
-                if (generation == taskGeneration) _agentBusy.value = false
+                if (generation == taskGeneration) {
+                    _agentBusy.value = false
+                    hermesApprovalDeferred?.complete(false)
+                    hermesApprovalDeferred = null
+                    _hermesApproval.value = null
+                }
                 if (hermesRunId == runId) hermesRunId = null
-                hermesApprovalDeferred?.complete(false)
-                hermesApprovalDeferred = null
-                _hermesApproval.value = null
             }
         }
+    }
+
+    /** Reports a terminal (failed/cancelled/interrupted) Hermes run as a failure, not success. */
+    private fun failHermesRun(code: String, update: (TaskStatus) -> Unit) {
+        _streamingText.value = ""
+        _errorMessage.value = code
+        update(TaskStatus.Failed(code))
     }
 
     /** Fallback: the pre-loop scripted web + Second Brain grounding. */
