@@ -2,8 +2,11 @@
 direct (JDBC-equivalent) query would, with deterministic ordering and a numeric tolerance on the
 `similarity()` score."""
 import psycopg
+import pytest
 
 from sql_queries import SEARCH_CHUNKS_SQL, SEARCH_MEMORY_SQL, ilike_pattern
+
+pytestmark = pytest.mark.integration
 
 TOL = 1e-6
 
@@ -84,7 +87,7 @@ def test_memory_save_and_recent_roundtrip(client, auth, write_url):
     assert row is not None and row[0] == ["t1", "t2"]
 
 
-def test_transcript_mirror_roundtrip(client, auth, write_url):
+def test_transcript_mirror_roundtrip(client, auth, admin_write_url):
     r = client.post(
         "/v1/transcript/mirror",
         json={"session_id": "sess-parity", "role": "user", "content": "mirror-test"},
@@ -92,7 +95,8 @@ def test_transcript_mirror_roundtrip(client, auth, write_url):
     )
     assert r.status_code == 200
 
-    with psycopg.connect(write_url) as conn:
+    # Verify via superuser: nexus_writer has INSERT (not SELECT) on nexus_conversations by design.
+    with psycopg.connect(admin_write_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT session_id, role, content FROM nexus_conversations WHERE session_id = %s",

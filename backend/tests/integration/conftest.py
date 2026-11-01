@@ -14,8 +14,8 @@ BACKEND_KEY = os.environ.get("NEXUS_BACKEND_KEY", "")
 
 AVAILABLE = bool(NEON_READ_URL and NEON_WRITE_URL and BACKEND_KEY)
 
-# All tests in this directory require a live database.
-pytestmark = pytest.mark.integration
+# All tests in this directory require a live database; the per-file `pytestmark` marks them
+# `integration` (conftest's own pytestmark is not applied to test items).
 
 
 def _swapped(url: str, user: str, password: str, db: str) -> str:
@@ -69,3 +69,9 @@ def reader_write_url():
 def writer_read_url():
     # nexus_writer pointed at second_brain (has no SELECT on chunks_v4 -> permission failure).
     return _swapped(NEON_READ_URL, "nexus_writer", "writerpass", "second_brain")
+
+
+@pytest.fixture()
+def admin_write_url():
+    # Superuser connection for verifying writes the app role is not allowed to read back.
+    return _swapped(NEON_WRITE_URL, "postgres", "test", "personal_ai_core")

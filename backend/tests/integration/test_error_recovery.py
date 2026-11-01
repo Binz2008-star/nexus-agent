@@ -1,6 +1,10 @@
 """Error recovery: a Neon outage surfaces as a clean 502 (stable code) and the service recovers
 when the database is reachable again."""
+import pytest
+
 import main
+
+pytestmark = pytest.mark.integration
 
 
 def test_db_down_maps_to_502(client, auth):

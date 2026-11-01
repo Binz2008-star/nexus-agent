@@ -1,6 +1,10 @@
 """Permission-failure parity: a misconfigured role must fail cleanly (502 + stable code), never
 crash or leak a raw DB error. Uses the disposable env's least-privilege roles."""
+import pytest
+
 import main
+
+pytestmark = pytest.mark.integration
 
 
 def test_reader_role_cannot_write(client, auth, reader_write_url):
