@@ -101,13 +101,21 @@ import com.nexus.agent.domain.tool.ToolOrchestrator
 import com.nexus.agent.domain.tool.WebSearchAdapter
 import com.nexus.agent.data.connectors.GoogleAuthManager
 import com.nexus.agent.data.remote.GmailApiClient
+import com.nexus.agent.data.remote.HermesRemoteClientImpl
 import com.nexus.agent.data.repository.GmailRepository
+import com.nexus.agent.data.repository.HermesConnectionState
+import com.nexus.agent.data.repository.HermesRepository
 import com.nexus.agent.domain.connectors.GmailConnector
+import com.nexus.agent.domain.hermes.AiEngine
+import com.nexus.agent.domain.hermes.HermesAuditLog
+import com.nexus.agent.domain.hermes.HermesRunEvent
+import com.nexus.agent.domain.hermes.HermesSafety
 import com.nexus.agent.domain.tool.GmailSearchTool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.InputStream
 
 /** Upper bound on the credential file size accepted by the import parser (64 KiB). */
@@ -175,6 +183,25 @@ fun ChatScreen(
             },
             jdbc = NeonJdbcClient()
         )
+    }
+
+    // Hermes backend: configurable endpoint (non-secret, in prefs) + encrypted bearer key.
+    val hermesRepository = remember {
+        HermesRepository(
+            HermesRemoteClientImpl(
+                endpointProvider = { preferences.hermesEndpoint.first() },
+                apiKeyProvider = {
+                    when (val r = secrets.readHermesApiKey()) {
+                        is ApiKeyReadResult.Present -> r.value
+                        else -> null
+                    }
+                }
+            )
+        )
+    }
+    val hermesAudit = remember {
+        // Whitelist-based audit log: only event/run_id/tool/status/error_code/reason are written.
+        HermesAuditLog(logFile = File(context.filesDir, "hermes_audit.log.jsonl"))
     }
 
     val repository = remember(neonRepository) {
@@ -258,7 +285,9 @@ fun ChatScreen(
             gmailScopesProvider = {
                 if (gmailConnector.isConnected.value) gmailConnector.scopes.toSet() else emptySet()
             },
-            approvalGate = approvalGate
+            approvalGate = approvalGate,
+            hermesRepository = hermesRepository,
+            hermesAudit = hermesAudit
         )
     )
 
@@ -271,6 +300,9 @@ fun ChatScreen(
     val gmailEmail by gmailConnector.email.collectAsState()
     val mirrorEnabled by preferences.mirrorEnabled.collectAsState(initial = false)
     val pendingApproval by viewModel.pendingApproval.collectAsState()
+    val selectedEngine by viewModel.selectedEngine.collectAsState()
+    val hermesConnectionState by viewModel.hermesConnectionState.collectAsState()
+    val hermesApproval by viewModel.hermesApproval.collectAsState()
 
     var showSettings by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
@@ -282,6 +314,8 @@ fun ChatScreen(
     var neonWriteUrlInput by remember { mutableStateOf("") }
     var neonReadDirty by remember { mutableStateOf(false) }
     var neonWriteDirty by remember { mutableStateOf(false) }
+    var hermesEndpointInput by remember { mutableStateOf("") }
+    var hermesKeyInput by remember { mutableStateOf("") }
     var input by remember { mutableStateOf("") }
 
     // Import credentials from a user-placed file (nexus-neon-rotation.txt) so they don't need
@@ -315,6 +349,7 @@ fun ChatScreen(
         if (showSettings) {
             systemPromptInput = withContext(Dispatchers.IO) { preferences.systemPrompt.first() }
             knowledgeBaseUrlInput = withContext(Dispatchers.IO) { preferences.knowledgeBaseUrl.first() }
+            hermesEndpointInput = withContext(Dispatchers.IO) { preferences.hermesEndpoint.first() }
             neonReadUrlInput = withContext(Dispatchers.IO) {
                 when (val r = secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF)) {
                     is ApiKeyReadResult.Present -> NeonConnectionParser.maskCredentials(r.value)
@@ -462,6 +497,15 @@ fun ChatScreen(
             onPreferredToneChange = { scope.launch { preferences.setPreferredTone(it) } },
             onMirrorEnabledChange = { scope.launch { preferences.setMirrorEnabled(it) } },
             onImport = { importLauncher.launch(arrayOf("*/*")) },
+            selectedEngine = selectedEngine,
+            hermesReady = hermesConnectionState is HermesConnectionState.Ready,
+            onEngineChange = { viewModel.setEngine(it) },
+            hermesEndpoint = hermesEndpointInput,
+            onHermesEndpointChange = { hermesEndpointInput = it },
+            hermesApiKey = hermesKeyInput,
+            onHermesApiKeyChange = { hermesKeyInput = it },
+            hermesState = hermesConnectionState,
+            onVerifyHermes = { viewModel.verifyHermes() },
             onDismiss = { showSettings = false },
             onSave = {
                 scope.launch {
@@ -472,6 +516,14 @@ fun ChatScreen(
                         }
                         withContext(Dispatchers.IO) { preferences.setSystemPrompt(systemPromptInput) }
                         withContext(Dispatchers.IO) { preferences.setKnowledgeBaseUrl(knowledgeBaseUrlInput) }
+                        withContext(Dispatchers.IO) {
+                            // Strip userinfo/path/query before persisting — never store credentials.
+                            preferences.setHermesEndpoint(HermesSafety.sanitizeForStorage(hermesEndpointInput))
+                        }
+                        val hermesKey = hermesKeyInput.trim()
+                        if (hermesKey.isNotEmpty()) {
+                            withContext(Dispatchers.IO) { secrets.saveHermesApiKey(hermesKey) }
+                        }
                         withContext(Dispatchers.IO) {
                             // Only persist when the user actually edited a field — otherwise the
                             // masked placeholder would be written back and destroy the real URL.
@@ -498,6 +550,14 @@ fun ChatScreen(
             request = request,
             onApprove = { viewModel.approvePending() },
             onReject = { viewModel.rejectPending() }
+        )
+    }
+
+    hermesApproval?.let { request ->
+        HermesApprovalCard(
+            request = request,
+            onApprove = { viewModel.approveHermesApproval() },
+            onReject = { viewModel.rejectHermesApproval() }
         )
     }
 }
@@ -689,6 +749,15 @@ private fun SettingsDialog(
     preferredTone: String,
     onPreferredToneChange: (String) -> Unit,
     onImport: () -> Unit,
+    selectedEngine: AiEngine,
+    hermesReady: Boolean,
+    onEngineChange: (AiEngine) -> Unit,
+    hermesEndpoint: String,
+    onHermesEndpointChange: (String) -> Unit,
+    hermesApiKey: String,
+    onHermesApiKeyChange: (String) -> Unit,
+    hermesState: HermesConnectionState,
+    onVerifyHermes: () -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
@@ -815,6 +884,17 @@ private fun SettingsDialog(
                         onCheckedChange = onMirrorEnabledChange
                     )
                 }
+                Spacer(Modifier.height(16.dp))
+                EngineSelector(selectedEngine, hermesReady, onEngineChange)
+                Spacer(Modifier.height(16.dp))
+                HermesSettingsSection(
+                    endpoint = hermesEndpoint,
+                    onEndpointChange = onHermesEndpointChange,
+                    apiKey = hermesApiKey,
+                    onApiKeyChange = onHermesApiKeyChange,
+                    state = hermesState,
+                    onVerify = onVerifyHermes
+                )
             }
         },
         confirmButton = {
@@ -856,6 +936,115 @@ private fun ApprovalCard(
 }
 
 @Composable
+private fun EngineSelector(
+    selected: AiEngine,
+    hermesReady: Boolean,
+    onSelect: (AiEngine) -> Unit
+) {
+    Column {
+        Text(stringResource(R.string.ai_engine), style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onSelect(AiEngine.DEEPSEEK) }, enabled = selected != AiEngine.DEEPSEEK) {
+                Text(stringResource(R.string.engine_deepseek))
+            }
+            Button(onClick = { onSelect(AiEngine.HERMES) }, enabled = selected != AiEngine.HERMES && hermesReady) {
+                Text(stringResource(R.string.engine_hermes))
+            }
+        }
+    }
+}
+
+@Composable
+private fun HermesSettingsSection(
+    endpoint: String,
+    onEndpointChange: (String) -> Unit,
+    apiKey: String,
+    onApiKeyChange: (String) -> Unit,
+    state: HermesConnectionState,
+    onVerify: () -> Unit
+) {
+    Column {
+        Text(stringResource(R.string.hermes_section), style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = endpoint,
+            onValueChange = onEndpointChange,
+            label = { Text(stringResource(R.string.hermes_endpoint)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = apiKey,
+            onValueChange = onApiKeyChange,
+            label = { Text(stringResource(R.string.hermes_api_key)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = hermesStateLabel(state),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Button(onClick = onVerify) { Text(stringResource(R.string.verify)) }
+        }
+    }
+}
+
+@Composable
+private fun hermesStateLabel(state: HermesConnectionState): String = when (state) {
+    HermesConnectionState.Ready -> stringResource(R.string.hermes_state_ready)
+    HermesConnectionState.Verifying -> stringResource(R.string.hermes_state_verifying)
+    HermesConnectionState.Unconfigured -> stringResource(R.string.hermes_state_unconfigured)
+    is HermesConnectionState.Error -> stringResource(R.string.hermes_state_error)
+}
+
+@Composable
+private fun HermesApprovalCard(
+    request: HermesRunEvent.ApprovalRequested,
+    onApprove: () -> Unit,
+    onReject: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onReject,
+        title = { Text(stringResource(R.string.hermes_approval_title)) },
+        text = {
+            Column {
+                Text(stringResource(R.string.approval_action, request.tool ?: "?"))
+                if (!request.arguments.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        request.arguments,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (!request.prompt.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        request.prompt,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onApprove) { Text(stringResource(R.string.approve)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onReject) { Text(stringResource(R.string.reject)) }
+        }
+    )
+}
+
+@Composable
 private fun mapErrorCode(code: String): String {
     return when {
         code == "auth" -> stringResource(R.string.error_auth)
@@ -868,6 +1057,11 @@ private fun mapErrorCode(code: String): String {
         code == "timeout" -> "Request timed out"
         code == "network" -> "Network error. Check your connection."
         code.startsWith("api_") -> "API error ${code.removePrefix("api_")}"
+        code == "https_required" -> stringResource(R.string.hermes_https_required)
+        code == "endpoint" -> stringResource(R.string.hermes_endpoint_invalid)
+        code == "hermes_runs_unsupported" -> stringResource(R.string.hermes_runs_unsupported)
+        code == "hermes_unhealthy" -> stringResource(R.string.hermes_unhealthy)
+        code == "hermes_unavailable" -> stringResource(R.string.hermes_unavailable)
         code.startsWith("generic:") -> "Request failed (${code.removePrefix("generic:")})"
         else -> stringResource(R.string.error_generic)
     }

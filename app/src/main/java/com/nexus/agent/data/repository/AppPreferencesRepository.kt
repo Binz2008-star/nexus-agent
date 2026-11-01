@@ -28,6 +28,8 @@ class AppPreferencesRepository(
     private val mashaaerEnabledKey = booleanPreferencesKey("mashaaer_emotion_enabled")
     private val dialectKey = stringPreferencesKey("preferred_dialect")
     private val toneKey = stringPreferencesKey("preferred_tone")
+    private val hermesEndpointKey = stringPreferencesKey("hermes_endpoint")
+    private val lastEngineKey = stringPreferencesKey("last_engine")
 
     val systemPrompt: Flow<String> = dataStore.data.map { it[systemPromptKey] ?: "" }
     val lastModel: Flow<String> = dataStore.data.map { it[lastModelKey] ?: "deepseek-flash" }
@@ -39,6 +41,11 @@ class AppPreferencesRepository(
         dataStore.data.map { it[mashaaerEnabledKey] ?: false }
     val preferredDialect: Flow<String> = dataStore.data.map { it[dialectKey] ?: "auto" }
     val preferredTone: Flow<String> = dataStore.data.map { it[toneKey] ?: "friendly" }
+    // Non-secret Hermes API server origin (e.g. https://host:8642). The bearer key lives encrypted
+    // in SecretStorageRepository; only the host address is stored here.
+    val hermesEndpoint: Flow<String> = dataStore.data.map { it[hermesEndpointKey] ?: "" }
+    // Last-selected AI engine id ("deepseek" | "hermes"); defaults to DeepSeek.
+    val lastEngine: Flow<String> = dataStore.data.map { it[lastEngineKey] ?: "deepseek" }
 
     suspend fun setSystemPrompt(prompt: String) {
         dataStore.edit { prefs ->
@@ -81,6 +88,20 @@ class AppPreferencesRepository(
     suspend fun setPreferredTone(tone: String) {
         require(tone in setOf("calm", "emotional", "assertive", "friendly", "professional"))
         dataStore.edit { it[toneKey] = tone }
+    }
+
+    suspend fun setHermesEndpoint(url: String) {
+        dataStore.edit { prefs ->
+            if (url.isBlank()) {
+                prefs.remove(hermesEndpointKey)
+            } else {
+                prefs[hermesEndpointKey] = url.trim()
+            }
+        }
+    }
+
+    suspend fun setLastEngine(engineId: String) {
+        dataStore.edit { it[lastEngineKey] = engineId }
     }
 
     companion object {
