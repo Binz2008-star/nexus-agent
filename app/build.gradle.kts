@@ -125,6 +125,9 @@ dependencies {
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
+
+    // Durable, explicitly triggered READ-ONLY local integrity checks (no network or agent tools).
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     ksp("androidx.room:room-compiler:$roomVersion")
 
     // Neon (Postgres) — direct JDBC for Second Brain search + cloud persistence.
