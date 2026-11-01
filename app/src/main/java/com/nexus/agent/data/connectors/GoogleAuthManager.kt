@@ -54,6 +54,8 @@ class GoogleAuthManager(
     private val client = Identity.getAuthorizationClient(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val tokenMutex = Mutex()
+    // Serializes account metadata writes against disconnect/revocation and stale restores.
+    private val sessionMutex = Mutex()
     private val generation = AtomicLong(0L)
 
     @Volatile private var awaitingConsent = false
@@ -87,34 +89,59 @@ class GoogleAuthManager(
      * [needsReconnect] instead of popping consent — never silently grant or expand scopes.
      */
     fun restoreAndRevalidate() {
+        // Invalidates any earlier cold-start verification, user switch or consent callback.
+        val revision = generation.incrementAndGet()
         scope.launch {
-            val email = secretStorage.readGoogleEmail() ?: return@launch
+            val email = secretStorage.readGoogleEmail()?.takeIf { it.isNotBlank() }
+                ?: return@launch
             val scopes = secretStorage.readGoogleScopes()
-                ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-                .orEmpty()
-            if (scopes.isEmpty()) return@launch
+                ?.split(",")?.map { it.trim() }
+                ?.filter { it in GoogleScopePolicy.ALLOWED }
+                ?.distinct().orEmpty()
 
-            // Optimistically restore so a previously-connected account is not shown as "never connected".
-            _email.value = email
-            _grantedScopes.value = scopes.toSet()
-            _isConnected.value = GmailConnector.GMAIL_READONLY_SCOPE in scopes
-            _driveConnected.value = GoogleScopePolicy.DRIVE_READ in scopes && GoogleScopePolicy.DRIVE_FILE in scopes
-            _needsReconnect.value = false
+            sessionMutex.withLock {
+                if (generation.get() != revision) return@withLock
+                // Cached metadata is NOT an authorization grant. Display the account as
+                // requiring verification until Google confirms token, scopes and identity.
+                _email.value = email
+                updateGrants(emptySet())
+                _needsReconnect.value = true
+            }
+            if (scopes.isEmpty() || generation.get() != revision) return@launch
 
             try {
                 val result = client.authorize(createRequest(scopes, email)).await()
-                if (result.hasResolution() || !result.grantedScopes.containsAll(scopes)) {
-                    updateGrants(emptySet())
-                    _needsReconnect.value = true
-                } else {
-                    updateGrants(result.grantedScopes.toSet())
-                    _needsReconnect.value = false
+                val validatedEmail = if (!result.hasResolution() && !result.accessToken.isNullOrBlank()) {
+                    result.toGoogleSignInAccount()?.email
+                        ?: fetchProfileEmail(result.accessToken!!,
+                            "https://openidconnect.googleapis.com/v1/userinfo", "userinfo")
+                } else null
+
+                sessionMutex.withLock {
+                    if (generation.get() != revision) return@withLock
+                    if (GoogleRestorePolicy.canTrust(
+                            scopes, result.grantedScopes.toSet(),
+                            tokenPresent = !result.accessToken.isNullOrBlank(),
+                            needsResolution = result.hasResolution(),
+                            accountMatches = email == validatedEmail
+                        )) {
+                        updateGrants(result.grantedScopes.toSet())
+                        _needsReconnect.value = false
+                    } else {
+                        updateGrants(emptySet())
+                        _needsReconnect.value = true
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                // Offline / Play services unavailable: keep the remembered state; the user can
-                // still attempt a silent revalidate on the next tool call.
+                // Offline / Play services failure cannot resurrect a stale cached permission.
+                sessionMutex.withLock {
+                    if (generation.get() == revision) {
+                        updateGrants(emptySet())
+                        _needsReconnect.value = true
+                    }
+                }
             }
         }
     }
@@ -224,14 +251,22 @@ class GoogleAuthManager(
             _error.value = "Google account identity verification failed or account changed"
             return
         }
-        _email.value = email
-        updateGrants(result.grantedScopes.toSet())
-        // Persist non-sensitive account identifier + granted-scope metadata for cold-start
-        // revalidation. No access/refresh token is persisted.
-        secretStorage.saveGoogleEmail(email)
-        secretStorage.saveGoogleScopes(result.grantedScopes.toSet().joinToString(","))
-        _needsReconnect.value = false
-        _error.value = null
+        sessionMutex.withLock {
+            if (generation.get() != current) return@withLock
+            // Write persisted session metadata as a serialized unit relative to disconnect.
+            secretStorage.saveGoogleEmail(email)
+            secretStorage.saveGoogleScopes(result.grantedScopes.toSet().joinToString(","))
+            if (generation.get() != current) {
+                // A newer consent/disconnect invalidated this result mid-write.
+                secretStorage.clearGoogleEmail()
+                secretStorage.clearGoogleScopes()
+                return@withLock
+            }
+            _email.value = email
+            updateGrants(result.grantedScopes.toSet())
+            _needsReconnect.value = false
+            _error.value = null
+        }
     }
 
     private fun updateGrants(scopes: Set<String>) {
@@ -269,19 +304,22 @@ class GoogleAuthManager(
     }
 
     override suspend fun disconnect() {
+        // Invalidate in-flight restore and authorization responses immediately.
         generation.incrementAndGet()
         awaitingConsent = false
-        val email = _email.value
-        updateGrants(emptySet())
-        _email.value = null
-        _needsReconnect.value = false
-        _error.value = null
-        // Clear legacy AppAuth tokens from local encrypted storage; never reuse them as
-        // Google Identity Services tokens (different Android authorization model).
-        secretStorage.clearGoogleRefreshToken()
-        secretStorage.clearGoogleEmail()
-        secretStorage.clearGoogleScopes()
-        secretStorage.clearPendingOAuth()
+        val email = sessionMutex.withLock {
+            val prior = _email.value
+            updateGrants(emptySet())
+            _email.value = null
+            _needsReconnect.value = false
+            _error.value = null
+            // Keep deletion serialized with authorization metadata persistence.
+            secretStorage.clearGoogleRefreshToken()
+            secretStorage.clearGoogleEmail()
+            secretStorage.clearGoogleScopes()
+            secretStorage.clearPendingOAuth()
+            prior
+        }
 
         if (email != null) {
             try {
@@ -294,8 +332,6 @@ class GoogleAuthManager(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                // The local session stays disconnected. Revocation may need to be
-                // completed in Google Account > Third-party access if offline.
                 _error.value = "Disconnected locally; Google permission revocation was not confirmed"
             }
         }
@@ -356,6 +392,20 @@ object GoogleScopePolicy {
 
     fun hasRequiredGrant(granted: List<String>?, required: List<String>): Boolean =
         isAllowedRequest(required) && granted?.containsAll(required) == true
+}
+
+/** A persisted scope list alone never proves current Google authorization. */
+object GoogleRestorePolicy {
+    fun canTrust(
+        requested: List<String>,
+        granted: Set<String>,
+        tokenPresent: Boolean,
+        needsResolution: Boolean,
+        accountMatches: Boolean
+    ): Boolean =
+        GoogleScopePolicy.isAllowedRequest(requested) &&
+            granted.containsAll(requested) &&
+            tokenPresent && !needsResolution && accountMatches
 }
 
 /** Existing read-only policy preserved for downstream unit tests and callers. */
