@@ -26,8 +26,6 @@ android {
         // contain credentials and are user-supplied + stored encrypted at rest (Settings).
         buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"${System.getenv("GOOGLE_OAUTH_CLIENT_ID") ?: ""}\"")
 
-        // AppAuth's manifest declares a redirect receiver using this placeholder.
-        manifestPlaceholders["appAuthRedirectScheme"] = "com.nexus.agent"
     }
 
     // Stable test-signing identity for CI-generated APKs. The keystore + passwords are injected
@@ -113,9 +111,9 @@ dependencies {
     // Neon (Postgres) — direct JDBC for Second Brain search + cloud persistence.
     implementation("org.postgresql:postgresql:42.7.4")
 
-    // Connectors (Google OAuth) — AppAuth (PKCE) + Custom Tabs.
-    implementation("net.openid:appauth:0.11.1")
-    implementation("androidx.browser:browser:1.8.0")
+    // Google Identity Services / AuthorizationClient for Gmail read-only authorization.
+    implementation("com.google.android.gms:play-services-auth:22.0.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 
