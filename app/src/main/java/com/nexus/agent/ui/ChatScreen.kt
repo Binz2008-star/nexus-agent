@@ -762,7 +762,7 @@ private fun SettingsDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    if (gmailConnected) {
+                    if (grantedGoogleScopes.isNotEmpty()) {
                         TextButton(onClick = onDisconnectGmail) {
                             Text(stringResource(R.string.disconnect))
                         }
