@@ -24,9 +24,14 @@ android {
         // Google OAuth client id for the connectors (Gmail). Injected at CI build time; a client
         // id is public (not a secret). Neon connection URLs are deliberately NOT baked in — they
         // contain credentials and are user-supplied + stored encrypted at rest (Settings).
-        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"${System.getenv("GOOGLE_OAUTH_CLIENT_ID") ?: ""}\"")
+        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"\u0024{System.getenv("GOOGLE_OAUTH_CLIENT_ID") ?: ""}\"")
 
         // AppAuth's manifest declares a redirect receiver using this placeholder.
+        // Public PostHog project token (not a secret), supplied by CI/local environment.
+        // Absent configuration keeps telemetry completely disabled.
+        buildConfigField("String", "POSTHOG_PROJECT_TOKEN", "\\"\u0024{System.getenv("POSTHOG_PROJECT_TOKEN") ?: ""}\\"")
+        buildConfigField("String", "POSTHOG_HOST", "\\"\u0024{System.getenv("POSTHOG_HOST") ?: ""}\\"")
+
         manifestPlaceholders["appAuthRedirectScheme"] = "com.nexus.agent"
     }
 
@@ -100,6 +105,8 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     // Phase 2A: DeepSeek networking
+    // Opt-in anonymous analytics (no screen replay, no sensitive payloads).
+    implementation("com.posthog:posthog-android:3.+")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
