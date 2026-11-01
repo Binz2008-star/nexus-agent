@@ -7,6 +7,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +28,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Send
@@ -60,13 +64,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nexus.agent.BuildConfig
+import com.nexus.agent.analytics.NexusAnalytics
 import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
 import com.nexus.agent.data.remote.NeonJdbcClient
+import com.nexus.agent.data.remote.WebFetchClient
 import com.nexus.agent.data.remote.WebSearchApiClient
 import com.nexus.agent.data.repository.ApiKeyReadResult
 import com.nexus.agent.data.repository.AppPreferencesRepository
@@ -84,6 +92,7 @@ import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.neon.CredentialFileParser
 import com.nexus.agent.domain.neon.NeonConnectionParser
 import com.nexus.agent.domain.persona.AdaptiveTone
+import com.nexus.agent.domain.persona.Dialect
 import com.nexus.agent.domain.persona.Tone
 import com.nexus.agent.domain.persona.regionToDialect
 import com.nexus.agent.domain.policy.ApprovalGate
@@ -95,15 +104,37 @@ import com.nexus.agent.domain.tool.MemorySaveTool
 import com.nexus.agent.domain.tool.TaskStatus
 import com.nexus.agent.domain.tool.ToolOrchestrator
 import com.nexus.agent.domain.tool.WebSearchAdapter
+import com.nexus.agent.domain.tool.WebFetchTool
 import com.nexus.agent.data.connectors.GoogleAuthManager
+import com.nexus.agent.data.connectors.GoogleScopePolicy
+import com.nexus.agent.data.remote.GmailSendApiClient
+import com.nexus.agent.domain.tool.GmailSendTool
+import com.nexus.agent.domain.tool.GoogleWorkspaceApiClient
+import com.nexus.agent.domain.tool.GoogleDriveSearchTool
+import com.nexus.agent.domain.tool.GoogleDriveCreateTool
+import com.nexus.agent.domain.tool.GoogleCalendarUpcomingTool
+import com.nexus.agent.domain.tool.GoogleTasksListsTool
+import com.nexus.agent.domain.tool.GoogleContactsListTool
 import com.nexus.agent.data.remote.GmailApiClient
+import com.nexus.agent.data.remote.HermesRemoteClientImpl
 import com.nexus.agent.data.repository.GmailRepository
+import com.nexus.agent.data.repository.HermesConnectionState
+import com.nexus.agent.data.repository.HermesRepository
 import com.nexus.agent.domain.connectors.GmailConnector
+import com.nexus.agent.domain.hermes.AiEngine
+import com.nexus.agent.domain.hermes.HermesAuditLog
+import com.nexus.agent.domain.hermes.HermesRunEvent
+import com.nexus.agent.domain.hermes.HermesSafety
 import com.nexus.agent.domain.tool.GmailSearchTool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.InputStream
+
+/** Upper bound on the credential file size accepted by the import parser (64 KiB). */
+private const val MAX_CREDENTIAL_FILE_BYTES = 64 * 1024
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -148,15 +179,9 @@ fun ChatScreen(
         val region = CultureContextEngine.detectRegionFromLocale(java.util.Locale.getDefault().toLanguageTag())
         CultureContext(region = region)
     }
-    val personaInstruction = remember(cultureContext) {
-        val dialect = regionToDialect(cultureContext.region)
-        val english = cultureContext.region == Region.EN_GLOBAL || cultureContext.region == Region.FR_GLOBAL
-        if (english) {
-            AdaptiveTone.buildRewriteInstructionEnglish(dialect, Tone.FRIENDLY)
-        } else {
-            AdaptiveTone.buildRewriteInstruction(dialect, Tone.FRIENDLY)
-        }
-    }
+    val preferredDialect by preferences.preferredDialect.collectAsState(initial = "auto")
+    val preferredTone by preferences.preferredTone.collectAsState(initial = "friendly")
+    val mashaaerEmotionEnabled by preferences.mashaaerEmotionEnabled.collectAsState(initial = false)
     val neonRepository = remember {
         NeonRepository(
             readUrlProvider = {
@@ -175,6 +200,25 @@ fun ChatScreen(
         )
     }
 
+    // Hermes backend: configurable endpoint (non-secret, in prefs) + encrypted bearer key.
+    val hermesRepository = remember {
+        HermesRepository(
+            HermesRemoteClientImpl(
+                endpointProvider = { preferences.hermesEndpoint.first() },
+                apiKeyProvider = {
+                    when (val r = secrets.readHermesApiKey()) {
+                        is ApiKeyReadResult.Present -> r.value
+                        else -> null
+                    }
+                }
+            )
+        )
+    }
+    val hermesAudit = remember {
+        // Whitelist-based audit log: only event/run_id/tool/status/error_code/reason are written.
+        HermesAuditLog(logFile = File(context.filesDir, "hermes_audit.log.jsonl"))
+    }
+
     val repository = remember(neonRepository) {
         ChatRepository(
             messageDao = db.messageDao(),
@@ -188,7 +232,21 @@ fun ChatScreen(
             },
             systemPromptProvider = { preferences.systemPrompt.first() },
             router = router,
-            personaProvider = { personaInstruction },
+            personaProvider = {
+                // Read current persisted preferences at request-time (repository is remembered).
+                val selectedDialect = preferences.preferredDialect.first()
+                val selectedTone = Tone.fromId(preferences.preferredTone.first())
+                val dialect = if (selectedDialect == "auto") regionToDialect(cultureContext.region)
+                    else Dialect.fromId(selectedDialect)
+                val englishLocale = cultureContext.region == Region.EN_GLOBAL ||
+                    cultureContext.region == Region.FR_GLOBAL
+                if (englishLocale) {
+                    AdaptiveTone.buildRewriteInstructionEnglish(dialect, selectedTone)
+                } else {
+                    AdaptiveTone.buildRewriteInstruction(dialect, selectedTone)
+                }
+            },
+            mashaaerEmotionEnabledProvider = { preferences.mashaaerEmotionEnabled.first() },
             mirror = object : ConversationMirror {
                 override suspend fun mirror(sessionId: String, role: String, content: String) {
                     // Opt-in gate: never mirror transcripts unless the user enabled it.
@@ -219,17 +277,44 @@ fun ChatScreen(
         val repo = GmailRepository(searchApi = { q, n -> api.searchMessages(q, n) })
         GmailSearchTool(repo)
     }
+    val googleApi = remember(googleAuthManager) {
+        GoogleWorkspaceApiClient(tokenFor = { scopes ->
+            googleAuthManager.accessTokenForScopes(scopes)
+        })
+    }
+    val gmailSendTool = remember(googleAuthManager) {
+        GmailSendTool(GmailSendApiClient(tokenProvider = {
+            googleAuthManager.accessTokenForScopes(listOf(GoogleScopePolicy.GMAIL_SEND))
+        }))
+    }
+    val driveSearchTool = remember(googleApi) { GoogleDriveSearchTool(googleApi) }
+    val driveCreateTool = remember(googleApi) { GoogleDriveCreateTool(googleApi) }
+    val calendarTool = remember(googleApi) { GoogleCalendarUpcomingTool(googleApi) }
+    val tasksTool = remember(googleApi) { GoogleTasksListsTool(googleApi) }
+    val contactsTool = remember(googleApi) { GoogleContactsListTool(googleApi) }
+
     val memorySaveTool = remember(neonRepository) {
         MemorySaveTool(save = { content -> neonRepository.saveMemory("fact", content) })
     }
+    val webFetchTool = remember {
+        val client = WebFetchClient()
+        WebFetchTool(fetch = { url -> client.fetch(url) })
+    }
     val approvalGate = remember { ApprovalGate() }
-    val toolOrchestrator = remember(approvalGate, memorySaveTool) {
+    val toolOrchestrator = remember(approvalGate, memorySaveTool, googleApi, gmailSendTool) {
         ToolOrchestrator(
             mapOf(
                 webSearchAdapter.name to webSearchAdapter,
                 knowledgeSearchTool.name to knowledgeSearchTool,
                 gmailSearchTool.name to gmailSearchTool,
-                memorySaveTool.name to memorySaveTool
+                memorySaveTool.name to memorySaveTool,
+                webFetchTool.name to webFetchTool,
+                gmailSendTool.name to gmailSendTool,
+                driveSearchTool.name to driveSearchTool,
+                driveCreateTool.name to driveCreateTool,
+                calendarTool.name to calendarTool,
+                tasksTool.name to tasksTool,
+                contactsTool.name to contactsTool
             ),
             approvalGate
         )
@@ -240,9 +325,11 @@ fun ChatScreen(
             repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
             emotionAnalyzer, loadManager, cultureContext, neonRepository,
             gmailScopesProvider = {
-                if (gmailConnector.isConnected.value) gmailConnector.scopes.toSet() else emptySet()
+                googleAuthManager.grantedScopes.value
             },
-            approvalGate = approvalGate
+            approvalGate = approvalGate,
+            hermesRepository = hermesRepository,
+            hermesAudit = hermesAudit
         )
     )
 
@@ -252,9 +339,27 @@ fun ChatScreen(
     val streamingText by viewModel.streamingText.collectAsState()
     val taskStatus by viewModel.taskStatus.collectAsState()
     val gmailConnected by gmailConnector.isConnected.collectAsState()
+    val grantedGoogleScopes by googleAuthManager.grantedScopes.collectAsState()
     val gmailEmail by gmailConnector.email.collectAsState()
+    val gmailAuthError by googleAuthManager.error.collectAsState()
+    LaunchedEffect(gmailAuthError) {
+        gmailAuthError?.let { message ->
+            context.showToast(message)
+            googleAuthManager.dismissError()
+        }
+    }
     val mirrorEnabled by preferences.mirrorEnabled.collectAsState(initial = false)
+    val analyticsEnabled by preferences.analyticsEnabled.collectAsState(initial = false)
+
+    // Restore explicit consent only. No automatic capture or app data is sent without it.
+    LaunchedEffect(analyticsEnabled) {
+        NexusAnalytics.setConsent(analyticsEnabled)
+        if (analyticsEnabled) NexusAnalytics.track(NexusAnalytics.Event.APP_OPENED)
+    }
     val pendingApproval by viewModel.pendingApproval.collectAsState()
+    val selectedEngine by viewModel.selectedEngine.collectAsState()
+    val hermesConnectionState by viewModel.hermesConnectionState.collectAsState()
+    val hermesApproval by viewModel.hermesApproval.collectAsState()
 
     var showSettings by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
@@ -266,6 +371,8 @@ fun ChatScreen(
     var neonWriteUrlInput by remember { mutableStateOf("") }
     var neonReadDirty by remember { mutableStateOf(false) }
     var neonWriteDirty by remember { mutableStateOf(false) }
+    var hermesEndpointInput by remember { mutableStateOf("") }
+    var hermesKeyInput by remember { mutableStateOf("") }
     var input by remember { mutableStateOf("") }
 
     // Import credentials from a user-placed file (nexus-neon-rotation.txt) so they don't need
@@ -275,7 +382,9 @@ fun ChatScreen(
             scope.launch {
                 val content = withContext(Dispatchers.IO) {
                     try {
-                        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            readBounded(input, MAX_CREDENTIAL_FILE_BYTES)
+                        }
                     } catch (e: Exception) {
                         null
                     }
@@ -297,6 +406,7 @@ fun ChatScreen(
         if (showSettings) {
             systemPromptInput = withContext(Dispatchers.IO) { preferences.systemPrompt.first() }
             knowledgeBaseUrlInput = withContext(Dispatchers.IO) { preferences.knowledgeBaseUrl.first() }
+            hermesEndpointInput = withContext(Dispatchers.IO) { preferences.hermesEndpoint.first() }
             neonReadUrlInput = withContext(Dispatchers.IO) {
                 when (val r = secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF)) {
                     is ApiKeyReadResult.Present -> NeonConnectionParser.maskCredentials(r.value)
@@ -407,6 +517,7 @@ fun ChatScreen(
                 sendEnabled = !isLoading && taskStatus !is TaskStatus.Running && input.isNotBlank(),
                 onSend = {
                     viewModel.sendMessageWithAgent(input)
+                    NexusAnalytics.track(NexusAnalytics.Event.CHAT_SUBMITTED)
                     input = ""
                 }
             )
@@ -426,6 +537,10 @@ fun ChatScreen(
             neonWriteUrl = neonWriteUrlInput,
             onNeonWriteUrlChange = { neonWriteUrlInput = it; neonWriteDirty = true },
             gmailConnected = gmailConnected,
+            grantedGoogleScopes = grantedGoogleScopes,
+            onAuthorizeGoogle = { requested ->
+                googleAuthManager.startAuthorization(requested)
+            },
             gmailEmail = gmailEmail,
             onConnectGmail = {
                 if (BuildConfig.GOOGLE_OAUTH_CLIENT_ID.isBlank()) {
@@ -436,8 +551,28 @@ fun ChatScreen(
             },
             onDisconnectGmail = { scope.launch { gmailConnector.disconnect() } },
             mirrorEnabled = mirrorEnabled,
+            analyticsEnabled = analyticsEnabled,
+            onAnalyticsEnabledChange = { enabled ->
+                NexusAnalytics.setConsent(enabled)
+                scope.launch { preferences.setAnalyticsEnabled(enabled) }
+            },
+            mashaaerEmotionEnabled = mashaaerEmotionEnabled,
+            onMashaaerEmotionEnabledChange = { scope.launch { preferences.setMashaaerEmotionEnabled(it) } },
+            preferredDialect = preferredDialect,
+            onPreferredDialectChange = { scope.launch { preferences.setPreferredDialect(it) } },
+            preferredTone = preferredTone,
+            onPreferredToneChange = { scope.launch { preferences.setPreferredTone(it) } },
             onMirrorEnabledChange = { scope.launch { preferences.setMirrorEnabled(it) } },
             onImport = { importLauncher.launch(arrayOf("*/*")) },
+            selectedEngine = selectedEngine,
+            hermesReady = hermesConnectionState is HermesConnectionState.Ready,
+            onEngineChange = { viewModel.setEngine(it) },
+            hermesEndpoint = hermesEndpointInput,
+            onHermesEndpointChange = { hermesEndpointInput = it },
+            hermesApiKey = hermesKeyInput,
+            onHermesApiKeyChange = { hermesKeyInput = it },
+            hermesState = hermesConnectionState,
+            onVerifyHermes = { viewModel.verifyHermes() },
             onDismiss = { showSettings = false },
             onSave = {
                 scope.launch {
@@ -448,6 +583,14 @@ fun ChatScreen(
                         }
                         withContext(Dispatchers.IO) { preferences.setSystemPrompt(systemPromptInput) }
                         withContext(Dispatchers.IO) { preferences.setKnowledgeBaseUrl(knowledgeBaseUrlInput) }
+                        withContext(Dispatchers.IO) {
+                            // Strip userinfo/path/query before persisting — never store credentials.
+                            preferences.setHermesEndpoint(HermesSafety.sanitizeForStorage(hermesEndpointInput))
+                        }
+                        val hermesKey = hermesKeyInput.trim()
+                        if (hermesKey.isNotEmpty()) {
+                            withContext(Dispatchers.IO) { secrets.saveHermesApiKey(hermesKey) }
+                        }
                         withContext(Dispatchers.IO) {
                             // Only persist when the user actually edited a field — otherwise the
                             // masked placeholder would be written back and destroy the real URL.
@@ -476,6 +619,30 @@ fun ChatScreen(
             onReject = { viewModel.rejectPending() }
         )
     }
+
+    hermesApproval?.let { request ->
+        HermesApprovalCard(
+            request = request,
+            onApprove = { viewModel.approveHermesApproval() },
+            onReject = { viewModel.rejectHermesApproval() }
+        )
+    }
+}
+
+/**
+ * Reads at most [maxBytes] from [input] and returns the decoded UTF-8 string, or null when the
+ * stream is larger than the cap (rejects oversized credential files instead of slurping them).
+ */
+private fun readBounded(input: InputStream, maxBytes: Int): String? {
+    val buffer = ByteArray(maxBytes + 1)
+    var total = 0
+    while (total < buffer.size) {
+        val read = input.read(buffer, total, buffer.size - total)
+        if (read <= 0) break
+        total += read
+    }
+    if (total > maxBytes) return null
+    return String(buffer, 0, total, Charsets.UTF_8)
 }
 
 private suspend fun saveNeonUrl(
@@ -637,12 +804,31 @@ private fun SettingsDialog(
     neonWriteUrl: String,
     onNeonWriteUrlChange: (String) -> Unit,
     gmailConnected: Boolean,
+    grantedGoogleScopes: Set<String>,
+    onAuthorizeGoogle: (List<String>) -> Unit,
     gmailEmail: String?,
     onConnectGmail: () -> Unit,
     onDisconnectGmail: () -> Unit,
     mirrorEnabled: Boolean,
     onMirrorEnabledChange: (Boolean) -> Unit,
+    analyticsEnabled: Boolean,
+    onAnalyticsEnabledChange: (Boolean) -> Unit,
+    mashaaerEmotionEnabled: Boolean,
+    onMashaaerEmotionEnabledChange: (Boolean) -> Unit,
+    preferredDialect: String,
+    onPreferredDialectChange: (String) -> Unit,
+    preferredTone: String,
+    onPreferredToneChange: (String) -> Unit,
     onImport: () -> Unit,
+    selectedEngine: AiEngine,
+    hermesReady: Boolean,
+    onEngineChange: (AiEngine) -> Unit,
+    hermesEndpoint: String,
+    onHermesEndpointChange: (String) -> Unit,
+    hermesApiKey: String,
+    onHermesApiKeyChange: (String) -> Unit,
+    hermesState: HermesConnectionState,
+    onVerifyHermes: () -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
@@ -650,7 +836,7 @@ private fun SettingsDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.settings)) },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -671,13 +857,40 @@ private fun SettingsDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    if (gmailConnected) {
+                    if (grantedGoogleScopes.isNotEmpty()) {
                         TextButton(onClick = onDisconnectGmail) {
                             Text(stringResource(R.string.disconnect))
                         }
                     } else {
                         Button(onClick = onConnectGmail) {
                             Text(stringResource(R.string.connect))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("Google services · خدمات جوجل", style = MaterialTheme.typography.titleSmall)
+                Text("Authorize each capability separately. Sending and changes require confirmation.",
+                    style = MaterialTheme.typography.bodySmall)
+                val services = listOf(
+                    "Gmail · قراءة" to listOf(GoogleScopePolicy.GMAIL_READ),
+                    "Gmail · إرسال" to listOf(GoogleScopePolicy.GMAIL_SEND),
+                    "Drive · قراءة" to listOf(GoogleScopePolicy.DRIVE_READ),
+                    "Drive · إنشاء ملفات Docs / Sheets / Slides" to listOf(GoogleScopePolicy.DRIVE_FILE),
+                    "Calendar · قراءة" to listOf(GoogleScopePolicy.CALENDAR_READ),
+                    "Contacts · قراءة" to listOf(GoogleScopePolicy.CONTACTS_READ),
+                    "Tasks · قراءة" to listOf(GoogleScopePolicy.TASKS_READ)
+                )
+                services.forEach { (name, scopes) ->
+                    Row(modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall)
+                        if (grantedGoogleScopes.containsAll(scopes)) {
+                            Text("✓", color = MaterialTheme.colorScheme.primary)
+                        } else {
+                            TextButton(onClick = { onAuthorizeGoogle(scopes) }) {
+                                Text("Connect")
+                            }
                         }
                     }
                 }
@@ -730,6 +943,53 @@ private fun SettingsDialog(
                     shape = RoundedCornerShape(12.dp)
                 )
                 Spacer(Modifier.height(16.dp))
+                Text("Anonymous app analytics · إحصاءات التطبيق", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (NexusAnalytics.isConfigured) {
+                        "Optional. Sends only app-open and chat-submitted counts. No messages, prompts, Gmail, memories, email addresses, or session recordings."
+                    } else {
+                        "Unavailable in this build. Configure POSTHOG_PROJECT_TOKEN and POSTHOG_HOST during build."
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Share anonymous usage counts · مشاركة إحصاءات مجهولة",
+                        modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = analyticsEnabled && NexusAnalytics.isConfigured,
+                        onCheckedChange = onAnalyticsEnabledChange,
+                        enabled = NexusAnalytics.isConfigured
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                Text("Mashaaer · مشاعر", style = MaterialTheme.typography.titleSmall)
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("تحليل المشاعر الاختياري (محلي، دون حفظ)", modifier = Modifier.weight(1f))
+                    Switch(checked = mashaaerEmotionEnabled,
+                        onCheckedChange = onMashaaerEmotionEnabledChange)
+                }
+                Text("اللهجة", style = MaterialTheme.typography.bodyMedium)
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("auto" to "تلقائي", "gulf" to "خليجي",
+                        "levant" to "شامي", "egypt" to "مصري").forEach { (id, label) ->
+                        TextButton(onClick = { onPreferredDialectChange(id) }) {
+                            Text(if (preferredDialect == id) "✓ $label" else label)
+                        }
+                    }
+                }
+                Text("النبرة", style = MaterialTheme.typography.bodyMedium)
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("friendly" to "ودّي", "calm" to "هادئ",
+                        "professional" to "مهني").forEach { (id, label) ->
+                        TextButton(onClick = { onPreferredToneChange(id) }) {
+                            Text(if (preferredTone == id) "✓ $label" else label)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -744,6 +1004,17 @@ private fun SettingsDialog(
                         onCheckedChange = onMirrorEnabledChange
                     )
                 }
+                Spacer(Modifier.height(16.dp))
+                EngineSelector(selectedEngine, hermesReady, onEngineChange)
+                Spacer(Modifier.height(16.dp))
+                HermesSettingsSection(
+                    endpoint = hermesEndpoint,
+                    onEndpointChange = onHermesEndpointChange,
+                    apiKey = hermesApiKey,
+                    onApiKeyChange = onHermesApiKeyChange,
+                    state = hermesState,
+                    onVerify = onVerifyHermes
+                )
             }
         },
         confirmButton = {
@@ -785,6 +1056,117 @@ private fun ApprovalCard(
 }
 
 @Composable
+private fun EngineSelector(
+    selected: AiEngine,
+    hermesReady: Boolean,
+    onSelect: (AiEngine) -> Unit
+) {
+    Column {
+        Text(stringResource(R.string.ai_engine), style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onSelect(AiEngine.DEEPSEEK) }, enabled = selected != AiEngine.DEEPSEEK) {
+                Text(stringResource(R.string.engine_deepseek))
+            }
+            Button(onClick = { onSelect(AiEngine.HERMES) }, enabled = selected != AiEngine.HERMES && hermesReady) {
+                Text(stringResource(R.string.engine_hermes))
+            }
+        }
+    }
+}
+
+@Composable
+private fun HermesSettingsSection(
+    endpoint: String,
+    onEndpointChange: (String) -> Unit,
+    apiKey: String,
+    onApiKeyChange: (String) -> Unit,
+    state: HermesConnectionState,
+    onVerify: () -> Unit
+) {
+    Column {
+        Text(stringResource(R.string.hermes_section), style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = endpoint,
+            onValueChange = onEndpointChange,
+            label = { Text(stringResource(R.string.hermes_endpoint)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = apiKey,
+            onValueChange = onApiKeyChange,
+            label = { Text(stringResource(R.string.hermes_api_key)) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = hermesStateLabel(state),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Button(onClick = onVerify) { Text(stringResource(R.string.verify)) }
+        }
+    }
+}
+
+@Composable
+private fun hermesStateLabel(state: HermesConnectionState): String = when (state) {
+    HermesConnectionState.Ready -> stringResource(R.string.hermes_state_ready)
+    HermesConnectionState.Verifying -> stringResource(R.string.hermes_state_verifying)
+    HermesConnectionState.Unconfigured -> stringResource(R.string.hermes_state_unconfigured)
+    is HermesConnectionState.Error -> stringResource(R.string.hermes_state_error)
+}
+
+@Composable
+private fun HermesApprovalCard(
+    request: HermesRunEvent.ApprovalRequested,
+    onApprove: () -> Unit,
+    onReject: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onReject,
+        title = { Text(stringResource(R.string.hermes_approval_title)) },
+        text = {
+            Column {
+                Text(stringResource(R.string.approval_action, request.tool ?: "?"))
+                if (!request.arguments.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        request.arguments,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (!request.prompt.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        request.prompt,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onApprove) { Text(stringResource(R.string.approve)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onReject) { Text(stringResource(R.string.reject)) }
+        }
+    )
+}
+
+@Composable
 private fun mapErrorCode(code: String): String {
     return when {
         code == "auth" -> stringResource(R.string.error_auth)
@@ -797,6 +1179,11 @@ private fun mapErrorCode(code: String): String {
         code == "timeout" -> "Request timed out"
         code == "network" -> "Network error. Check your connection."
         code.startsWith("api_") -> "API error ${code.removePrefix("api_")}"
+        code == "https_required" -> stringResource(R.string.hermes_https_required)
+        code == "endpoint" -> stringResource(R.string.hermes_endpoint_invalid)
+        code == "hermes_runs_unsupported" -> stringResource(R.string.hermes_runs_unsupported)
+        code == "hermes_unhealthy" -> stringResource(R.string.hermes_unhealthy)
+        code == "hermes_unavailable" -> stringResource(R.string.hermes_unavailable)
         code.startsWith("generic:") -> "Request failed (${code.removePrefix("generic:")})"
         else -> stringResource(R.string.error_generic)
     }

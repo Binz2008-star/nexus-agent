@@ -52,6 +52,14 @@ class SecretStorageRepository(
         clearSecret(API_KEY_PREF_NAME)
     }
 
+    // ---- Hermes API server bearer key (encrypted, like the DeepSeek key) ----
+
+    suspend fun saveHermesApiKey(plaintext: String) = saveSecret(HERMES_API_KEY_PREF, plaintext)
+
+    suspend fun readHermesApiKey(): ApiKeyReadResult = readSecret(HERMES_API_KEY_PREF)
+
+    suspend fun clearHermesApiKey() = clearSecret(HERMES_API_KEY_PREF)
+
     /** Generic encrypted-secret storage (used for the DeepSeek key and Neon connection strings). */
     suspend fun saveSecret(name: String, plaintext: String) {
         val ciphertext = cipher.encryptString(plaintext)
@@ -129,6 +137,7 @@ class SecretStorageRepository(
 
     companion object {
         const val API_KEY_PREF_NAME = "encrypted_deepseek_api_key"
+        const val HERMES_API_KEY_PREF = "encrypted_hermes_api_key"
         const val NEON_READ_URL_PREF = "encrypted_neon_read_url"
         const val NEON_WRITE_URL_PREF = "encrypted_neon_write_url"
         const val GOOGLE_REFRESH_TOKEN_PREF = "encrypted_google_refresh_token"

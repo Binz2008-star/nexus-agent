@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Auth session backing a Google connector. Implemented by the data-layer
- * `GoogleAuthManager` (AppAuth + encrypted token storage); kept as an interface so the
+ * `GoogleAuthManager` (Google Identity Services, no token persistence); kept as an interface so the
  * domain never depends on AppAuth or Android.
  */
 interface GoogleAuthSession {

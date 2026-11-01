@@ -10,6 +10,15 @@ import com.nexus.agent.data.repository.ChatRepository
 import com.nexus.agent.data.repository.NeonRepository
 import com.nexus.agent.data.repository.SendResult
 import com.nexus.agent.data.work.BackgroundTaskRunner
+import com.nexus.agent.data.remote.HermesApprovalRequest
+import com.nexus.agent.data.remote.HermesHistoryMessage
+import com.nexus.agent.data.remote.HermesRunRequest
+import com.nexus.agent.data.repository.HermesConnectionState
+import com.nexus.agent.data.repository.HermesError
+import com.nexus.agent.data.repository.HermesRepository
+import com.nexus.agent.domain.hermes.AiEngine
+import com.nexus.agent.domain.hermes.HermesAuditLog
+import com.nexus.agent.domain.hermes.HermesRunEvent
 import com.nexus.agent.domain.cognitive.CognitiveLoadDecision
 import com.nexus.agent.domain.cognitive.CognitiveLoadManager
 import com.nexus.agent.domain.emotion.EmotionAnalyzer
@@ -19,6 +28,7 @@ import com.nexus.agent.domain.commands.Command
 import com.nexus.agent.domain.commands.CommandDetector
 import com.nexus.agent.domain.commands.GreetingDetector
 import com.nexus.agent.domain.memory.RememberCommandDetector
+import com.nexus.agent.domain.neon.MemoryRecall
 import com.nexus.agent.domain.orchestration.ToolLoop
 import com.nexus.agent.domain.orchestration.ToolProposal
 import com.nexus.agent.domain.persona.EmotionPoetry
@@ -41,6 +51,7 @@ import com.nexus.agent.domain.tool.WebSearchTool
 import com.nexus.agent.domain.tool.buildContextPrompt
 import com.nexus.agent.domain.wellness.BreathingCompanion
 import com.nexus.agent.domain.wellness.BreathingPattern
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -67,7 +78,9 @@ class ChatViewModel(
     private val cultureContext: CultureContext,
     private val neonRepository: NeonRepository? = null,
     private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() },
-    private val approvalGate: ApprovalGate = ApprovalGate()
+    private val approvalGate: ApprovalGate = ApprovalGate(),
+    private val hermesRepository: HermesRepository? = null,
+    private val hermesAudit: HermesAuditLog? = null
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -94,6 +107,25 @@ class ChatViewModel(
 
     private val _streamingText = MutableStateFlow("")
     val streamingText: StateFlow<String> = _streamingText.asStateFlow()
+
+    // ---- AI engine selection (DeepSeek default; Hermes = autonomous remote agent, Beta) ----
+
+    private val _selectedEngine = MutableStateFlow(AiEngine.DEEPSEEK)
+    val selectedEngine: StateFlow<AiEngine> = _selectedEngine.asStateFlow()
+
+    /** Backend connection state (drives the "disabled until verified" gate in the UI). */
+    val hermesConnectionState: StateFlow<HermesConnectionState> =
+        hermesRepository?.connectionState
+            ?: MutableStateFlow(HermesConnectionState.Unconfigured).asStateFlow()
+
+    private val _hermesApproval = MutableStateFlow<HermesRunEvent.ApprovalRequested?>(null)
+    val hermesApproval: StateFlow<HermesRunEvent.ApprovalRequested?> = _hermesApproval.asStateFlow()
+
+    @Volatile
+    private var hermesApprovalDeferred: CompletableDeferred<Boolean>? = null
+
+    @Volatile
+    private var hermesRunId: String? = null
 
     // ---- Background agent task (tool search -> grounded answer) ----
 
@@ -160,6 +192,31 @@ class ChatViewModel(
         deferred?.complete(null)
     }
 
+    // ---- Hermes remote approval (bridged to the same approval-card UI) ----
+
+    /** User approved the pending Hermes run approval — the gated tool runs once. */
+    fun approveHermesApproval() {
+        hermesApprovalDeferred?.complete(true)
+    }
+
+    /** User rejected the pending Hermes run approval — the gated tool is blocked. */
+    fun rejectHermesApproval() {
+        hermesApprovalDeferred?.complete(false)
+    }
+
+    /** Suspends the Hermes run until the user approves/rejects the remote approval request. */
+    private suspend fun awaitHermesApproval(event: HermesRunEvent.ApprovalRequested): Boolean {
+        val deferred = CompletableDeferred<Boolean>()
+        hermesApprovalDeferred = deferred
+        _hermesApproval.value = event
+        return try {
+            deferred.await()
+        } finally {
+            if (hermesApprovalDeferred === deferred) hermesApprovalDeferred = null
+            _hermesApproval.value = null
+        }
+    }
+
     /** Clears any in-flight approval (rejection) so a stale card/dangling deferred can't linger. */
     private fun clearPendingApproval() {
         _pendingApproval.value = null
@@ -169,14 +226,17 @@ class ChatViewModel(
     }
 
     init {
-        // Restore the last-used model across restarts.
+        // Restore the last-used model + engine across restarts.
         viewModelScope.launch {
             _selectedModel.value = preferences.lastModel.first()
+            _selectedEngine.value = AiEngine.fromId(preferences.lastEngine.first())
         }
     }
 
     override fun onCleared() {
         clearPendingApproval()
+        hermesApprovalDeferred?.complete(false)
+        hermesApprovalDeferred = null
         taskRunner.close()
         super.onCleared()
     }
@@ -184,6 +244,17 @@ class ChatViewModel(
     fun setModel(model: String) {
         _selectedModel.value = model
         viewModelScope.launch { preferences.setLastModel(model) }
+    }
+
+    fun setEngine(engine: AiEngine) {
+        _selectedEngine.value = engine
+        viewModelScope.launch { preferences.setLastEngine(engine.id) }
+    }
+
+    /** Re-verifies the Hermes backend (capabilities + health); updates [hermesConnectionState]. */
+    fun verifyHermes() {
+        val repo = hermesRepository ?: return
+        viewModelScope.launch { repo.verifyConnection() }
     }
 
     fun selectConversation(id: Long) {
@@ -269,6 +340,13 @@ class ChatViewModel(
                 val convId = _currentConversationId.value ?: repository.createConversation().also {
                     _currentConversationId.value = it
                 }
+                // Hermes is an autonomous engine: after the local safety + memory gates, hand the
+                // whole message to the remote agent (no DeepSeek-specific command shortcuts).
+                if (_selectedEngine.value == AiEngine.HERMES) {
+                    launchHermesTask(convId, text, generation)
+                    handedOffToTask = true
+                    return@launch
+                }
                 val command = CommandDetector.detect(text)
                 when {
                     command == Command.Poetry -> {
@@ -303,10 +381,26 @@ class ChatViewModel(
     }
 
     fun cancelTask() {
+        val runId = hermesRunId
         taskRunner.cancel()
         clearPendingApproval()
+        hermesApprovalDeferred?.complete(false)
+        hermesApprovalDeferred = null
+        _hermesApproval.value = null
         _streamingText.value = ""
         _agentBusy.value = false
+        hermesRunId = null
+        // Best-effort stop of any in-flight remote run, on a fresh (non-cancelled) coroutine.
+        val repo = hermesRepository
+        if (runId != null && repo != null) {
+            viewModelScope.launch {
+                try {
+                    repo.stopRun(runId)
+                } catch (_: Exception) {
+                    // best-effort — the server also settles the run if the client disconnects.
+                }
+            }
+        }
     }
 
     private fun launchAgentTask(conversationId: Long, text: String, generation: Long) {
@@ -323,11 +417,19 @@ class ChatViewModel(
                 update(TaskStatus.Running(startedAt, "thinking"))
                 repository.persistUserMessage(conversationId, text)
 
-                val history = repository.buildHistory(conversationId)
+                val history = repository.conversationHistory(conversationId)
+                val memoryContext = recallMemoryContext(text)
+                val fullHistory = buildList {
+                    if (!memoryContext.isNullOrBlank()) {
+                        add(ChatMessage(ChatMessage.Role.SYSTEM, memoryContext))
+                    }
+                    addAll(history)
+                }
                 val schemas = toolOrchestrator.functionSchemas()
                 val outcome = toolLoop.run(
-                    history, _selectedModel.value, schemas,
-                    propose = { h, m, s -> repository.completeWithTools(h, m, s).map { it.toProposal() } }
+                    fullHistory, _selectedModel.value, schemas,
+                    propose = { h, m, s -> repository.completeWithTools(h, m, s).map { it.toProposal() } },
+                    grantedScopes = gmailScopesProvider()
                 )
                 when (outcome) {
                     is ToolLoop.Outcome.Answered -> {
@@ -342,6 +444,162 @@ class ChatViewModel(
                 if (generation == taskGeneration) _agentBusy.value = false
             }
         }
+    }
+
+    /**
+     * Runs a message through the Hermes agent backend: create a run, stream lifecycle/tool/delta
+     * events, bridge remote approvals to the local approval card, and persist the final answer.
+     * The remote agent runs its own tool loop server-side; NEXUS's ToolLoop is not invoked here.
+     */
+    private fun launchHermesTask(conversationId: Long, text: String, generation: Long) {
+        val repo = hermesRepository
+        if (repo == null) {
+            _errorMessage.value = "hermes_unavailable"
+            _agentBusy.value = false
+            return
+        }
+        _streamingText.value = ""
+        _errorMessage.value = null
+        taskRunner.run { update ->
+            var runId: String? = null
+            try {
+                update(TaskStatus.Running(System.currentTimeMillis(), "connecting"))
+                // Capture PRIOR turns before persisting the current one, so `input` carries only
+                // the new message and `conversation_history` carries only prior context (no
+                // double-send of the current turn). Only the user/assistant transcript crosses to
+                // Hermes — never memory recall, Second Brain, or Gmail content (Phase 4/5 boundary).
+                val history = repository.conversationHistory(conversationId)
+                    .filter { it.role == ChatMessage.Role.USER || it.role == ChatMessage.Role.ASSISTANT }
+                    .map { HermesHistoryMessage(it.role.name.lowercase(), it.text) }
+                repository.persistUserMessage(conversationId, text)
+                val request = HermesRunRequest(
+                    input = text.trim(),
+                    sessionId = "nexus-android-$conversationId",
+                    conversationHistory = history
+                )
+
+                val created = repo.createRun(request).getOrElse { e ->
+                    val code = HermesError.codeOf(e)
+                    _errorMessage.value = code
+                    update(TaskStatus.Failed(code))
+                    return@run
+                }
+                runId = created.runId
+                if (runId.isBlank()) {
+                    _errorMessage.value = "hermes_no_run_id"
+                    update(TaskStatus.Failed("hermes_no_run_id"))
+                    return@run
+                }
+                hermesRunId = runId
+                hermesAudit?.append("create_run", runId)
+                update(TaskStatus.Running(System.currentTimeMillis(), "running"))
+
+                val answer = StringBuilder()
+                var terminal: HermesRunEvent? = null
+                val seenApprovals = mutableSetOf<Pair<String, Int>>()
+                val result = repo.streamRunEvents(runId) { event ->
+                    when (event) {
+                        is HermesRunEvent.Delta -> {
+                            answer.append(event.text)
+                            _streamingText.value = answer.toString()
+                        }
+                        is HermesRunEvent.ToolStarted -> {
+                            update(TaskStatus.Running(System.currentTimeMillis(), event.tool))
+                            hermesAudit?.append("tool_started", runId, mapOf("tool" to event.tool))
+                        }
+                        is HermesRunEvent.ToolCompleted ->
+                            hermesAudit?.append(
+                                "tool_completed", runId,
+                                mapOf("tool" to event.tool, "error_code" to if (event.error) "error" else "ok")
+                            )
+                        is HermesRunEvent.ApprovalRequested -> {
+                            val key = (event.requestId ?: "") to event.executionGeneration
+                            // Dedupe: a re-emitted approval (after reconnect) must not re-prompt.
+                            if (seenApprovals.add(key)) {
+                                val approved = awaitHermesApproval(event)
+                                val requestId = event.requestId
+                                val choice = if (approved) HermesApprovalRequest.CHOICE_ONCE else HermesApprovalRequest.CHOICE_DENY
+                                if (requestId.isNullOrBlank()) {
+                                    hermesAudit?.append("approval_error", runId, mapOf("reason" to "missing_request_id"))
+                                    repo.stopRun(runId)
+                                } else {
+                                    val r = repo.approveRun(
+                                        runId,
+                                        HermesApprovalRequest(requestId, event.executionGeneration, choice)
+                                    )
+                                    hermesAudit?.append(
+                                        if (r.isSuccess) (if (approved) "approval_approved" else "approval_denied") else "approval_error",
+                                        runId, mapOf("tool" to (event.tool ?: ""))
+                                    )
+                                    if (r.isFailure) repo.stopRun(runId)
+                                }
+                            }
+                        }
+                        is HermesRunEvent.Completed -> {
+                            answer.setLength(0)
+                            answer.append(event.output)
+                            _streamingText.value = event.output
+                            terminal = event
+                        }
+                        is HermesRunEvent.Failed -> terminal = event
+                        is HermesRunEvent.Cancelled -> terminal = event
+                        is HermesRunEvent.Interrupted -> terminal = event
+                        is HermesRunEvent.Interim -> Unit
+                        is HermesRunEvent.Unknown -> Unit
+                    }
+                }
+
+                when {
+                    result.isSuccess -> {
+                        // A remotely-failed/cancelled/interrupted run is NOT success — only persist
+                        // + complete on a real Completed terminal event.
+                        when (val t = terminal) {
+                            is HermesRunEvent.Completed -> {
+                                val final = answer.toString()
+                                if (final.isNotBlank()) repository.persistAssistantMessage(conversationId, final)
+                                _streamingText.value = ""
+                                update(TaskStatus.Completed(emptyList()))
+                            }
+                            is HermesRunEvent.Failed -> failHermesRun("hermes_run_failed", update)
+                            is HermesRunEvent.Cancelled -> failHermesRun("hermes_run_cancelled", update)
+                            is HermesRunEvent.Interrupted -> failHermesRun("hermes_run_interrupted", update)
+                            else -> {
+                                val final = answer.toString()
+                                if (final.isNotBlank()) repository.persistAssistantMessage(conversationId, final)
+                                _streamingText.value = ""
+                                update(TaskStatus.Completed(emptyList()))
+                            }
+                        }
+                    }
+                    result.isFailure -> {
+                        val e = result.exceptionOrNull()
+                        if (e is CancellationException) throw e
+                        // Do NOT stop the run on plain connectivity exhaustion — the remote run may
+                        // still be executing healthily server-side. Explicit cancel stops it via cancelTask.
+                        val code = HermesError.codeOf(e ?: Exception("unknown"))
+                        _errorMessage.value = code
+                        update(TaskStatus.Failed(code))
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } finally {
+                if (generation == taskGeneration) {
+                    _agentBusy.value = false
+                    hermesApprovalDeferred?.complete(false)
+                    hermesApprovalDeferred = null
+                    _hermesApproval.value = null
+                }
+                if (hermesRunId == runId) hermesRunId = null
+            }
+        }
+    }
+
+    /** Reports a terminal (failed/cancelled/interrupted) Hermes run as a failure, not success. */
+    private fun failHermesRun(code: String, update: (TaskStatus) -> Unit) {
+        _streamingText.value = ""
+        _errorMessage.value = code
+        update(TaskStatus.Failed(code))
     }
 
     /** Fallback: the pre-loop scripted web + Second Brain grounding. */
@@ -368,10 +626,13 @@ class ChatViewModel(
         }
 
         // Merge web + Second Brain grounding. The Second Brain search is best-effort
-        // (a missing Neon config simply contributes no sources).
+        // (a missing Neon config simply contributes no sources). Personal memory recall is
+        // injected first, fenced as untrusted data.
         val sources = (webResult as? ToolResult.Success)?.sources.orEmpty() +
             (brainResult as? ToolResult.Success)?.sources.orEmpty()
+        val memoryContext = recallMemoryContext(text)
         val context = buildList {
+            if (!memoryContext.isNullOrBlank()) add(memoryContext)
             if (sources.isNotEmpty()) add(buildContextPrompt(sources))
             empatheticNote(text)?.let { add(it) }
         }.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
@@ -542,6 +803,17 @@ class ChatViewModel(
         return if (neon.saveMemory("fact", fact).isSuccess) REMEMBER_SAVED else REMEMBER_FAILED
     }
 
+    /**
+     * Recalls the personal memories relevant to [query] and returns a fenced, bounded context
+     * string (or null when none are available / Neon is not configured / the DB is unreachable).
+     * Retrieved content is treated as untrusted data, never as system instructions.
+     */
+    private suspend fun recallMemoryContext(query: String): String? {
+        val neon = neonRepository ?: return null
+        val items = neon.recallMemory(query, MEMORY_RECALL_LIMIT).getOrNull().orEmpty()
+        return MemoryRecall.buildMemoryContext(items).takeIf { it.isNotBlank() }
+    }
+
     fun retryLast() {
         val convId = _currentConversationId.value ?: return
         if (_isLoading.value || taskStatus.value is TaskStatus.Running) return
@@ -636,14 +908,16 @@ class ChatViewModel(
         private val cultureContext: CultureContext,
         private val neonRepository: NeonRepository? = null,
         private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() },
-        private val approvalGate: ApprovalGate = ApprovalGate()
+        private val approvalGate: ApprovalGate = ApprovalGate(),
+        private val hermesRepository: HermesRepository? = null,
+        private val hermesAudit: HermesAuditLog? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return ChatViewModel(
                 repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
                 emotionAnalyzer, loadManager, cultureContext, neonRepository, gmailScopesProvider,
-                approvalGate
+                approvalGate, hermesRepository, hermesAudit
             ) as T
         }
     }
@@ -651,6 +925,7 @@ class ChatViewModel(
     companion object {
         private const val DEFAULT_TOP_K = 8
         private const val DEFAULT_COUNT = 10
+        private const val MEMORY_RECALL_LIMIT = 8
         private const val TOOL_WEB_SEARCH = "web_search"
         private const val TOOL_SECOND_BRAIN = "second_brain_search"
         private const val TOOL_GMAIL = "gmail_search"

@@ -31,12 +31,19 @@ object CredentialFileParser {
         var write: String? = null
         for (raw in content.lineSequence()) {
             val line = raw.trim()
-            if (key == null) key = KEY.find(line)?.value
-            if (!isUrl(line)) continue
-            val user = USER.find(line)?.groupValues?.get(1)?.lowercase()
-            when (user) {
-                "nexus_reader" -> if (read == null) read = line
-                "nexus" -> if (write == null) write = line
+            if (isUrl(line)) {
+                // URL lines are attributed only by their `user=` role, and only when they parse
+                // as a valid Neon connection (host + database + secure sslmode).
+                val user = USER.find(line)?.groupValues?.get(1)?.lowercase()
+                if (NeonConnectionParser.parse(line) == null) continue
+                when (user) {
+                    "nexus_reader" -> if (read == null) read = line
+                    "nexus" -> if (write == null) write = line
+                }
+            } else if (key == null) {
+                // Scan only non-URL lines for the key, so a `sk-…` substring inside a URL
+                // (e.g. a password) can never be mis-imported as the DeepSeek key.
+                KEY.find(line)?.value?.let { if (it.length <= MAX_KEY_LENGTH) key = it }
             }
         }
         return ImportedCredentials(key, read, write)
@@ -44,4 +51,7 @@ object CredentialFileParser {
 
     private fun isUrl(line: String): Boolean =
         line.startsWith("jdbc:postgresql://") || line.startsWith("postgresql://")
+
+    /** Upper bound for an accepted DeepSeek key token. */
+    const val MAX_KEY_LENGTH = 256
 }

@@ -7,6 +7,7 @@ import com.nexus.agent.data.local.MessageEntity
 import com.nexus.agent.data.network.ChatCompletionClient
 import com.nexus.agent.data.network.CompletionResult
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.persona.MashaaerEmotionLayer
 import com.nexus.agent.domain.router.AiModelRouter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -31,7 +32,8 @@ class ChatRepository(
     private val systemPromptProvider: suspend () -> String = { "" },
     private val router: AiModelRouter? = null,
     private val personaProvider: suspend () -> String? = { null },
-    private val mirror: ConversationMirror? = null
+    private val mirror: ConversationMirror? = null,
+    private val mashaaerEmotionEnabledProvider: suspend () -> Boolean = { false }
 ) {
     // Fire-and-forget scope for the best-effort Neon mirror, so a slow/hung mirror can never
     // delay the chat flow (Room persists first; the mirror is an async side effect).
@@ -105,7 +107,11 @@ class ChatRepository(
     private fun mirrorMessage(conversationId: Long, role: String, content: String) {
         val target = mirror ?: return
         mirrorScope.launch {
-            runCatching { target.mirror(conversationId.toString(), role, content) }
+            try {
+                target.mirror(conversationId.toString(), role, content)
+            } catch (_: Exception) {
+                // Best-effort: a mirror failure must never break the chat flow.
+            }
         }
     }
 
@@ -128,13 +134,14 @@ class ChatRepository(
     }
 
     /**
-     * Builds the full message list for a completion (system prompts + ordered conversation
-     * history), exposed for the model-driven tool loop. Runs on [Dispatchers.IO].
+     * Raw, ordered conversation history for a conversation (user/assistant messages only — no
+     * system prompts). System prompts are added uniformly by the completion methods, so every
+     * path — normal chat and model-driven tool execution — carries the exact same instructions.
+     * Runs on [Dispatchers.IO].
      */
-    suspend fun buildHistory(conversationId: Long, context: String? = null): List<ChatMessage> =
+    suspend fun conversationHistory(conversationId: Long): List<ChatMessage> =
         withContext(Dispatchers.IO) {
-            val history = messageDao.getByConversationOnce(conversationId).map { it.toDomain() }
-            buildHistoryWithSystem(history, context)
+            messageDao.getByConversationOnce(conversationId).map { it.toDomain() }
         }
 
     /**
@@ -236,13 +243,16 @@ class ChatRepository(
     /**
      * Tool-aware (function-calling) completion. Runs on [Dispatchers.IO]. The model either
      * answers directly or requests tool calls; the caller (ToolLoop) validates + executes.
+     *
+     * Context construction is unified with regular completions: the same system, identity, and
+     * persona instructions are injected here, so model-driven tool execution cannot lose them.
      */
     suspend fun completeWithTools(
         history: List<ChatMessage>,
         model: String,
         tools: List<JsonObject>
     ): Result<CompletionResult> = withContext(Dispatchers.IO) {
-        client.completeWithTools(history, model, tools)
+        client.completeWithTools(buildHistoryWithSystem(history), model, tools)
     }
 
     private suspend fun buildHistoryWithSystem(
@@ -251,6 +261,12 @@ class ChatRepository(
     ): List<ChatMessage> {
         val customPrompt = systemPromptProvider().trim()
         val persona = personaProvider()?.trim()
+        // Based solely on current user message, not stored emotion history.
+        // Disabled unless explicitly opted in. No external calls or persisted emotion scores.
+        val emotionHint = if (mashaaerEmotionEnabledProvider()) {
+            history.lastOrNull { it.role == ChatMessage.Role.USER }?.text
+                ?.let { MashaaerEmotionLayer.styleHint(MashaaerEmotionLayer.analyze(it)) }
+        } else null
         val systemMessages = buildList {
             add(ChatMessage(ChatMessage.Role.SYSTEM, NAME_SAFETY_PROMPT))
             add(ChatMessage(ChatMessage.Role.SYSTEM, IDENTITY_PROMPT))
@@ -259,6 +275,9 @@ class ChatRepository(
             }
             if (!persona.isNullOrBlank()) {
                 add(ChatMessage(ChatMessage.Role.SYSTEM, persona))
+            }
+            if (!emotionHint.isNullOrBlank()) {
+                add(ChatMessage(ChatMessage.Role.SYSTEM, emotionHint))
             }
             if (!context.isNullOrBlank()) {
                 add(ChatMessage(ChatMessage.Role.SYSTEM, context))
