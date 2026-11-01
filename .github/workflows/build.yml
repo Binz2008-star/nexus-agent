@@ -210,9 +210,9 @@ jobs:
 
       - name: Run JDBC parity test
         env:
-          # pgjdbc uses the jdbc:postgresql:// scheme (psycopg uses postgresql:// without jdbc:).
-          NEON_READ_URL: jdbc:postgresql://nexus_reader:readerpass@localhost:5432/second_brain
-          NEON_WRITE_URL: jdbc:postgresql://nexus_writer:writerpass@localhost:5432/personal_ai_core
+          # pgjdbc uses the jdbc:postgresql:// scheme; 127.0.0.1 avoids DNS/IPv6 in the test JVM.
+          NEON_READ_URL: jdbc:postgresql://nexus_reader:readerpass@127.0.0.1:5432/second_brain
+          NEON_WRITE_URL: jdbc:postgresql://nexus_writer:writerpass@127.0.0.1:5432/personal_ai_core
         run: ./gradlew testDebugUnitTest --tests "com.nexus.agent.data.repository.NeonJdbcIntegrationTest" --no-daemon
 
       - name: Tear down PostgreSQL
