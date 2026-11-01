@@ -77,6 +77,14 @@ class NeonHttpClientTest {
     }
 
     @Test
+    fun `search surfaces permission detail error code`() = runTest {
+        server.enqueue(json("""{"detail":"permission"}""", code = 502))
+        val result = client().search("x", 8)
+        assertTrue(result is KnowledgeSearchResult.Failure)
+        assertEquals("permission", (result as KnowledgeSearchResult.Failure).errorCode)
+    }
+
+    @Test
     fun `search handles non-json error body`() = runTest {
         server.enqueue(
             MockResponse().setResponseCode(502).setHeader("Content-Type", "text/html").setBody("<html>bad gateway</html>")
