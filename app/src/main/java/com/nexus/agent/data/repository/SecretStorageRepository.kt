@@ -115,6 +115,18 @@ class SecretStorageRepository(
         dataStore.edit { it.remove(stringPreferencesKey(GOOGLE_EMAIL_PREF)) }
     }
 
+    /** The granted scopes (comma-joined, non-secret metadata) for silent cold-start revalidation. */
+    suspend fun saveGoogleScopes(scopes: String) {
+        dataStore.edit { it[stringPreferencesKey(GOOGLE_GRANTED_SCOPES_PREF)] = scopes.trim() }
+    }
+
+    suspend fun readGoogleScopes(): String? =
+        dataStore.data.map { it[stringPreferencesKey(GOOGLE_GRANTED_SCOPES_PREF)] }.first()
+
+    suspend fun clearGoogleScopes() {
+        dataStore.edit { it.remove(stringPreferencesKey(GOOGLE_GRANTED_SCOPES_PREF)) }
+    }
+
     // ---- Pending OAuth authorization (cold-start redirect recovery) ----
 
     /**
@@ -151,6 +163,7 @@ class SecretStorageRepository(
         const val NEON_BACKEND_KEY_PREF = "encrypted_neon_backend_key"
         const val GOOGLE_REFRESH_TOKEN_PREF = "encrypted_google_refresh_token"
         const val GOOGLE_EMAIL_PREF = "google_email"
+        const val GOOGLE_GRANTED_SCOPES_PREF = "google_granted_scopes"
         const val PENDING_OAUTH_STATE_PREF = "encrypted_pending_oauth_state"
         const val PENDING_OAUTH_VERIFIER_PREF = "encrypted_pending_oauth_verifier"
         const val PENDING_OAUTH_CREATED_AT_PREF = "pending_oauth_created_at"
