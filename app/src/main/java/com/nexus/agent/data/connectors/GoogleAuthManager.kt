@@ -149,7 +149,9 @@ class GoogleAuthManager(
     }
 
     private fun createRequest(scopes: List<String>, accountEmail: String? = null): AuthorizationRequest {
-        val request = AuthorizationRequest.builder().setRequestedScopes(scopes.map(::Scope))
+        val request = AuthorizationRequest.builder().setRequestedScopes(
+            (scopes + listOf("openid", "email")).distinct().map(::Scope)
+        )
         accountEmail?.let { request.setAccount(Account(it, "com.google")) }
         return request.build()
     }
@@ -167,14 +169,18 @@ class GoogleAuthManager(
         }
         // Gmail profile gives a verified account for Gmail grants; Drive about provides
         // account email for Drive-only authorization. No personal data is persisted.
-        val email = result.toGoogleSignInAccount()?.email ?: if (
+        val email = result.toGoogleSignInAccount()?.email
+            ?: fetchProfileEmail(token, "https://openidconnect.googleapis.com/v1/userinfo", "userinfo")
+            ?: if (
             result.grantedScopes.contains(GmailConnector.GMAIL_READONLY_SCOPE)
         ) {
             fetchProfileEmail(token, "https://gmail.googleapis.com/gmail/v1/users/me/profile", "emailAddress")
         } else if (result.grantedScopes.any { it in setOf(GoogleScopePolicy.DRIVE_READ, GoogleScopePolicy.DRIVE_FILE) }) {
             fetchProfileEmail(token,
                 "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)", "drive")
-        } else null
+        } else {
+            fetchProfileEmail(token, "https://openidconnect.googleapis.com/v1/userinfo", "userinfo")
+        }
         if (generation.get() != current) return
         if (email == null || (_email.value != null && _email.value != email)) {
             _error.value = "Google account identity verification failed or account changed"
@@ -258,9 +264,14 @@ class GoogleAuthManager(
                 httpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@withContext null
                     val obj = JSONObject(response.body?.string().orEmpty())
-                    val email = if (type == "drive") {
-                        obj.optJSONObject("user")?.optString("emailAddress")
-                    } else obj.optString("emailAddress")
+                    val email = when (type) {
+                        "drive" -> obj.optJSONObject("user")?.optString("emailAddress")
+                        "userinfo" -> {
+                            if (!obj.optBoolean("email_verified", false)) null
+                            else obj.optString("email")
+                        }
+                        else -> obj.optString("emailAddress")
+                    }
                     email?.takeIf { it.contains('@') }
                 }
             } catch (e: CancellationException) {
