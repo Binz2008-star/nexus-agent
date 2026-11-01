@@ -240,12 +240,14 @@ class ChatViewModel(
     }
 
     init {
+        // Snapshot before the first suspended preference read; user clicks during initialization win.
+        val startupSnapshot = resumeGuard.snapshot()
         // A new send awaits local restore so the first message is not placed in a stray chat.
         viewModelScope.launch {
             try {
                 _selectedModel.value = preferences.lastModel.first()
                 _selectedEngine.value = AiEngine.fromId(preferences.lastEngine.first())
-                restoreLastConversation()
+                restoreLastConversation(startupSnapshot)
             } finally {
                 initialRestoreComplete.complete(Unit)
             }
@@ -256,8 +258,7 @@ class ChatViewModel(
      * Restore only an existing conversation. A user interaction during slow Room/DataStore
      * reads invalidates the snapshot, so it cannot be overwritten by stale startup state.
      */
-    private suspend fun restoreLastConversation() {
-        val snapshot = resumeGuard.snapshot()
+    private suspend fun restoreLastConversation(snapshot: Long) {
         val lastId = preferences.lastConversationId.first()
         val persistedExists = lastId > 0 && repository.getConversation(lastId) != null
         val mostRecentId = if (persistedExists) null else repository.getMostRecentConversation()?.id
