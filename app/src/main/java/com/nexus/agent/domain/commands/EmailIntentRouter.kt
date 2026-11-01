@@ -73,17 +73,17 @@ object EmailTaskMessages {
  */
 object GmailQueryParser {
     private val englishPrefix = Regex(
-        "^(check|read|search|show|list|find|review|summarize|fetch|scan)\\\\s+(me\\\\s+)?(my\\\\s+)?(emails?|inbox|gmail|mail|messages)(\\\\s+(for|about|regarding))?\\\\s*",
+        "^(check|read|search|show|list|find|review|summarize|fetch|scan)\\s+(me\\s+)?(my\\s+)?(emails?|inbox|gmail|mail|messages)(\\s+(for|about|regarding))?\\s*",
         RegexOption.IGNORE_CASE
     )
     private val arabicPrefix = Regex(
-        "^(تفقد|اقرأ|ابحث|اعرض|أظهر|افحص|استعرض|راجع|لخص|شوف|ورجيني|اطلع)\\\\s+(في\\\\s+)?(بريدي|ايميلي|إيميلي|رسائلي|رسائل البريد|رسائل|البريد|الايميل|الإيميل|جيميل|جي ميل)(\\\\s+(عن|بخصوص|حول))?\\\\s*"
+        "^(تفقد|اقرأ|ابحث|اعرض|أظهر|افحص|استعرض|راجع|لخص|شوف|ورجيني|اطلع)\\s+(في\\s+)?(بريدي|ايميلي|إيميلي|رسائلي|رسائل البريد|رسائل|البريد|الايميل|الإيميل|جيميل|جي ميل)(\\s+(عن|بخصوص|حول))?\\s*"
     )
     private val arabicLatest = Regex(
-        "^(تفقد|اقرأ|اعرض|أظهر|افحص|راجع|استعرض|شوف)\\\\s+(آخر|اخر|أحدث|احدث|الجديدة|جديدة)\\\\s+(رسائلي|الرسائل|البريد|الإيميلات|ايميلاتي)\\\\s*$"
+        "^(تفقد|اقرأ|اعرض|أظهر|افحص|راجع|استعرض|شوف)\\s+(آخر|اخر|أحدث|احدث|الجديدة|جديدة)\\s+(رسائلي|الرسائل|البريد|الإيميلات|ايميلاتي)\\s*$"
     )
     private val englishLatest = Regex(
-        "^(check|read|show|list|review)\\\\s+(my\\\\s+)?(latest|recent|new|last)\\\\s+(emails?|messages|gmail|mail|inbox)\\\\s*$",
+        "^(check|read|show|list|review)\\s+(my\\s+)?(latest|recent|new|last)\\s+(emails?|messages|gmail|mail|inbox)\\s*$",
         RegexOption.IGNORE_CASE
     )
 
