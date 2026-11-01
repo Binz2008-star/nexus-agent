@@ -269,6 +269,13 @@ fun ChatScreen(
     val taskStatus by viewModel.taskStatus.collectAsState()
     val gmailConnected by gmailConnector.isConnected.collectAsState()
     val gmailEmail by gmailConnector.email.collectAsState()
+    val gmailAuthError by googleAuthManager.error.collectAsState()
+    LaunchedEffect(gmailAuthError) {
+        gmailAuthError?.let { message ->
+            context.showToast(message)
+            googleAuthManager.dismissError()
+        }
+    }
     val mirrorEnabled by preferences.mirrorEnabled.collectAsState(initial = false)
     val pendingApproval by viewModel.pendingApproval.collectAsState()
 
