@@ -41,4 +41,32 @@ class GmailAuthorizationPolicyTest {
         assertTrue(GmailAuthorizationPolicy.hasRequiredGrant(listOf(readonly)))
         assertTrue(GmailAuthorizationPolicy.hasRequiredGrant(listOf("email", readonly)))
     }
+    @Test fun cachedScopesAloneAreNeverProofOfConnection() {
+        val requested = listOf(GoogleScopePolicy.GMAIL_READ)
+        val granted = setOf(GoogleScopePolicy.GMAIL_READ)
+        assertFalse(GoogleRestorePolicy.canTrust(requested, granted,
+            tokenPresent = false, needsResolution = false, accountMatches = true))
+        assertFalse(GoogleRestorePolicy.canTrust(requested, granted,
+            tokenPresent = true, needsResolution = true, accountMatches = true))
+        assertFalse(GoogleRestorePolicy.canTrust(requested, granted,
+            tokenPresent = true, needsResolution = false, accountMatches = false))
+    }
+
+    @Test fun silentReconnectRejectsEscalatedOrIncompleteGrants() {
+        val requested = listOf(GoogleScopePolicy.GMAIL_READ, GoogleScopePolicy.DRIVE_READ)
+        assertFalse(GoogleRestorePolicy.canTrust(
+            requested, setOf(GoogleScopePolicy.GMAIL_READ),
+            tokenPresent = true, needsResolution = false, accountMatches = true))
+        assertFalse(GoogleRestorePolicy.canTrust(
+            listOf("https://mail.google.com/"), setOf("https://mail.google.com/"),
+            tokenPresent = true, needsResolution = false, accountMatches = true))
+    }
+
+    @Test fun silentReconnectOnlyAcceptsVerifiedMatchingAccountAndScopes() {
+        assertTrue(GoogleRestorePolicy.canTrust(
+            listOf(GoogleScopePolicy.GMAIL_READ),
+            setOf(GoogleScopePolicy.GMAIL_READ, "openid", "email"),
+            tokenPresent = true, needsResolution = false, accountMatches = true))
+    }
+
 }
