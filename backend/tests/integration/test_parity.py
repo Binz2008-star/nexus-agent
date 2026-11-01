@@ -95,7 +95,8 @@ def test_transcript_mirror_roundtrip(client, auth, admin_write_url):
     )
     assert r.status_code == 200
 
-    # Verify via superuser: nexus_writer has INSERT (not SELECT) on nexus_conversations by design.
+    # Verify via a privileged verifier role: nexus_writer has INSERT (not SELECT) on
+    # nexus_conversations by design. (Local env uses the postgres superuser; Neon uses a verifier.)
     with psycopg.connect(admin_write_url) as conn:
         with conn.cursor() as cur:
             cur.execute(

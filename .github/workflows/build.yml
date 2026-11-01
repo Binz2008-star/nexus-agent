@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Cancel superseded runs on the same ref (saves CI minutes; latest commit wins).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Least-privilege: only repo contents read is needed. The debug APK is uploaded to
 # the workflow artifact store (not repo contents), so no id-token/packages/actions:write.
 permissions:
