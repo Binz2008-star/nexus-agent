@@ -84,4 +84,47 @@ class WebFetchClientTest {
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message?.contains("404") == true)
     }
+
+    @Test
+    fun `rebinding resolver is never consulted a second time (DNS is pinned)`() = runTest {
+        // Adversarial two-resolution regression: a rebinding host returns a "public" address on
+        // the first (validation) resolution and a private address on any subsequent resolution.
+        // The client must pin the connection to the validated addresses and never re-resolve.
+        var resolutions = 0
+        val validator = UrlSafetyValidator(
+            resolver = {
+                resolutions++
+                val octets = if (resolutions == 1) byteArrayOf(127, 0, 0, 1) else byteArrayOf(10, 0, 0, 1)
+                listOf(InetAddress.getByAddress(octets))
+            },
+            isHostBlocked = { false },
+            isPublic = { true }
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody("<html><body>ok</body></html>"))
+        val client = WebFetchClient(validator = validator)
+        val result = client.fetch("$baseUrl/page")
+
+        assertTrue(result.isSuccess)          // connected to the validated (loopback) address
+        assertEquals(1, resolutions)          // the private re-resolution never happened
+    }
+
+    @Test
+    fun `redirect hop re-validates and re-pins its own resolution`() = runTest {
+        var resolutions = 0
+        val validator = UrlSafetyValidator(
+            resolver = {
+                resolutions++
+                listOf(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+            },
+            isHostBlocked = { false },
+            isPublic = { true }
+        )
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/final"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("<html><body>done</body></html>"))
+        val client = WebFetchClient(validator = validator)
+        val result = client.fetch("$baseUrl/start")
+        assertTrue(result.isSuccess)
+        assertEquals(2, resolutions) // one validation per hop (start + final), no extra resolution
+        assertEquals(2, server.requestCount)
+    }
 }
