@@ -32,6 +32,8 @@ import com.nexus.agent.domain.commands.GmailQueryParser
 import com.nexus.agent.domain.commands.EmailTaskMessages
 import com.nexus.agent.domain.connectors.GmailConnector
 import com.nexus.agent.domain.commands.GreetingDetector
+import com.nexus.agent.domain.memory.ConversationResumeGuard
+import com.nexus.agent.domain.memory.ConversationResumePolicy
 import com.nexus.agent.domain.memory.RememberCommandDetector
 import com.nexus.agent.domain.neon.MemoryRecall
 import com.nexus.agent.domain.orchestration.ToolLoop
@@ -67,6 +69,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
@@ -90,6 +94,11 @@ class ChatViewModel(
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    // User actions take precedence over a slow Room/DataStore cold-start restore.
+    private val resumeGuard = ConversationResumeGuard()
+    private val selectionWriteMutex = Mutex()
+    private val initialRestoreComplete = CompletableDeferred<Unit>()
 
     private val _currentConversationId = MutableStateFlow<Long?>(null)
     val currentConversationId: StateFlow<Long?> = _currentConversationId.asStateFlow()
@@ -231,27 +240,57 @@ class ChatViewModel(
     }
 
     init {
-        // Restore the last-used model + engine + active conversation across restarts.
+        // Snapshot before the first suspended preference read; user clicks during initialization win.
+        val startupSnapshot = resumeGuard.snapshot()
+        // A new send awaits local restore so the first message is not placed in a stray chat.
         viewModelScope.launch {
-            _selectedModel.value = preferences.lastModel.first()
-            _selectedEngine.value = AiEngine.fromId(preferences.lastEngine.first())
-            restoreLastConversation()
+            try {
+                _selectedModel.value = preferences.lastModel.first()
+                _selectedEngine.value = AiEngine.fromId(preferences.lastEngine.first())
+                restoreLastConversation(startupSnapshot)
+            } finally {
+                initialRestoreComplete.complete(Unit)
+            }
         }
     }
 
     /**
-     * Cold-start restore: reopen the last active conversation; if it no longer exists, fall back
-     * to the most recently updated conversation; otherwise show a true empty state. Runs after
-     * Room is available so the id is validated against the actual store.
+     * Restore only an existing conversation. A user interaction during slow Room/DataStore
+     * reads invalidates the snapshot, so it cannot be overwritten by stale startup state.
      */
-    private suspend fun restoreLastConversation() {
+    private suspend fun restoreLastConversation(snapshot: Long) {
         val lastId = preferences.lastConversationId.first()
-        val restored = when {
-            lastId > 0 && repository.getConversation(lastId) != null -> lastId
-            else -> repository.getMostRecentConversation()?.id
+        val persistedExists = lastId > 0 && repository.getConversation(lastId) != null
+        val mostRecentId = if (persistedExists) null else repository.getMostRecentConversation()?.id
+        val restored = ConversationResumePolicy.resolve(lastId, persistedExists, mostRecentId)
+        selectionWriteMutex.withLock {
+            if (!resumeGuard.canApplyRestore(snapshot)) return@withLock
+            _currentConversationId.value = restored
+            preferences.setLastConversationId(restored ?: -1L)
         }
-        _currentConversationId.value = restored
-        preferences.setLastConversationId(restored ?: -1L)
+    }
+
+    /** Keep stale asynchronous writes from overwriting a newer chosen conversation. */
+    private suspend fun persistSelectionIfCurrent(id: Long?) {
+        selectionWriteMutex.withLock {
+            if (_currentConversationId.value == id) {
+                preferences.setLastConversationId(id ?: -1L)
+            }
+        }
+    }
+
+    /** Persist newly created chats even on safety, greeting, and memory command paths. */
+    private suspend fun activateConversation(id: Long) {
+        resumeGuard.userChangedSelection()
+        _currentConversationId.value = id
+        persistSelectionIfCurrent(id)
+    }
+
+    private suspend fun requireActiveConversation(): Long {
+        initialRestoreComplete.await()
+        return _currentConversationId.value ?: repository.createConversation().also {
+            activateConversation(it)
+        }
     }
 
     override fun onCleared() {
@@ -279,21 +318,23 @@ class ChatViewModel(
     }
 
     fun selectConversation(id: Long) {
+        resumeGuard.userChangedSelection()
         _currentConversationId.value = id
         _streamingText.value = ""
         _errorMessage.value = null
         lastContext = null
-        viewModelScope.launch { preferences.setLastConversationId(id) }
+        viewModelScope.launch { persistSelectionIfCurrent(id) }
     }
 
     fun createNewConversation() {
+        // Invalidate an in-flight startup restore immediately, not after the Room insert.
+        resumeGuard.userChangedSelection()
         viewModelScope.launch {
             val id = repository.createConversation()
-            _currentConversationId.value = id
+            activateConversation(id)
             _streamingText.value = ""
             _errorMessage.value = null
             lastContext = null
-            preferences.setLastConversationId(id)
         }
     }
 
@@ -302,12 +343,14 @@ class ChatViewModel(
      * recently updated remaining conversation, or a true empty state when none remain.
      */
     fun deleteConversation(id: Long) {
+        resumeGuard.userChangedSelection()
         viewModelScope.launch {
             repository.deleteConversation(id)
             if (_currentConversationId.value == id) {
                 val next = repository.getMostRecentConversation()?.id
+                resumeGuard.userChangedSelection()
                 _currentConversationId.value = next
-                preferences.setLastConversationId(next ?: -1L)
+                persistSelectionIfCurrent(next)
                 _streamingText.value = ""
                 _errorMessage.value = null
                 lastContext = null
@@ -342,9 +385,7 @@ class ChatViewModel(
                 //    tool/network layer and shows a polite local warning instead.
                 when (val decision = loadManager.tryAcquire()) {
                     is CognitiveLoadDecision.Throttled -> {
-                        val convId = _currentConversationId.value ?: repository.createConversation().also {
-                            _currentConversationId.value = it
-                        }
+                        val convId = requireActiveConversation()
                         repository.persistUserMessage(convId, text.trim())
                         repository.persistAssistantMessage(convId, decision.message)
                         return@launch
@@ -356,9 +397,7 @@ class ChatViewModel(
                 //    uniformly for every message before it reaches the model/tool layer.
                 when (val decision = safetyPolicy.evaluate(SESSION_ID, text.trim())) {
                     is SafetyPolicy.Decision.Reject -> {
-                        val convId = _currentConversationId.value ?: repository.createConversation().also {
-                            _currentConversationId.value = it
-                        }
+                        val convId = requireActiveConversation()
                         repository.persistUserMessage(convId, text.trim())
                         repository.persistAssistantMessage(convId, decision.reply)
                         return@launch
@@ -368,9 +407,7 @@ class ChatViewModel(
 
                 // 2b) "remember …" instruction → persist the fact to Neon memory + acknowledge.
                 RememberCommandDetector.detect(text.trim())?.let { remembered ->
-                    val convId = _currentConversationId.value ?: repository.createConversation().also {
-                        _currentConversationId.value = it
-                    }
+                    val convId = requireActiveConversation()
                     repository.persistUserMessage(convId, text.trim())
                     repository.persistAssistantMessage(convId, rememberFact(remembered.fact))
                     return@launch
@@ -378,9 +415,7 @@ class ChatViewModel(
 
                 // 3) Greeting/small talk → direct concise answer; commands → dedicated flow;
                 //    otherwise the agentic (grounded) flow.
-                val convId = _currentConversationId.value ?: repository.createConversation().also {
-                    _currentConversationId.value = it
-                }
+                val convId = requireActiveConversation()
                 // Hermes is an autonomous engine: after the local safety + memory gates, hand the
                 // whole message to the remote agent (no DeepSeek-specific command shortcuts).
                 if (_selectedEngine.value == AiEngine.HERMES) {
