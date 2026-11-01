@@ -4,6 +4,12 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.InetAddress
 
+/** A validated URL plus the exact public addresses it was resolved to (for DNS pinning). */
+data class ValidatedUrl(
+    val url: HttpUrl,
+    val ips: List<InetAddress>
+)
+
 /**
  * SSRF guard for the `web_fetch` tool. A fetch tool fetches arbitrary URLs supplied by the user
  * or the model, which makes it a server-side request-forgery vector against the device's own
@@ -12,6 +18,9 @@ import java.net.InetAddress
  *  - non-http(s) schemes;
  *  - obviously-internal hostnames (localhost, .local, .internal, …);
  *  - any host whose resolved addresses include private/loopback/link-local/multicast/reserved IPs.
+ *
+ * On success it returns the resolved public addresses ([ValidatedUrl.ips]) so the caller can pin
+ * DNS for the actual connection and avoid a time-of-check/time-of-use (rebinding) bypass.
  *
  * DNS resolution is injected so the pure IP-classification logic is unit-testable without a real
  * resolver. Resolution is a blocking call; callers must invoke it from a background dispatcher.
@@ -27,8 +36,8 @@ class UrlSafetyValidator(
     private val isHostBlocked: (String) -> Boolean = { isBlockedHostname(it) }
 ) {
 
-    /** Validates [url] and returns the parsed [HttpUrl] on success, or a typed failure. */
-    fun validate(url: String): Result<HttpUrl> {
+    /** Validates [url] and returns the parsed [HttpUrl] + pinned IPs on success, or a typed failure. */
+    fun validate(url: String): Result<ValidatedUrl> {
         // toHttpUrlOrNull already rejects non-http(s) schemes and malformed URLs.
         val parsed = url.trim().toHttpUrlOrNull()
             ?: return Result.failure(IllegalStateException(ERR_MALFORMED))
@@ -43,7 +52,7 @@ class UrlSafetyValidator(
             return Result.failure(IllegalStateException(ERR_BLOCKED))
         }
 
-        return Result.success(parsed)
+        return Result.success(ValidatedUrl(parsed, addresses))
     }
 
     private fun isPublic(bytes: ByteArray): Boolean =
@@ -56,7 +65,7 @@ class UrlSafetyValidator(
 
         /**
          * True only for a globally-routable, non-reserved IPv4 address. Rejects loopback, private,
-         * link-local, CGNAT, documentation/test, multicast, and reserved ranges.
+         * link-local, CGNAT, documentation/test, 6to4 relay, multicast, and reserved ranges.
          */
         fun isPublicIpv4(b: ByteArray): Boolean {
             if (b.size != 4) return false
@@ -72,6 +81,7 @@ class UrlSafetyValidator(
                 a == 172 && b1 in 16..31 -> false        // 172.16.0.0/12 private
                 a == 192 && b1 == 0 && b2 == 0 -> false  // 192.0.0.0/24 IETF
                 a == 192 && b1 == 0 && b2 == 2 -> false  // 192.0.2.0/24 TEST-NET
+                a == 192 && b1 == 88 && b2 == 99 -> false // 192.88.99.0/24 6to4 relay anycast
                 a == 192 && b1 == 168 -> false           // 192.168.0.0/16 private
                 a == 198 && (b1 == 18 || b1 == 19) -> false // 198.18.0.0/15 benchmark
                 a == 198 && b1 == 51 && b2 == 100 -> false // 198.51.100.0/24 TEST-NET
@@ -84,8 +94,8 @@ class UrlSafetyValidator(
 
         /**
          * True only for a globally-routable IPv6 address. Rejects unspecified, loopback,
-         * link-local, site-local, unique-local, and multicast ranges, and defers to [isPublicIpv4]
-         * for IPv4-mapped/compatible addresses.
+         * link-local, site-local, unique-local, IETF-reserved, multicast, 6to4, NAT64, and
+         * IPv4-mapped/compatible addresses (deferring to [isPublicIpv4] for embedded IPv4).
          */
         fun isPublicIpv6(b: ByteArray): Boolean {
             if (b.size != 16) return false
@@ -94,13 +104,21 @@ class UrlSafetyValidator(
 
             val b0 = b[0].toInt() and 0xFF
             val b1 = b[1].toInt() and 0xFF
-            if (b0 == 0xFF) return false                       // ff00::/8 multicast
-            if ((b0 and 0xFE) == 0xFC) return false            // fc00::/7 unique-local
-            if (b0 == 0xFE) {
-                // fe80::/10 link-local or fec0::/10 site-local
-                if ((b1 and 0xC0) == 0x80 || (b1 and 0xC0) == 0xC0) return false
-            }
+            if (b0 == 0xFF) return false             // ff00::/8 multicast
+            if ((b0 and 0xFE) == 0xFC) return false  // fc00::/7 unique-local
+            if (b0 == 0xFE) return false             // fe00::/8 link-local + site-local + IETF reserved
 
+            // 6to4 (2002::/16) — embedded IPv4 at bytes 2..5
+            if (b0 == 0x20 && b1 == 0x02) {
+                return isPublicIpv4(byteArrayOf(b[2], b[3], b[4], b[5]))
+            }
+            // NAT64 well-known prefix (64:ff9b::/96) — embedded IPv4 at bytes 12..15
+            if (b0 == 0x00 && b1 == 0x64 && b[2] == 0xFF.toByte() && b[3] == 0x9B.toByte() &&
+                (4..11).all { b[it] == 0.toByte() }
+            ) {
+                return isPublicIpv4(byteArrayOf(b[12], b[13], b[14], b[15]))
+            }
+            // IPv4-mapped (::ffff:0:0/96) / IPv4-compatible (::/96)
             val v4Mapped = (0..9).all { b[it] == 0.toByte() } &&
                 b[10] == 0xFF.toByte() && b[11] == 0xFF.toByte()
             val v4Compatible = (0..11).all { b[it] == 0.toByte() }
