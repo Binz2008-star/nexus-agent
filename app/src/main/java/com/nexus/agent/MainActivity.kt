@@ -39,6 +39,8 @@ class MainActivity : ComponentActivity() {
                 googleConsentLauncher.launch(IntentSenderRequest.Builder(pending.intentSender).build())
             }
         )
+        // Cold-start: restore + silently revalidate a previously-authorized Google account.
+        googleAuthManager.restoreAndRevalidate()
 
         setContent {
             NexusAgentTheme {

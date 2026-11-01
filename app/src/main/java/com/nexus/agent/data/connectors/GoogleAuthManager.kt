@@ -73,8 +73,50 @@ class GoogleAuthManager(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    /** True when a previously-authorized account needs one-tap re-consent (never auto-popped). */
+    private val _needsReconnect = MutableStateFlow(false)
+    val needsReconnect: StateFlow<Boolean> = _needsReconnect.asStateFlow()
+
     fun dismissError() {
         _error.value = null
+    }
+
+    /**
+     * Cold-start: restore the remembered account + granted scopes, then silently revalidate them
+     * via Google Identity Services. If Google requires consent (e.g. after revocation), we mark
+     * [needsReconnect] instead of popping consent — never silently grant or expand scopes.
+     */
+    fun restoreAndRevalidate() {
+        scope.launch {
+            val email = secretStorage.readGoogleEmail() ?: return@launch
+            val scopes = secretStorage.readGoogleScopes()
+                ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+                .orEmpty()
+            if (scopes.isEmpty()) return@launch
+
+            // Optimistically restore so a previously-connected account is not shown as "never connected".
+            _email.value = email
+            _grantedScopes.value = scopes.toSet()
+            _isConnected.value = GmailConnector.GMAIL_READONLY_SCOPE in scopes
+            _driveConnected.value = GoogleScopePolicy.DRIVE_READ in scopes && GoogleScopePolicy.DRIVE_FILE in scopes
+            _needsReconnect.value = false
+
+            try {
+                val result = client.authorize(createRequest(scopes, email)).await()
+                if (result.hasResolution() || !result.grantedScopes.containsAll(scopes)) {
+                    updateGrants(emptySet())
+                    _needsReconnect.value = true
+                } else {
+                    updateGrants(result.grantedScopes.toSet())
+                    _needsReconnect.value = false
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Offline / Play services unavailable: keep the remembered state; the user can
+                // still attempt a silent revalidate on the next tool call.
+            }
+        }
     }
 
     /** This method is called only from the user's explicit Connect button. */
@@ -88,6 +130,7 @@ class GoogleAuthManager(
         awaitingConsent = false
         requestedScopes = (scopes + _grantedScopes.value).distinct()
         _error.value = null
+        _needsReconnect.value = false
         scope.launch {
             try {
                 val result = client.authorize(createRequest(requestedScopes.toList(), _email.value)).await()
@@ -183,6 +226,11 @@ class GoogleAuthManager(
         }
         _email.value = email
         updateGrants(result.grantedScopes.toSet())
+        // Persist non-sensitive account identifier + granted-scope metadata for cold-start
+        // revalidation. No access/refresh token is persisted.
+        secretStorage.saveGoogleEmail(email)
+        secretStorage.saveGoogleScopes(result.grantedScopes.toSet().joinToString(","))
+        _needsReconnect.value = false
         _error.value = null
     }
 
@@ -226,11 +274,13 @@ class GoogleAuthManager(
         val email = _email.value
         updateGrants(emptySet())
         _email.value = null
+        _needsReconnect.value = false
         _error.value = null
         // Clear legacy AppAuth tokens from local encrypted storage; never reuse them as
         // Google Identity Services tokens (different Android authorization model).
         secretStorage.clearGoogleRefreshToken()
         secretStorage.clearGoogleEmail()
+        secretStorage.clearGoogleScopes()
         secretStorage.clearPendingOAuth()
 
         if (email != null) {

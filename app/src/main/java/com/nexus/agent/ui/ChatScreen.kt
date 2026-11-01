@@ -361,6 +361,7 @@ fun ChatScreen(
     val grantedGoogleScopes by googleAuthManager.grantedScopes.collectAsState()
     val gmailEmail by gmailConnector.email.collectAsState()
     val gmailAuthError by googleAuthManager.error.collectAsState()
+    val gmailNeedsReconnect by googleAuthManager.needsReconnect.collectAsState()
     LaunchedEffect(gmailAuthError) {
         gmailAuthError?.let { message ->
             context.showToast(message)
@@ -396,6 +397,10 @@ fun ChatScreen(
     var neonBackendUrlInput by remember { mutableStateOf("") }
     var neonBackendKeyInput by remember { mutableStateOf("") }
     var useNeonBackend by remember { mutableStateOf(false) }
+    // Configured-status flags (never expose secret values; only whether a secret is present).
+    var deepSeekConfigured by remember { mutableStateOf(false) }
+    var neonReadConfigured by remember { mutableStateOf(false) }
+    var neonWriteConfigured by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
 
     // Import credentials from a user-placed file (nexus-neon-rotation.txt) so they don't need
@@ -446,6 +451,16 @@ fun ChatScreen(
             neonWriteDirty = false
             neonBackendUrlInput = withContext(Dispatchers.IO) { preferences.neonBackendUrl.first() }
             useNeonBackend = withContext(Dispatchers.IO) { preferences.useNeonBackend.first() }
+            // Configured status (presence of encrypted secrets only — never the values).
+            deepSeekConfigured = withContext(Dispatchers.IO) {
+                secrets.readApiKey() is ApiKeyReadResult.Present
+            }
+            neonReadConfigured = withContext(Dispatchers.IO) {
+                secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF) is ApiKeyReadResult.Present
+            }
+            neonWriteConfigured = withContext(Dispatchers.IO) {
+                secrets.readSecret(SecretStorageRepository.NEON_WRITE_URL_PREF) is ApiKeyReadResult.Present
+            }
         }
     }
 
@@ -555,6 +570,9 @@ fun ChatScreen(
     if (showSettings) {
         SettingsDialog(
             keyInput = keyInput,
+            deepSeekConfigured = deepSeekConfigured,
+            neonReadConfigured = neonReadConfigured,
+            neonWriteConfigured = neonWriteConfigured,
             onKeyChange = { keyInput = it },
             systemPrompt = systemPromptInput,
             onSystemPromptChange = { systemPromptInput = it },
@@ -565,6 +583,7 @@ fun ChatScreen(
             neonWriteUrl = neonWriteUrlInput,
             onNeonWriteUrlChange = { neonWriteUrlInput = it; neonWriteDirty = true },
             gmailConnected = gmailConnected,
+            gmailNeedsReconnect = gmailNeedsReconnect,
             grantedGoogleScopes = grantedGoogleScopes,
             onAuthorizeGoogle = { requested ->
                 googleAuthManager.startAuthorization(requested)
@@ -599,7 +618,16 @@ fun ChatScreen(
             hermesState = hermesConnectionState,
             onVerifyHermes = { viewModel.verifyHermes() },
             useNeonBackend = useNeonBackend,
-            onUseNeonBackendChange = { useNeonBackend = it },
+            onUseNeonBackendChange = { enabled ->
+                // Fail closed: the HTTPS backend requires a valid, sanitized HTTPS URL before the
+                // flag can be enabled — never a blank/invalid URL with the toggle on.
+                if (enabled && !HermesSafety.normalizeEndpoint(neonBackendUrlInput).isSuccess) {
+                    context.showToast("Neon backend requires a valid HTTPS URL first")
+                    useNeonBackend = false
+                } else {
+                    useNeonBackend = enabled
+                }
+            },
             neonBackendUrl = neonBackendUrlInput,
             onNeonBackendUrlChange = { neonBackendUrlInput = it },
             neonBackendKey = neonBackendKeyInput,
@@ -925,6 +953,9 @@ private fun formatTimestamp(ts: Long): String =
 @Composable
 private fun SettingsDialog(
     keyInput: String,
+    deepSeekConfigured: Boolean,
+    neonReadConfigured: Boolean,
+    neonWriteConfigured: Boolean,
     onKeyChange: (String) -> Unit,
     systemPrompt: String,
     onSystemPromptChange: (String) -> Unit,
@@ -935,6 +966,7 @@ private fun SettingsDialog(
     neonWriteUrl: String,
     onNeonWriteUrlChange: (String) -> Unit,
     gmailConnected: Boolean,
+    gmailNeedsReconnect: Boolean = false,
     grantedGoogleScopes: Set<String>,
     onAuthorizeGoogle: (List<String>) -> Unit,
     gmailEmail: String?,
@@ -984,14 +1016,15 @@ private fun SettingsDialog(
                             style = MaterialTheme.typography.titleSmall
                         )
                         Text(
-                            text = if (gmailConnected) {
-                                gmailEmail?.let { stringResource(R.string.gmail_connected_as, it) }
+                            text = when {
+                                gmailConnected -> gmailEmail?.let { stringResource(R.string.gmail_connected_as, it) }
                                     ?: stringResource(R.string.gmail_connected)
-                            } else {
-                                stringResource(R.string.gmail_not_connected)
+                                gmailNeedsReconnect -> "Reconnect required · أعد الاتصال"
+                                else -> stringResource(R.string.gmail_not_connected)
                             },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (gmailNeedsReconnect) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     if (grantedGoogleScopes.isNotEmpty()) {
@@ -1043,6 +1076,12 @@ private fun SettingsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
+                Text(
+                    if (deepSeekConfigured) "✓ Configured" else "Not configured",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (deepSeekConfigured) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = neonReadUrl,
@@ -1052,6 +1091,12 @@ private fun SettingsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
+                Text(
+                    if (neonReadConfigured) "✓ Configured" else "Not configured",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (neonReadConfigured) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = neonWriteUrl,
@@ -1060,6 +1105,12 @@ private fun SettingsDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
+                )
+                Text(
+                    if (neonWriteConfigured) "✓ Configured" else "Not configured",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (neonWriteConfigured) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(16.dp))
                 Text("Neon backend · خادم Neon", style = MaterialTheme.typography.titleSmall)
