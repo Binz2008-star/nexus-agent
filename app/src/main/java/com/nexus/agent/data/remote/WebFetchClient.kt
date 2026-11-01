@@ -39,7 +39,10 @@ class WebFetchClient(
 
             // Pin DNS to the validated public addresses for THIS hop, so the connection can't be
             // rebound to a different (e.g. private) address by a second resolution.
-            val pinnedClient = httpClient.newBuilder().dns(Dns { _ -> current.ips }).build()
+            val pinnedDns = object : Dns {
+                override fun lookup(hostname: String): List<java.net.InetAddress> = current.ips
+            }
+            val pinnedClient = httpClient.newBuilder().dns(pinnedDns).build()
             val request = Request.Builder()
                 .url(current.url)
                 .header("User-Agent", USER_AGENT)
