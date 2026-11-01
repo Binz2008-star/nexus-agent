@@ -10,6 +10,9 @@ interface ConversationDao {
     @Insert
     suspend fun insert(conversation: ConversationEntity): Long
 
+    @Query("SELECT COUNT(*) FROM conversations")
+    suspend fun countConversations(): Int
+
     @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
     fun getAll(): Flow<List<ConversationEntity>>
 
