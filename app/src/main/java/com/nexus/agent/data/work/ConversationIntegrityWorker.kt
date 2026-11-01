@@ -18,6 +18,25 @@ import kotlinx.coroutines.withContext
  * Output includes aggregate local counts only; messages, credentials and user identifiers are
  * never placed into WorkManager's internal database, exposed in logs or sent over a network.
  */
+/** A snapshot phase persisted by WorkManager before integrity verification. */
+class ConversationSnapshotWorker(
+    context: Context,
+    parameters: WorkerParameters
+) : CoroutineWorker(context, parameters) {
+    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        try {
+            val db = NexusDatabase.getInstance(applicationContext)
+            Result.success(workDataOf(
+                ConversationIntegrityWorker.KEY_INITIAL_CHAT_COUNT to db.conversationDao().countConversations(),
+                ConversationIntegrityWorker.KEY_INITIAL_MESSAGE_COUNT to db.messageDao().countMessages()
+            ))
+        } catch (_: Exception) {
+            if (runAttemptCount < 2) Result.retry()
+            else Result.failure(workDataOf(ConversationIntegrityWorker.KEY_ERROR_CODE to "snapshot_unavailable"))
+        }
+    }
+}
+
 class ConversationIntegrityWorker(
     context: Context,
     parameters: WorkerParameters
@@ -30,6 +49,12 @@ class ConversationIntegrityWorker(
             val messages = database.messageDao().countMessages()
             val orphaned = database.messageDao().countOrphanedMessages()
             val counts = LocalConversationCounts(chats, messages, orphaned)
+            val startedChats = inputData.getInt(KEY_INITIAL_CHAT_COUNT, -1)
+            val startedMessages = inputData.getInt(KEY_INITIAL_MESSAGE_COUNT, -1)
+            if ((startedChats >= 0 && startedChats != chats) ||
+                (startedMessages >= 0 && startedMessages != messages)) {
+                return@withContext Result.failure(workDataOf(KEY_ERROR_CODE to "data_changed_during_audit"))
+            }
             val data = workDataOf(
                 KEY_CHAT_COUNT to chats,
                 KEY_MESSAGE_COUNT to messages,
@@ -46,6 +71,8 @@ class ConversationIntegrityWorker(
     }
 
     companion object {
+        const val KEY_INITIAL_CHAT_COUNT = "initial_chat_count"
+        const val KEY_INITIAL_MESSAGE_COUNT = "initial_message_count"
         const val KEY_CHAT_COUNT = "chat_count"
         const val KEY_MESSAGE_COUNT = "message_count"
         const val KEY_ORPHAN_COUNT = "orphan_count"
@@ -65,13 +92,15 @@ object ConversationIntegrityScheduler {
     const val UNIQUE_WORK = "nexus-local-conversation-integrity-v1"
 
     fun enqueueReadOnlyAudit(context: Context) {
-        val request = OneTimeWorkRequestBuilder<ConversationIntegrityWorker>()
-            .addTag("nexus-readonly-local-audit")
+        val snapshot = OneTimeWorkRequestBuilder<ConversationSnapshotWorker>()
+            .addTag("nexus-audit-snapshot")
             .build()
-        WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
-            UNIQUE_WORK,
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
+        val verify = OneTimeWorkRequestBuilder<ConversationIntegrityWorker>()
+            .addTag("nexus-audit-verify")
+            .build()
+        WorkManager.getInstance(context.applicationContext)
+            .beginUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, snapshot)
+            .then(verify)
+            .enqueue()
     }
 }
