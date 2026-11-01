@@ -20,3 +20,5 @@ CREATE TABLE nexus_conversations (
 GRANT USAGE ON SCHEMA public TO nexus_writer;
 GRANT SELECT, INSERT ON nexus_memory TO nexus_writer;
 GRANT INSERT ON nexus_conversations TO nexus_writer;
+-- bigserial columns call nextval() on their sequence; INSERT requires USAGE on it.
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO nexus_writer;
