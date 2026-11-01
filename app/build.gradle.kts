@@ -125,6 +125,9 @@ dependencies {
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
+
+    // Explicit, read-only local integrity checks survive app process death.
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     ksp("androidx.room:room-compiler:$roomVersion")
 
     // Neon (Postgres) — direct JDBC for Second Brain search + cloud persistence.
@@ -146,4 +149,6 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.room:room-testing:$roomVersion")
+    androidTestImplementation("androidx.work:work-testing:2.9.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
 }
