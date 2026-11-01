@@ -129,3 +129,23 @@ def test_db_error_maps_to_502(monkeypatch):
     r = client.post("/v1/brain/search", json={"query": "x"}, headers=AUTH)
     assert r.status_code == 502
     assert r.json()["detail"] == "auth"
+
+
+def test_auth_fails_closed_when_no_key_configured():
+    original = main.API_KEY
+    main.API_KEY = ""
+    try:
+        assert client.get("/v1/memory/recent", headers=AUTH).status_code == 401
+    finally:
+        main.API_KEY = original
+
+
+def test_memory_save_rejects_long_type():
+    r = client.post("/v1/memory/save", json={"type": "x" * 51, "content": "hi"}, headers=AUTH)
+    assert r.status_code == 400
+
+
+def test_transcript_mirror_rejects_long_role():
+    r = client.post("/v1/transcript/mirror", json={"session_id": "s", "role": "x" * 21, "content": "hi"}, headers=AUTH)
+    assert r.status_code == 400
+

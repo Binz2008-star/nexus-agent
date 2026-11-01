@@ -22,9 +22,12 @@ from sql_queries import (
     INSERT_MEMORY_SQL,
     MAX_CONTENT_LEN,
     MAX_QUERY_LEN,
+    MAX_ROLE_LEN,
+    MAX_SESSION_ID_LEN,
     MAX_TAGS,
     MAX_TAG_LEN,
     MAX_TOP_K,
+    MAX_TYPE_LEN,
     MIN_TOP_K,
     RECALL_CAP,
     SEARCH_CHUNKS_SQL,
@@ -110,6 +113,8 @@ def memory_save(req: MemorySaveRequest) -> dict:
         raise HTTPException(status_code=400, detail="empty")
     if len(req.content) > MAX_CONTENT_LEN:
         raise HTTPException(status_code=400, detail="content_too_long")
+    if len(req.type) > MAX_TYPE_LEN:
+        raise HTTPException(status_code=400, detail="type_too_long")
     if len(req.tags) > MAX_TAGS or any(len(t) > MAX_TAG_LEN for t in req.tags):
         raise HTTPException(status_code=400, detail="tags_invalid")
     try:
@@ -140,6 +145,10 @@ def transcript_mirror(req: MirrorRequest) -> dict:
         raise HTTPException(status_code=400, detail="empty")
     if len(req.content) > MAX_CONTENT_LEN:
         raise HTTPException(status_code=400, detail="content_too_long")
+    if len(req.role) > MAX_ROLE_LEN:
+        raise HTTPException(status_code=400, detail="role_too_long")
+    if len(req.session_id) > MAX_SESSION_ID_LEN:
+        raise HTTPException(status_code=400, detail="session_id_too_long")
     try:
         with _connect(WRITE_URL) as conn:
             with conn.cursor() as cur:

@@ -22,8 +22,8 @@ INSERT_MEMORY_SQL = (
 )
 SELECT_MEMORY_SQL = "SELECT type, content FROM nexus_memory ORDER BY created_at DESC LIMIT %s"
 
-# Bounds (mirror NeonRepository's MIN_TOP_K / MAX_TOP_K and the recall cap).
-MIN_TOP_K, MAX_TOP_K = 1, 50
+# Bounds (mirror NeonRepository/KnowledgeRepository: MIN_TOP_K=1, MAX_TOP_K=20; loadMemory caps at 200).
+MIN_TOP_K, MAX_TOP_K = 1, 20
 RECALL_CAP = 200
 
 # Input size caps (defense-in-depth against oversized payloads).
@@ -31,6 +31,9 @@ MAX_QUERY_LEN = 500
 MAX_CONTENT_LEN = 20_000
 MAX_TAG_LEN = 100
 MAX_TAGS = 20
+MAX_TYPE_LEN = 50
+MAX_ROLE_LEN = 20
+MAX_SESSION_ID_LEN = 100
 
 
 def ilike_pattern(query: str) -> str:

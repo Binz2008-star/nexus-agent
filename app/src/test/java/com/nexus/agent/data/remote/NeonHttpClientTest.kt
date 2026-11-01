@@ -69,6 +69,32 @@ class NeonHttpClientTest {
     }
 
     @Test
+    fun `search surfaces backend detail error code`() = runTest {
+        server.enqueue(json("""{"detail":"network"}""", code = 502))
+        val result = client().search("x", 8)
+        assertTrue(result is KnowledgeSearchResult.Failure)
+        assertEquals("network", (result as KnowledgeSearchResult.Failure).errorCode)
+    }
+
+    @Test
+    fun `search handles non-json error body`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(502).setHeader("Content-Type", "text/html").setBody("<html>bad gateway</html>")
+        )
+        val result = client().search("x", 8)
+        assertTrue(result is KnowledgeSearchResult.Failure)
+        assertEquals("http_502", (result as KnowledgeSearchResult.Failure).errorCode)
+    }
+
+    @Test
+    fun `search rejects cleartext non-loopback backend url`() = runTest {
+        // TLS is enforced at request time: an http:// non-loopback URL must never send the bearer key.
+        val result = client(baseUrlProvider = { "http://example.com" }).search("x", 8)
+        assertTrue(result is KnowledgeSearchResult.Failure)
+        assertEquals(NeonHttpClient.ERROR_NO_CONNECTION, (result as KnowledgeSearchResult.Failure).errorCode)
+    }
+
+    @Test
     fun `search fails with no_connection when base url is absent`() = runTest {
         val result = client(baseUrlProvider = { null }).search("x", 8)
         assertTrue(result is KnowledgeSearchResult.Failure)

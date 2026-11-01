@@ -1248,6 +1248,10 @@ private fun mapErrorCode(code: String): String {
         code == "empty_response" -> "Empty response from server"
         code == "timeout" -> "Request timed out"
         code == "network" -> "Network error. Check your connection."
+        code == "no_connection" -> "Neon connection not configured"
+        code == "not_found" -> "Not found"
+        code == "server" -> "Neon server error"
+        code.startsWith("http_") -> "Neon server error (HTTP ${code.removePrefix("http_")})"
         code.startsWith("api_") -> "API error ${code.removePrefix("api_")}"
         code == "https_required" -> stringResource(R.string.hermes_https_required)
         code == "endpoint" -> stringResource(R.string.hermes_endpoint_invalid)
