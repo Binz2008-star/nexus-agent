@@ -62,8 +62,9 @@ class HermesRemoteClientTest {
         assertEquals("r1", result.getOrNull()?.runId)
         val recorded = server.takeRequest()
         assertEquals("/v1/runs", recorded.path)
-        assertTrue(recorded.body.readUtf8().contains("\"input\":\"hello\""))
-        assertTrue(recorded.body.readUtf8().contains("\"session_id\":\"s1\""))
+        val body = recorded.body.readUtf8()
+        assertTrue(body.contains("\"input\":\"hello\""))
+        assertTrue(body.contains("\"session_id\":\"s1\""))
     }
 
     @Test
