@@ -7,6 +7,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -84,6 +87,7 @@ import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.neon.CredentialFileParser
 import com.nexus.agent.domain.neon.NeonConnectionParser
 import com.nexus.agent.domain.persona.AdaptiveTone
+import com.nexus.agent.domain.persona.Dialect
 import com.nexus.agent.domain.persona.Tone
 import com.nexus.agent.domain.persona.regionToDialect
 import com.nexus.agent.domain.policy.ApprovalGate
@@ -152,15 +156,9 @@ fun ChatScreen(
         val region = CultureContextEngine.detectRegionFromLocale(java.util.Locale.getDefault().toLanguageTag())
         CultureContext(region = region)
     }
-    val personaInstruction = remember(cultureContext) {
-        val dialect = regionToDialect(cultureContext.region)
-        val english = cultureContext.region == Region.EN_GLOBAL || cultureContext.region == Region.FR_GLOBAL
-        if (english) {
-            AdaptiveTone.buildRewriteInstructionEnglish(dialect, Tone.FRIENDLY)
-        } else {
-            AdaptiveTone.buildRewriteInstruction(dialect, Tone.FRIENDLY)
-        }
-    }
+    val preferredDialect by preferences.preferredDialect.collectAsState(initial = "auto")
+    val preferredTone by preferences.preferredTone.collectAsState(initial = "friendly")
+    val mashaaerEmotionEnabled by preferences.mashaaerEmotionEnabled.collectAsState(initial = false)
     val neonRepository = remember {
         NeonRepository(
             readUrlProvider = {
@@ -192,7 +190,21 @@ fun ChatScreen(
             },
             systemPromptProvider = { preferences.systemPrompt.first() },
             router = router,
-            personaProvider = { personaInstruction },
+            personaProvider = {
+                // Read current persisted preferences at request-time (repository is remembered).
+                val selectedDialect = preferences.preferredDialect.first()
+                val selectedTone = Tone.fromId(preferences.preferredTone.first())
+                val dialect = if (selectedDialect == "auto") regionToDialect(cultureContext.region)
+                    else Dialect.fromId(selectedDialect)
+                val englishLocale = cultureContext.region == Region.EN_GLOBAL ||
+                    cultureContext.region == Region.FR_GLOBAL
+                if (englishLocale) {
+                    AdaptiveTone.buildRewriteInstructionEnglish(dialect, selectedTone)
+                } else {
+                    AdaptiveTone.buildRewriteInstruction(dialect, selectedTone)
+                }
+            },
+            mashaaerEmotionEnabledProvider = { preferences.mashaaerEmotionEnabled.first() },
             mirror = object : ConversationMirror {
                 override suspend fun mirror(sessionId: String, role: String, content: String) {
                     // Opt-in gate: never mirror transcripts unless the user enabled it.
@@ -442,6 +454,12 @@ fun ChatScreen(
             },
             onDisconnectGmail = { scope.launch { gmailConnector.disconnect() } },
             mirrorEnabled = mirrorEnabled,
+            mashaaerEmotionEnabled = mashaaerEmotionEnabled,
+            onMashaaerEmotionEnabledChange = { scope.launch { preferences.setMashaaerEmotionEnabled(it) } },
+            preferredDialect = preferredDialect,
+            onPreferredDialectChange = { scope.launch { preferences.setPreferredDialect(it) } },
+            preferredTone = preferredTone,
+            onPreferredToneChange = { scope.launch { preferences.setPreferredTone(it) } },
             onMirrorEnabledChange = { scope.launch { preferences.setMirrorEnabled(it) } },
             onImport = { importLauncher.launch(arrayOf("*/*")) },
             onDismiss = { showSettings = false },
@@ -664,6 +682,12 @@ private fun SettingsDialog(
     onDisconnectGmail: () -> Unit,
     mirrorEnabled: Boolean,
     onMirrorEnabledChange: (Boolean) -> Unit,
+    mashaaerEmotionEnabled: Boolean,
+    onMashaaerEmotionEnabledChange: (Boolean) -> Unit,
+    preferredDialect: String,
+    onPreferredDialectChange: (String) -> Unit,
+    preferredTone: String,
+    onPreferredToneChange: (String) -> Unit,
     onImport: () -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit
@@ -672,7 +696,7 @@ private fun SettingsDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.settings)) },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -751,6 +775,31 @@ private fun SettingsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
+                Spacer(Modifier.height(16.dp))
+                Text("Mashaaer · مشاعر", style = MaterialTheme.typography.titleSmall)
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("تحليل المشاعر الاختياري (محلي، دون حفظ)", modifier = Modifier.weight(1f))
+                    Switch(checked = mashaaerEmotionEnabled,
+                        onCheckedChange = onMashaaerEmotionEnabledChange)
+                }
+                Text("اللهجة", style = MaterialTheme.typography.bodyMedium)
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("auto" to "تلقائي", "gulf" to "خليجي",
+                        "levant" to "شامي", "egypt" to "مصري").forEach { (id, label) ->
+                        TextButton(onClick = { onPreferredDialectChange(id) }) {
+                            Text(if (preferredDialect == id) "✓ $label" else label)
+                        }
+                    }
+                }
+                Text("النبرة", style = MaterialTheme.typography.bodyMedium)
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("friendly" to "ودّي", "calm" to "هادئ",
+                        "professional" to "مهني").forEach { (id, label) ->
+                        TextButton(onClick = { onPreferredToneChange(id) }) {
+                            Text(if (preferredTone == id) "✓ $label" else label)
+                        }
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),

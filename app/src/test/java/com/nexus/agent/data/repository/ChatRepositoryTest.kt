@@ -166,6 +166,32 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun mashaaerIsOffByDefault() = runBlocking {
+        val dao = FakeDao()
+        val client = FakeClient(listOf(Result.success("ok")))
+        val r = repo(dao, client)
+        r.sendMessageStream(1L, "I am excited but nervous", "deepseek-flash") { }
+        assertTrue(client.lastHistory.none { it.text.contains("Optional Mashaaer communication hint") })
+    }
+
+    @Test
+    fun mashaaerOptInAddsHintWithoutExposingTokens() = runBlocking {
+        val dao = FakeDao()
+        val client = FakeClient(listOf(Result.success("ok")))
+        val r = ChatRepository(dao, FakeConversationDao(), client, { "key" },
+            mashaaerEmotionEnabledProvider = { true })
+        r.sendMessageStream(1L, "I am excited but nervous secret-token-123", "deepseek-flash") { }
+        val hint = client.lastHistory.first {
+            it.role == ChatMessage.Role.SYSTEM && it.text.contains("Optional Mashaaer communication hint")
+        }
+        assertTrue(hint.text.contains("approval"))
+        assertTrue(!hint.text.contains("secret-token-123"))
+        assertTrue(client.lastHistory.any {
+            it.role == ChatMessage.Role.USER && it.text.contains("secret-token-123")
+        })
+    }
+
+    @Test
     fun personaInstructionIsInjectedAfterCustomPrompt() = runBlocking {
         val dao = FakeDao()
         val client = FakeClient(listOf(Result.success("ok")))

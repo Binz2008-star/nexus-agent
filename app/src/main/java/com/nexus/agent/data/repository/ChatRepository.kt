@@ -7,6 +7,7 @@ import com.nexus.agent.data.local.MessageEntity
 import com.nexus.agent.data.network.ChatCompletionClient
 import com.nexus.agent.data.network.CompletionResult
 import com.nexus.agent.domain.model.ChatMessage
+import com.nexus.agent.domain.persona.MashaaerEmotionLayer
 import com.nexus.agent.domain.router.AiModelRouter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -31,7 +32,8 @@ class ChatRepository(
     private val systemPromptProvider: suspend () -> String = { "" },
     private val router: AiModelRouter? = null,
     private val personaProvider: suspend () -> String? = { null },
-    private val mirror: ConversationMirror? = null
+    private val mirror: ConversationMirror? = null,
+    private val mashaaerEmotionEnabledProvider: suspend () -> Boolean = { false }
 ) {
     // Fire-and-forget scope for the best-effort Neon mirror, so a slow/hung mirror can never
     // delay the chat flow (Room persists first; the mirror is an async side effect).
@@ -255,6 +257,12 @@ class ChatRepository(
     ): List<ChatMessage> {
         val customPrompt = systemPromptProvider().trim()
         val persona = personaProvider()?.trim()
+        // Based solely on current user message, not stored emotion history.
+        // Disabled unless explicitly opted in. No external calls or persisted emotion scores.
+        val emotionHint = if (mashaaerEmotionEnabledProvider()) {
+            history.lastOrNull { it.role == ChatMessage.Role.USER }?.text
+                ?.let { MashaaerEmotionLayer.styleHint(MashaaerEmotionLayer.analyze(it)) }
+        } else null
         val systemMessages = buildList {
             add(ChatMessage(ChatMessage.Role.SYSTEM, NAME_SAFETY_PROMPT))
             add(ChatMessage(ChatMessage.Role.SYSTEM, IDENTITY_PROMPT))
@@ -263,6 +271,9 @@ class ChatRepository(
             }
             if (!persona.isNullOrBlank()) {
                 add(ChatMessage(ChatMessage.Role.SYSTEM, persona))
+            }
+            if (!emotionHint.isNullOrBlank()) {
+                add(ChatMessage(ChatMessage.Role.SYSTEM, emotionHint))
             }
             if (!context.isNullOrBlank()) {
                 add(ChatMessage(ChatMessage.Role.SYSTEM, context))
