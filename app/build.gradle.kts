@@ -106,7 +106,10 @@ dependencies {
 
     // Phase 2A: DeepSeek networking
     // Opt-in anonymous analytics (no screen replay, no sensitive payloads).
-    implementation("com.posthog:posthog-android:3.+")
+    // Pinned to an exact version: 3.38.0 is the last release whose transitive kotlin-stdlib is
+    // 1.8.x (metadata 1.8.0), readable by this project's Kotlin 1.9.24 compiler. 3.39.0+ pulls
+    // kotlin-stdlib 2.1.x (metadata 2.1.0) and okio 3.11.x, which KSP/Kotlin 1.9 cannot read.
+    implementation("com.posthog:posthog-android:3.38.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
