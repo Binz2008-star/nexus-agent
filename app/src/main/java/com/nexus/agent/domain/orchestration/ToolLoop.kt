@@ -144,7 +144,7 @@ class ToolLoop(
                                 evidence += ActionEvidence(call.name, if (verified) {
                                     ActionEvidenceStatus.VERIFIED
                                 } else ActionEvidenceStatus.EXECUTED)
-                                notes += "Tool ${call.name}:\\n${result.content}"
+                                notes += "Tool ${call.name}:\n${result.content}"
                                 if (taskContract.independentVerificationRequired && !verified) {
                                     notes += "Tool ${call.name}: independent postcondition NOT verified"
                                     failedActions++
