@@ -215,6 +215,10 @@ jobs:
           NEON_WRITE_URL: jdbc:postgresql://nexus_writer:writerpass@127.0.0.1:5432/personal_ai_core
         run: ./gradlew testDebugUnitTest --tests "com.nexus.agent.data.repository.NeonJdbcIntegrationTest" --no-daemon
 
+      - name: Dump JDBC test report (on failure)
+        if: failure()
+        run: find app/build/test-results -name '*.xml' -exec cat {} \;
+
       - name: Tear down PostgreSQL
         if: always()
         run: |
