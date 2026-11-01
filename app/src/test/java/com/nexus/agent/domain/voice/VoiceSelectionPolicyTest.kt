@@ -30,4 +30,14 @@ class VoiceSelectionPolicyTest {
             listOf(localEnglish, localArabic, cloudArabic), ""))
         assertTrue(VoiceSelectionPolicy.available(listOf(cloudArabic)).isEmpty())
     }
+    @Test fun emptyAndDuplicateVoiceIdentifiersAreNotOffered() {
+        val repeated = localArabic.copy(name = "Duplicate")
+        val blank = localArabic.copy(id = "")
+        val offered = VoiceSelectionPolicy.available(
+            listOf(blank, localArabic, repeated, cloudArabic)
+        )
+        assertEquals(1, offered.size)
+        assertEquals("ar-local", offered.single().id)
+    }
+
 }
