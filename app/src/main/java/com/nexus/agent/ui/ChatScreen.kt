@@ -57,6 +57,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -654,6 +655,10 @@ fun ChatScreen(
             onTtsEnabledChange = { scope.launch { preferences.setTtsEnabled(it) } },
             ttsAutoplay = ttsAutoplay,
             onTtsAutoplayChange = { scope.launch { preferences.setTtsAutoplay(it) } },
+            ttsRate = ttsRate,
+            onTtsRateChange = { scope.launch { preferences.setTtsSpeechRate(it) } },
+            ttsPitch = ttsPitch,
+            onTtsPitchChange = { scope.launch { preferences.setTtsPitch(it) } },
             onTtsPreview = { speakText("مرحبًا، هذا صوت NEXUS. أهلاً بك في الوضع الصوتي.") },
             preferredDialect = preferredDialect,
             onPreferredDialectChange = { scope.launch { preferences.setPreferredDialect(it) } },
@@ -1089,6 +1094,10 @@ private fun SettingsDialog(
     onTtsEnabledChange: (Boolean) -> Unit = {},
     ttsAutoplay: Boolean = false,
     onTtsAutoplayChange: (Boolean) -> Unit = {},
+    ttsRate: Float = 1.0f,
+    onTtsRateChange: (Float) -> Unit = {},
+    ttsPitch: Float = 1.0f,
+    onTtsPitchChange: (Float) -> Unit = {},
     onTtsPreview: () -> Unit = {},
     preferredDialect: String,
     onPreferredDialectChange: (String) -> Unit,
@@ -1334,6 +1343,10 @@ private fun SettingsDialog(
                         Text("قراءة تلقائية · Autoplay", modifier = Modifier.weight(1f))
                         Switch(checked = ttsAutoplay, onCheckedChange = onTtsAutoplayChange)
                     }
+                    Text("السرعة · Speed (${"%.2f".format(ttsRate)})", style = MaterialTheme.typography.bodySmall)
+                    Slider(value = ttsRate, onValueChange = onTtsRateChange, valueRange = 0.85f..1.05f)
+                    Text("النبرة · Pitch (${"%.2f".format(ttsPitch)})", style = MaterialTheme.typography.bodySmall)
+                    Slider(value = ttsPitch, onValueChange = onTtsPitchChange, valueRange = 0.95f..1.08f)
                     TextButton(onClick = onTtsPreview, modifier = Modifier.fillMaxWidth()) {
                         Text("معاينة الصوت · Preview")
                     }
