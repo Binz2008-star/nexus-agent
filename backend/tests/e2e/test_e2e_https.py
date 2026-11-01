@@ -1,8 +1,10 @@
 """End-to-end HTTPS contract: TLS, health, auth, authorization, search, memory round-trip, input
 validation, and rate-limit resilience against the deployed service."""
+import os
+
 import pytest
 
-from .conftest import BASE_URL, AVAILABLE
+BASE_URL = os.environ.get("NEXUS_BACKEND_URL", "").rstrip("/")
 
 pytestmark = pytest.mark.e2e
 
