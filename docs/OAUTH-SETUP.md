@@ -1,52 +1,99 @@
-# NEXUS Gmail OAuth — Android client authorization
+# NEXUS — Google Workspace OAuth and service integrations
 
-**Status:** Code migrated to Google Identity Services in draft PR. GitHub CI and real-device OAuth acceptance must pass before Gmail is considered operational. This is **not** a production readiness signoff.
+**Status: implementation in feature branch; Gmail/Drive/Calendar/Contacts/Tasks not yet
+verified on a physical Android device.** Do not publish or claim production readiness based
+on CI alone. This replaces the old AppAuth custom-redirect instructions.
 
-## Google Cloud configuration
+## Project and client configuration
 
-Project: `gmail-ai-bot-452308` (Gmail-AI-Bot).
+Use the existing Google Cloud project `gmail-ai-bot-452308` and a Google OAuth **Android**
+client registered for `com.nexus.agent` with the stable TEST APK signing SHA-1:
 
-1. Configure Google Auth Platform consent screen under the selected project and add the intended Google account as a **test user** if External/Testing.
-2. Enable **Gmail API** in that same project.
-3. Use an **Android** OAuth 2.0 Client with package name `com.nexus.agent` and the exact certificate SHA-1 of the installed APK. The current stable *test* APK signer SHA-1 is `15:88:D3:C3:46:01:62:71:66:76:5C:05:64:20:79:04:BD:CB:40:34`. Production signing needs a separately registered fingerprint.
-4. The public Android OAuth Client ID can be supplied to **GitHub Actions repository secret** `GOOGLE_OAUTH_CLIENT_ID`. This is injected into `BuildConfig` only to confirm a configured build; it is **not a client secret** and is not sent as a custom-redirect client credential.
-5. Do **not** commit a `client_secret_*.json` file or any client secret, refresh token, Google account password, APK signing key, or private credentials.
+`15:88:D3:C3:46:01:62:71:66:76:5C:05:64:20:79:04:BD:CB:40:34`
 
-## Android authorization implementation
+Add the **public Android client ID** as GitHub Actions repository secret
+`GOOGLE_OAUTH_CLIENT_ID`. Never commit any OAuth JSON, refresh token, credentials, private
+signing key, or Gmail/Drive data. A client ID identifies an app and is not an authorization
+grant or a client secret. Trusted CI injects this at compile time; fork builds receive no
+repository secret and must not be used for OAuth acceptance testing.
 
-- Uses `com.google.android.gms:play-services-auth:22.0.0` and `Identity.getAuthorizationClient(context)`.
-- The user explicitly taps **Settings → Gmail → Connect**; requested scope is **only** `https://www.googleapis.com/auth/gmail.readonly`.
-- Google Play services either returns an already-authorized result or a PendingIntent. NEXUS launches the PendingIntent via Android's Activity Result API, then checks the granted scopes **and** reads `users/me/profile` to confirm Gmail API access and the current account.
-- The UI shows a generic failure message if authorization is rejected/cancelled, Gmail API access cannot be verified, or Play services is unavailable.
-- Background Gmail tool calls may silently renew an already-connected token, but **never start consent UI**, expand scopes or run send/delete/modify actions.
-- **No offline/refresh-token flow and no persistent Google access token in this phase.** After app process restart, the user may need to tap Connect again. This avoids introducing a backend client secret or token storage before the backend architecture is designed.
-- Disconnect clears the local authorization state and legacy AppAuth secret keys; when a verified Gmail email is known it also attempts to revoke access through Google Play services. Revocation errors are reported; the app remains disconnected locally.
-- The obsolete custom-scheme AppAuth browser intent filters and code exchange are removed.
+Do not use Desktop OAuth clients, localhost redirects, or
+`com.nexus.agent:/oauth2redirect` in the new Android flow.
 
-This design intentionally differs from a server-side/offline integration. If future automation requires Gmail access while the app is closed, use an authenticated backend with a **separate Web OAuth Client**, server-owned token exchange, encrypted refresh-token storage, and appropriate OAuth review. Never embed a Web client secret into Android.
+## Enable only the relevant APIs
 
-## Validation / release gates
+In **Google Cloud → APIs & Services → Library**, enable each before testing:
 
-A successful CI build does **not** prove real Gmail authorization. On a physical Android device with Google Play services:
+- Gmail API
+- Google Drive API (also supports Drive-file discovery/creation of Docs, Sheets, Slides)
+- Google Calendar API
+- People API (Contacts)
+- Google Tasks API
 
-1. Verify that the APK certificate SHA-1 matches the Android OAuth client in Google Cloud.
-2. Verify Gmail API enabled, External test user and consent-screen/scopes.
-3. Install without losing local Room data; tap Connect, select the expected account and consent.
-4. Verify the **actual Gmail profile** and read-only message search result; confirm permission denial and cancellation do not connect.
-5. Test restart/reconnect, revoked scope, multiple accounts, lost network, expired access token, and Disconnect/revoke.
-6. Confirm no Gmail access token, refresh token, full mailbox contents or OAuth private material appears in logs, APK or Neon transcript mirror.
-7. Run Google OAuth restricted-scope verification/security assessment as applicable **before public distribution**.
+In **Google Auth Platform → Data Access**, add only the OAuth scopes for the services that
+will be tested, and register your account in **Audience → Test users** while in Testing.
+Restricted/sensitive Gmail and Drive scopes may require verification/security assessment
+for public distribution. Do not assume all Google services share an unrestricted consent.
 
-## References
+## What is wired in this branch
 
+| Capability | Required OAuth scope | Risk | Implemented action |
+| --- | --- | --- | --- |
+| Gmail search/read metadata | `gmail.readonly` | READ | Search messages |
+| Gmail send plain text | `gmail.send` | COMMIT | One message per approved call |
+| Drive search | `drive.readonly` | READ | Search file names and metadata |
+| Drive create Doc / Sheet / Slide | `drive.file` | COMMIT | Create empty app-managed file only |
+| Calendar | `calendar.events.readonly` | READ | List next 10 primary-calendar events |
+| Contacts | `contacts.readonly` | READ | Read up to 20 names/email addresses |
+| Tasks | `tasks.readonly` | READ | Read task-list names |
+
+**Important:** Drive `drive.file` does not grant write access to every existing file.
+Editing an existing document needs a selected/app-authorized file, a supported Docs/Sheets
+or Slides API operation and a separate approved tool (not implemented in this PR).
+The `drive.readonly` scope is broad and may require verification even when only file
+metadata is being returned. The restricted Gmail scopes are handled separately.
+
+The same Android OAuth client ID supports multiple services, but the **user explicitly
+authorizes each service/scope** from Settings. Only the requested scopes are granted and
+checked per tool. OAuth access tokens are not persisted by NEXUS; after app restart the
+user may need to authorize again. Consent cannot be triggered by an autonomous tool
+call. Gmail sending and Drive creation are protected by NEXUS one-shot approval receipts,
+not by Google OAuth consent alone. Email body, recipient and document name appear in the
+approval request; review before approving. No automatic resend after network timeout.
+
+## Future modular integrations (not yet operational)
+
+- Docs/Sheets/Slides **content editing** using approved Drive-selected file IDs
+- Calendar **create/update**; Tasks **create/update**
+- People API **contact creation** (optional high-risk)
+- Google Forms, Keep, Chat, Meet, Photos, YouTube and additional APIs where supported
+- App-specific Google Cloud APIs, only if required for business workflows
+
+These require new reviewed tools, narrower scopes, per-operation approval, API activation,
+possibly separate verification/billing, and device testing. "All Google services" is an
+extensibility goal, not a blanket permission or a promise that every Google API offers
+individual-account access.
+
+## Acceptance tests (required before main merge)
+
+1. Google Cloud Android client package and signing SHA-1 match APK; OAuth client injected.
+2. Connect Gmail read: authorize, account identity verified, search a known email.
+3. Grant Gmail send *separately*; review approval card with exact recipient/subject/body,
+   accept and verify the returned Gmail sent message ID. Deny and verify no message sent.
+4. Connect Drive read, search known files; grant Drive file separately, create a blank
+   document after explicit approval and confirm it appears in Drive.
+5. Connect Calendar/Contacts/Tasks individually and confirm read-only queries.
+6. Test denied scopes, wrong Google account, revoked grants, expired token,
+   offline/timeout, Google API disabled and app restart.
+7. Verify Gmail, Drive and Contacts content are not logged, persisted or mirrored to Neon
+   without separate explicit user consent. Confirm tool output remains untrusted data.
+8. Test physical Android app update without Room loss; independent scan of resulting APK.
+9. Review scope and COMMIT receipts for third-party/automatic tool selection.
+
+**Launch gate:** No live device acceptance, no public publication, no main merge from
+this feature branch without reviewed CI and owner approval.
+
+Official references:
 - https://developer.android.com/identity/authorization
-- https://developers.google.com/identity/protocols/oauth2/resources/loopback-migration
-- https://developers.google.com/android/reference/com/google/android/gms/auth/api/identity/AuthorizationClient
+- https://developers.google.com/identity/protocols/oauth2/scopes
 - https://developers.google.com/workspace/gmail/api/auth/scopes
-- https://developers.google.com/android/guides/releases
-
-## Known constraints
-
-- Gmail `gmail.readonly` is a Google **restricted** scope. Public release may require Google verification and additional independent security assessment depending on where data is stored/transmitted.
-- Current NEXUS Android → Neon direct JDBC remains a separate production blocker.
-- A Google Cloud OAuth Client ID alone does not prove correct consent screen, Gmail API enablement or live authorization.
