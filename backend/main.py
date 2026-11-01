@@ -15,6 +15,7 @@ Deploy anywhere (Cloud Run / VPS). Configure via environment:
   NEXUS_CONNECT_TIMEOUT   — DB connect timeout (default 10)
   NEXUS_RATE_LIMIT_PER_MIN — per-identity requests/min (default 120; 0 disables)
 """
+import logging
 import os
 
 import psycopg
@@ -75,6 +76,14 @@ CONNECT_TIMEOUT = _int_env("NEON_CONNECT_TIMEOUT", 10)
 
 IDENTITIES: dict[str, Identity] = load_identities()
 RATE_LIMITER = RateLimiter(per_min=_int_env("NEXUS_RATE_LIMIT_PER_MIN", 120))
+
+logger = logging.getLogger("nexus.backend")
+
+
+def _log_db_error(endpoint: str, code: str) -> None:
+    # Structured + non-sensitive: only the endpoint and the stable error code, never the raw DB
+    # error (whose message can contain hostnames / connection details).
+    logger.warning("db_error endpoint=%s code=%s", endpoint, code)
 
 
 def _require_auth(request: Request, cred: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> Identity:
@@ -158,7 +167,9 @@ def brain_search(req: SearchRequest) -> dict:
         merged = sorted(chunks + memory, key=lambda x: x["score"], reverse=True)[:top_k]
         return {"results": merged}
     except psycopg.Error as e:
-        raise HTTPException(status_code=502, detail=error_code(e))
+        code = error_code(e)
+        _log_db_error("/v1/brain/search", code)
+        raise HTTPException(status_code=502, detail=code)
 
 
 @app.post("/v1/memory/save", dependencies=[Depends(require_scope(WRITE_SCOPE))])
@@ -178,7 +189,9 @@ def memory_save(req: MemorySaveRequest) -> dict:
             conn.commit()
         return {"ok": True}
     except psycopg.Error as e:
-        raise HTTPException(status_code=502, detail=error_code(e))
+        code = error_code(e)
+        _log_db_error("/v1/memory/save", code)
+        raise HTTPException(status_code=502, detail=code)
 
 
 @app.get("/v1/memory/recent", dependencies=[Depends(require_scope(READ_SCOPE))])
@@ -190,7 +203,9 @@ def memory_recent(limit: int = Query(default=100, ge=1, le=RECALL_CAP)) -> dict:
                 items = [{"type": r[0], "content": r[1]} for r in cur.fetchall()]
         return {"items": items}
     except psycopg.Error as e:
-        raise HTTPException(status_code=502, detail=error_code(e))
+        code = error_code(e)
+        _log_db_error("/v1/memory/recent", code)
+        raise HTTPException(status_code=502, detail=code)
 
 
 @app.post("/v1/transcript/mirror", dependencies=[Depends(require_scope(WRITE_SCOPE))])
@@ -210,4 +225,6 @@ def transcript_mirror(req: MirrorRequest) -> dict:
             conn.commit()
         return {"ok": True}
     except psycopg.Error as e:
-        raise HTTPException(status_code=502, detail=error_code(e))
+        code = error_code(e)
+        _log_db_error("/v1/transcript/mirror", code)
+        raise HTTPException(status_code=502, detail=code)
