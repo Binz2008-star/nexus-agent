@@ -21,10 +21,20 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Google OAuth client id for the connectors (Gmail). Injected at CI build time; a client
-        // id is public (not a secret). Neon connection URLs are deliberately NOT baked in — they
-        // contain credentials and are user-supplied + stored encrypted at rest (Settings).
-        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"${System.getenv("GOOGLE_OAUTH_CLIENT_ID") ?: ""}\"")
+        // The Android OAuth client ID is PUBLIC app identity, not a secret. The known Android
+        // client registered for com.nexus.agent is the default; trusted CI may override it
+        // through GOOGLE_OAUTH_CLIENT_ID. Never silently ship a blank client ID again.
+        // IMPORTANT: Google also verifies the APK signing SHA-1 against this Android client.
+        // Neon credentials remain external and MUST NOT be embedded in the APK.
+        val knownAndroidOAuthClientId =
+            "854765234963-v7boul2j5mhco0dnqgguq99ock0a1u9n.apps.googleusercontent.com"
+        val googleOAuthClientId = System.getenv("GOOGLE_OAUTH_CLIENT_ID")
+            ?.trim()?.takeIf { it.isNotBlank() } ?: knownAndroidOAuthClientId
+        require(Regex("^[0-9]+-[A-Za-z0-9_-]+\\.apps\\.googleusercontent\\.com$")
+            .matches(googleOAuthClientId)) {
+            "Invalid Google Android OAuth client ID: check the build configuration"
+        }
+        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"$googleOAuthClientId\"")
 
         // Public PostHog project token (not a secret), supplied by CI/local environment.
         // Absent configuration keeps telemetry completely disabled.
