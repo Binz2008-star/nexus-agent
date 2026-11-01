@@ -24,6 +24,15 @@ class EmailIntentRouterTest {
         }
     }
 
+    @Test fun readRequestsExtractRealGmailQueryOrDefaultToInbox() {
+        assertEquals("in:inbox", GmailQueryParser.fromReadRequest("check my email"))
+        assertEquals("in:inbox", GmailQueryParser.fromReadRequest("read Gmail"))
+        assertEquals("in:inbox", GmailQueryParser.fromReadRequest("اعرض آخر رسائلي"))
+        assertEquals("in:inbox", GmailQueryParser.fromReadRequest("اقرأ رسائلي"))
+        assertEquals("invoice", GmailQueryParser.fromReadRequest("search my inbox for invoice"))
+        assertEquals("فاتورة", GmailQueryParser.fromReadRequest("ابحث في بريدي عن فاتورة"))
+    }
+
     @Test fun sendAndDraftCannotBeMisroutedToSearch() {
         listOf(
             "send email to abc@example.com",
