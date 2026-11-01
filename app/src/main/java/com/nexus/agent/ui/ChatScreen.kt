@@ -2,6 +2,10 @@ package com.nexus.agent.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.nexus.agent.data.work.ConversationIntegrityScheduler
+import com.nexus.agent.data.work.ConversationIntegrityWorker
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -850,53 +854,84 @@ private fun HistoryDialog(
     onDelete: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     var pendingDelete by remember { mutableStateOf<ConversationEntity?>(null) }
+    // WorkManager's own Room database preserves the result even when the app process dies.
+    val auditFlow = remember(context) {
+        WorkManager.getInstance(context.applicationContext).getWorkInfosForUniqueWorkFlow(
+            ConversationIntegrityScheduler.UNIQUE_WORK
+        )
+    }
+    val auditInfos by auditFlow.collectAsState(initial = emptyList())
+    val audit = auditInfos.firstOrNull { !it.state.isFinished } ?: auditInfos.firstOrNull()
+    val auditStatus = when (audit?.state) {
+        WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> "الفحص في قائمة الانتظار"
+        WorkInfo.State.RUNNING -> "جارٍ فحص البيانات المحلية"
+        WorkInfo.State.SUCCEEDED -> {
+            val chats = audit.outputData.getInt(ConversationIntegrityWorker.KEY_CHAT_COUNT, 0)
+            val messages = audit.outputData.getInt(ConversationIntegrityWorker.KEY_MESSAGE_COUNT, 0)
+            "الفحص سليم: $chats محادثة، $messages رسالة"
+        }
+        WorkInfo.State.FAILED -> "تعذر تأكيد سلامة السجل — البيانات لم تُمسح"
+        WorkInfo.State.CANCELLED -> "تم إلغاء الفحص"
+        null -> "لم يُجرَ فحص حفظ محلي بعد"
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Chat history · سجل المحادثات") },
         text = {
-            if (conversations.isEmpty()) {
-                Text("No saved conversations yet.")
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(conversations, key = { it.id }) { conv ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onSelect(conv.id) }
-                                .padding(horizontal = 8.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    conv.title.ifBlank { "Chat ${conv.id}" },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = if (conv.id == currentId) FontWeight.Bold else null
-                                )
-                                Text(
-                                    formatTimestamp(conv.updatedAt),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(onClick = { pendingDelete = conv }) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = "Delete",
-                                    modifier = Modifier.size(18.dp)
-                                )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    auditStatus,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (conversations.isEmpty()) {
+                    Text("No saved conversations yet.")
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(conversations, key = { it.id }) { conv ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onSelect(conv.id) }
+                                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        conv.title.ifBlank { "Chat ${conv.id}" },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (conv.id == currentId) FontWeight.Bold else null
+                                    )
+                                    Text(
+                                        formatTimestamp(conv.updatedAt),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                IconButton(onClick = { pendingDelete = conv }) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Delete",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        dismissButton = {}
+        confirmButton = { TextButton(onClick = onDismiss) { Text("إغلاق") } },
+        dismissButton = {
+            TextButton(onClick = { ConversationIntegrityScheduler.enqueueReadOnlyAudit(context) }) {
+                Text("فحص حفظ المحادثات")
+            }
+        }
     )
 
     pendingDelete?.let { conv ->
