@@ -870,7 +870,7 @@ private fun HistoryDialog(
         WorkInfo.State.SUCCEEDED -> {
             val chats = audit.outputData.getInt(ConversationIntegrityWorker.KEY_CHAT_COUNT, 0)
             val messages = audit.outputData.getInt(ConversationIntegrityWorker.KEY_MESSAGE_COUNT, 0)
-            "الفحص سليم: $chats محادثة، $messages رسالة"
+            "تم عدّ $chats محادثة و$messages رسالة دون سجلات يتيمة"
         }
         WorkInfo.State.FAILED -> "تعذر تأكيد سلامة السجل — البيانات لم تُمسح"
         WorkInfo.State.CANCELLED -> "تم إلغاء الفحص"
