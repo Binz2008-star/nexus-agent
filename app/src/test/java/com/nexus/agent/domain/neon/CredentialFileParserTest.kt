@@ -68,4 +68,38 @@ class CredentialFileParserTest {
         val creds = CredentialFileParser.parse("hello\nworld\n")
         assertTrue(creds.isEmpty)
     }
+
+    @Test
+    fun rejectsOversizedKey() {
+        val longKey = "sk-" + "a".repeat(CredentialFileParser.MAX_KEY_LENGTH)
+        assertNull(CredentialFileParser.parse(longKey).deepSeekKey)
+    }
+
+    @Test
+    fun acceptsKeyAtMaxLength() {
+        val key = "sk-" + "b".repeat(CredentialFileParser.MAX_KEY_LENGTH - 3)
+        assertEquals(key, CredentialFileParser.parse(key).deepSeekKey)
+    }
+
+    @Test
+    fun rejectsMalformedUrlMissingSslMode() {
+        val creds = CredentialFileParser.parse(
+            "jdbc:postgresql://read-host/db?user=nexus_reader&password=x"
+        )
+        assertNull(creds.readUrl)
+    }
+
+    @Test
+    fun rejectsInsecureSslMode() {
+        val creds = CredentialFileParser.parse(
+            "jdbc:postgresql://read-host/db?sslmode=disable&user=nexus_reader&password=x"
+        )
+        assertNull(creds.readUrl)
+    }
+
+    @Test
+    fun acceptsSecureSslMode() {
+        val url = "jdbc:postgresql://read-host/db?sslmode=require&user=nexus_reader&password=x"
+        assertEquals(url, CredentialFileParser.parse(url).readUrl)
+    }
 }

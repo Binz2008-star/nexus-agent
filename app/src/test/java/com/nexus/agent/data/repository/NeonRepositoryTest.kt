@@ -137,4 +137,31 @@ class NeonRepositoryTest {
         // No write URL → saveConversationMessage fails → mirror must still not throw.
         repo(FakeJdbc(), write = { null }).mirror("sess-1", "user", "hi")
     }
+
+    @Test
+    fun recallMemorySelectsRelevantAndBounded() = runTest {
+        val jdbc = FakeJdbc(
+            mapOf(
+                SecondBrainSql.SELECT_MEMORY_SQL to listOf(
+                    listOf("fact", "The user's favorite color is blue"),
+                    listOf("fact", "The user lives in Dubai"),
+                    listOf("fact", "The user's favorite color is green")
+                )
+            )
+        )
+        val items = repo(jdbc).recallMemory("favorite color", 2).getOrThrow()
+        assertEquals(2, items.size)
+        assertTrue(items.all { it.content.contains("favorite color", ignoreCase = true) })
+    }
+
+    @Test
+    fun recallMemoryWithoutWriteUrlFails() = runTest {
+        assertTrue(repo(FakeJdbc(), write = { null }).recallMemory("q").isFailure)
+    }
+
+    @Test
+    fun recallMemoryJdbcErrorReturnsFailureNotThrow() = runTest {
+        val jdbc = FakeJdbc().apply { throwOnQuery = RuntimeException("Connection refused") }
+        assertTrue(repo(jdbc).recallMemory("q").isFailure)
+    }
 }

@@ -39,6 +39,7 @@ class ChatRepositoryTest {
     private class FakeClient(private val replies: List<Result<String>>) : ChatCompletionClient {
         var calls = 0
         var lastHistory: List<ChatMessage> = emptyList()
+        var lastToolsHistory: List<ChatMessage> = emptyList()
         override suspend fun complete(history: List<ChatMessage>, model: String): Result<String> {
             val r = replies.getOrElse(calls) { Result.failure(Exception("no more")) }
             calls++
@@ -59,6 +60,7 @@ class ChatRepositoryTest {
             model: String,
             tools: List<kotlinx.serialization.json.JsonObject>
         ): Result<com.nexus.agent.data.network.CompletionResult> {
+            lastToolsHistory = history
             val r = complete(history, model)
             return if (r.isSuccess) Result.success(com.nexus.agent.data.network.CompletionResult.Answer(r.getOrThrow()))
             else Result.failure(r.exceptionOrNull() ?: Exception("no more"))
@@ -178,5 +180,35 @@ class ChatRepositoryTest {
         assertEquals("custom prompt", history[2].text)
         assertEquals("respond in Gulf Arabic with a friendly tone", history[3].text)
         assertEquals(ChatMessage.Role.USER, history[4].role)
+    }
+
+    @Test
+    fun completeWithToolsIncludesSystemIdentityAndPersonaPrompts() = runBlocking {
+        val dao = FakeDao()
+        val client = FakeClient(listOf(Result.success("ok")))
+        val r = ChatRepository(
+            dao, FakeConversationDao(), client, { "key" }, { "custom prompt" },
+            personaProvider = { "persona instruction" }
+        )
+        r.completeWithTools(listOf(ChatMessage(ChatMessage.Role.USER, "hi")), "deepseek-flash", emptyList())
+        val history = client.lastToolsHistory
+        assertEquals(ChatMessage.Role.SYSTEM, history[0].role)
+        assertTrue(history[0].text.contains("Do not assume"))
+        assertEquals(ChatMessage.Role.SYSTEM, history[1].role)
+        assertTrue(history[1].text.contains("NEXUS Agent"))
+        assertEquals("custom prompt", history[2].text)
+        assertEquals("persona instruction", history[3].text)
+        assertEquals(ChatMessage.Role.USER, history[4].role)
+    }
+
+    @Test
+    fun conversationHistoryReturnsRawMessagesWithoutSystemPrompts() = runBlocking {
+        val dao = FakeDao()
+        dao.insert(MessageEntity.fromDomain(ChatMessage(ChatMessage.Role.USER, "hi"), 1L))
+        val r = repo(dao, FakeClient(emptyList()))
+        val history = r.conversationHistory(1L)
+        assertEquals(1, history.size)
+        assertEquals(ChatMessage.Role.USER, history[0].role)
+        assertEquals("hi", history[0].text)
     }
 }

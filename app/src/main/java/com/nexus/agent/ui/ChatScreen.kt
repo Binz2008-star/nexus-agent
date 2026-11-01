@@ -104,6 +104,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.InputStream
+
+/** Upper bound on the credential file size accepted by the import parser (64 KiB). */
+private const val MAX_CREDENTIAL_FILE_BYTES = 64 * 1024
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -275,7 +279,9 @@ fun ChatScreen(
             scope.launch {
                 val content = withContext(Dispatchers.IO) {
                     try {
-                        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            readBounded(input, MAX_CREDENTIAL_FILE_BYTES)
+                        }
                     } catch (e: Exception) {
                         null
                     }
@@ -476,6 +482,22 @@ fun ChatScreen(
             onReject = { viewModel.rejectPending() }
         )
     }
+}
+
+/**
+ * Reads at most [maxBytes] from [input] and returns the decoded UTF-8 string, or null when the
+ * stream is larger than the cap (rejects oversized credential files instead of slurping them).
+ */
+private fun readBounded(input: InputStream, maxBytes: Int): String? {
+    val buffer = ByteArray(maxBytes + 1)
+    var total = 0
+    while (total < buffer.size) {
+        val read = input.read(buffer, total, buffer.size - total)
+        if (read <= 0) break
+        total += read
+    }
+    if (total > maxBytes) return null
+    return String(buffer, 0, total, Charsets.UTF_8)
 }
 
 private suspend fun saveNeonUrl(

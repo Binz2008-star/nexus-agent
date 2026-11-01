@@ -31,10 +31,29 @@ jobs:
       - name: Run unit tests
         run: ./gradlew test --no-daemon
 
+      - name: Decode test signing keystore
+        shell: bash
+        run: |
+          echo "${{ secrets.TEST_SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > "${{ runner.temp }}/nexus-test-signing.p12"
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          TEST_SIGNING_KEYSTORE: ${{ runner.temp }}/nexus-test-signing.p12
+          TEST_SIGNING_KEYSTORE_PASSWORD: ${{ secrets.TEST_SIGNING_KEYSTORE_PASSWORD }}
+          TEST_SIGNING_KEY_ALIAS: nexustest
+          TEST_SIGNING_KEY_PASSWORD: ${{ secrets.TEST_SIGNING_KEYSTORE_PASSWORD }}
+
+      - name: Print APK signing certificate
+        shell: bash
+        run: |
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner 2>/dev/null | sort | tail -1)"
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk
+          else
+            echo "apksigner not found; skipping cert print"
+          fi
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

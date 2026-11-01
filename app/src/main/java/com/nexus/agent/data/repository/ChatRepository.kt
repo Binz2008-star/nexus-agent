@@ -128,13 +128,14 @@ class ChatRepository(
     }
 
     /**
-     * Builds the full message list for a completion (system prompts + ordered conversation
-     * history), exposed for the model-driven tool loop. Runs on [Dispatchers.IO].
+     * Raw, ordered conversation history for a conversation (user/assistant messages only — no
+     * system prompts). System prompts are added uniformly by the completion methods, so every
+     * path — normal chat and model-driven tool execution — carries the exact same instructions.
+     * Runs on [Dispatchers.IO].
      */
-    suspend fun buildHistory(conversationId: Long, context: String? = null): List<ChatMessage> =
+    suspend fun conversationHistory(conversationId: Long): List<ChatMessage> =
         withContext(Dispatchers.IO) {
-            val history = messageDao.getByConversationOnce(conversationId).map { it.toDomain() }
-            buildHistoryWithSystem(history, context)
+            messageDao.getByConversationOnce(conversationId).map { it.toDomain() }
         }
 
     /**
@@ -236,13 +237,16 @@ class ChatRepository(
     /**
      * Tool-aware (function-calling) completion. Runs on [Dispatchers.IO]. The model either
      * answers directly or requests tool calls; the caller (ToolLoop) validates + executes.
+     *
+     * Context construction is unified with regular completions: the same system, identity, and
+     * persona instructions are injected here, so model-driven tool execution cannot lose them.
      */
     suspend fun completeWithTools(
         history: List<ChatMessage>,
         model: String,
         tools: List<JsonObject>
     ): Result<CompletionResult> = withContext(Dispatchers.IO) {
-        client.completeWithTools(history, model, tools)
+        client.completeWithTools(buildHistoryWithSystem(history), model, tools)
     }
 
     private suspend fun buildHistoryWithSystem(
