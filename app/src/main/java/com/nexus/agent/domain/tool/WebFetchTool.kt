@@ -28,6 +28,7 @@ class WebFetchTool(
             ?.takeIf { it.isString }
             ?.content
             ?.trim()
+            ?.takeIf { it.isNotEmpty() }
             ?: return ToolResult.Failure("empty")
 
         return fetch(url).fold(

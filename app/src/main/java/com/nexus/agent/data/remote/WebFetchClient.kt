@@ -81,9 +81,16 @@ class WebFetchClient(
 
     /** Reads at most [maxBytes] from [body]; returns null if the body is larger. */
     private fun readBounded(body: ResponseBody, maxBytes: Int): String? {
-        val bytes = body.source().readByteArray((maxBytes + 1).toLong())
-        if (bytes.size > maxBytes) return null
-        return String(bytes, Charsets.UTF_8)
+        val source = body.source()
+        val buffer = ByteArray(maxBytes + 1)
+        var total = 0
+        while (total < buffer.size) {
+            val read = source.read(buffer, total, buffer.size - total)
+            if (read <= 0) break
+            total += read
+        }
+        if (total > maxBytes) return null
+        return String(buffer, 0, total, Charsets.UTF_8)
     }
 
     companion object {
