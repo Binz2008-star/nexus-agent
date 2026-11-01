@@ -126,3 +126,25 @@ jobs:
             app/build/outputs/androidTest-results/connected/
           if-no-files-found: ignore
           retention-days: 14
+
+  # Neon backend (Python/FastAPI) — unit + endpoint tests. Independent of the Android build.
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run backend tests
+        run: |
+          cd backend
+          pytest -q
