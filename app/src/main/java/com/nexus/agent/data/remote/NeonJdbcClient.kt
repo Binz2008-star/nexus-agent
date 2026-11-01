@@ -85,10 +85,12 @@ class NeonJdbcClient : NeonJdbc {
         /** Appends connect/socket timeouts so a dead host can't hang the request. */
         private fun ensureTimeouts(url: String): String {
             var result = url
-            if (!result.contains("connectTimeout")) {
+            // Match the param *name* only — a password/db value containing the literal substring
+            // "connectTimeout"/"socketTimeout" must not suppress the timeout.
+            if (!Regex("([?&])connectTimeout=", RegexOption.IGNORE_CASE).containsMatchIn(result)) {
                 result += if (result.contains("?")) "&connectTimeout=15" else "?connectTimeout=15"
             }
-            if (!result.contains("socketTimeout")) {
+            if (!Regex("([?&])socketTimeout=", RegexOption.IGNORE_CASE).containsMatchIn(result)) {
                 result += "&socketTimeout=30"
             }
             return result
