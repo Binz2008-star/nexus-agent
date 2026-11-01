@@ -1,8 +1,22 @@
 # Neon Backend Migration Plan (secure architecture)
 
-**Status:** proposal — no code, no production-credential change, no user-data migration yet.
+**Status:** Phase A implemented (backend + Android HTTP client behind a flag, off by default).
+Phases B–E pending. No production-credential change, no user-data migration yet.
 **Goal:** remove direct Android→Neon PostgreSQL access so database credentials and privileged
 SQL never live on the device.
+
+## Implementation status (2026-11-01)
+
+- ✅ **Backend** (`backend/main.py` + `backend/sql_queries.py`): the four endpoints below, hardened
+  (constant-time bearer, connect timeout, input caps), 21 pytest tests, `backend-tests` CI job.
+  Note: endpoint is `/v1/memory/recent` (not `/v1/memory/recall`); `recallMemory` ranking stays
+  on-device (`MemoryRecall`), so the backend only needs the bounded recent-fetch.
+- ✅ **Android** `NeonHttpClient` (+ `NeonBackendClient` interface) returns the same domain types
+  as the JDBC path. `NeonRepository` routes to HTTP when `use_neon_backend` is on and a client is
+  configured — JDBC stays the default. Settings UI (URL + key + toggle). No Neon credential or
+  backend token is compiled into the APK.
+- ⏳ **Parity vs staging** and **Phase B/C/D/E** require Neon access + a deployed backend (owner).
+
 
 ## 1. Current state (risk)
 
