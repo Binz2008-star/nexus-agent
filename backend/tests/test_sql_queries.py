@@ -54,3 +54,16 @@ def test_sql_strings_are_parameterized():
     assert "%s" in INSERT_MEMORY_SQL
     assert "%s" in INSERT_CONVERSATION_SQL
     assert SEARCH_MEMORY_SQL.count("%s") == 3
+
+
+def test_parity_with_android_second_brain_sql():
+    # These exact values are also asserted in app/src/test/.../SecondBrainSqlTest.kt. Keep them in
+    # sync: the backend and the Android JDBC path must render byte-identical SQL inputs, or the
+    # HTTPS migration would silently change search/memory behavior.
+    assert ilike_pattern("hello") == "%hello%"
+    assert ilike_pattern("100%") == "%100\\%%"
+    assert ilike_pattern("a_b") == "%a\\_b%"
+    assert tags_literal([]) == "{}"
+    assert tags_literal(["lang"]) == '{"lang"}'
+    assert tags_literal(["a", "b c"]) == '{"a","b c"}'
+
