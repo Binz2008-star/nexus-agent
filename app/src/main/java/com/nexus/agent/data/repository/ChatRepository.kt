@@ -107,7 +107,11 @@ class ChatRepository(
     private fun mirrorMessage(conversationId: Long, role: String, content: String) {
         val target = mirror ?: return
         mirrorScope.launch {
-            runCatching { target.mirror(conversationId.toString(), role, content) }
+            try {
+                target.mirror(conversationId.toString(), role, content)
+            } catch (_: Exception) {
+                // Best-effort: a mirror failure must never break the chat flow.
+            }
         }
     }
 

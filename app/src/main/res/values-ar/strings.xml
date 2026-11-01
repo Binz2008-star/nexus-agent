@@ -65,4 +65,21 @@
     <string name="import_from_file">استيراد من ملف</string>
     <string name="import_ok">تم الاستيراد</string>
     <string name="import_failed">تعذّرت قراءة ملف بيانات الدخول</string>
+    <string name="ai_engine">محرّك الذكاء</string>
+    <string name="engine_deepseek">DeepSeek</string>
+    <string name="engine_hermes">Hermes (تجريبي)</string>
+    <string name="hermes_section">وكيل Hermes (تجريبي)</string>
+    <string name="hermes_endpoint">نقطة Hermes (https://host:port)</string>
+    <string name="hermes_api_key">مفتاح خادم Hermes API</string>
+    <string name="verify">تحقّق</string>
+    <string name="hermes_state_ready">متصل ومُوثَّق</string>
+    <string name="hermes_state_verifying">جارٍ التحقق…</string>
+    <string name="hermes_state_unconfigured">غير مُهيَّأ</string>
+    <string name="hermes_state_error">خطأ في الاتصال</string>
+    <string name="hermes_approval_title">الموافقة على إجراء Hermes</string>
+    <string name="hermes_https_required">يجب أن تستخدم نقطة Hermes بروتوكول HTTPS</string>
+    <string name="hermes_endpoint_invalid">نقطة Hermes غير صالحة</string>
+    <string name="hermes_runs_unsupported">خادم Hermes لا يدعم Runs API</string>
+    <string name="hermes_unhealthy">خادم Hermes غير سليم</string>
+    <string name="hermes_unavailable">محرّك Hermes غير متاح</string>
 </resources>

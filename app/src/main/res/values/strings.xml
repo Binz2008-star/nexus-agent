@@ -65,4 +65,21 @@
     <string name="import_from_file">Import from file</string>
     <string name="import_ok">Imported</string>
     <string name="import_failed">Could not read credentials file</string>
+    <string name="ai_engine">AI engine</string>
+    <string name="engine_deepseek">DeepSeek</string>
+    <string name="engine_hermes">Hermes (Beta)</string>
+    <string name="hermes_section">Hermes Agent (Beta)</string>
+    <string name="hermes_endpoint">Hermes endpoint (https://host:port)</string>
+    <string name="hermes_api_key">Hermes API server key</string>
+    <string name="verify">Verify</string>
+    <string name="hermes_state_ready">Connected &amp; verified</string>
+    <string name="hermes_state_verifying">Verifying…</string>
+    <string name="hermes_state_unconfigured">Not configured</string>
+    <string name="hermes_state_error">Connection error</string>
+    <string name="hermes_approval_title">Approve Hermes action</string>
+    <string name="hermes_https_required">Hermes endpoint must use HTTPS</string>
+    <string name="hermes_endpoint_invalid">Invalid Hermes endpoint</string>
+    <string name="hermes_runs_unsupported">Hermes server does not support the Runs API</string>
+    <string name="hermes_unhealthy">Hermes server is unhealthy</string>
+    <string name="hermes_unavailable">Hermes engine not available</string>
 </resources>
