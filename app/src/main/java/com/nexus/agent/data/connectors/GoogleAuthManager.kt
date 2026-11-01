@@ -91,11 +91,11 @@ class GoogleAuthManager(
 
         val current = generation.incrementAndGet()
         awaitingConsent = false
-        requestedScopes = scopes.distinct()
+        requestedScopes = (scopes + _grantedScopes.value).distinct()
         _error.value = null
         scope.launch {
             try {
-                val result = client.authorize(createRequest(requestedScopes, _email.value)).await()
+                val result = client.authorize(createRequest(requestedScopes.toList(), _email.value)).await()
                 if (generation.get() != current) return@launch
                 if (result.hasResolution()) {
                     val pending = result.pendingIntent
@@ -167,12 +167,14 @@ class GoogleAuthManager(
         }
         // Gmail profile gives a verified account for Gmail grants; Drive about provides
         // account email for Drive-only authorization. No personal data is persisted.
-        val email = if (result.grantedScopes.contains(GmailConnector.GMAIL_READONLY_SCOPE)) {
+        val email = result.toGoogleSignInAccount()?.email ?: if (
+            result.grantedScopes.contains(GmailConnector.GMAIL_READONLY_SCOPE)
+        ) {
             fetchProfileEmail(token, "https://gmail.googleapis.com/gmail/v1/users/me/profile", "emailAddress")
-        } else {
+        } else if (result.grantedScopes.any { it in setOf(GoogleScopePolicy.DRIVE_READ, GoogleScopePolicy.DRIVE_FILE) }) {
             fetchProfileEmail(token,
                 "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)", "drive")
-        }
+        } else null
         if (generation.get() != current) return
         if (email == null || (_email.value != null && _email.value != email)) {
             _error.value = "Google account identity verification failed or account changed"
@@ -285,7 +287,13 @@ object GoogleScopePolicy {
     const val GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
     const val DRIVE_READ = "https://www.googleapis.com/auth/drive.readonly"
     const val DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
-    val ALLOWED = listOf(GMAIL_READ, GMAIL_SEND, DRIVE_READ, DRIVE_FILE)
+    const val CALENDAR_READ = "https://www.googleapis.com/auth/calendar.events.readonly"
+    const val CALENDAR_EVENTS = "https://www.googleapis.com/auth/calendar.events"
+    const val CONTACTS_READ = "https://www.googleapis.com/auth/contacts.readonly"
+    const val TASKS_READ = "https://www.googleapis.com/auth/tasks.readonly"
+    const val TASKS_WRITE = "https://www.googleapis.com/auth/tasks"
+    val ALLOWED = listOf(GMAIL_READ, GMAIL_SEND, DRIVE_READ, DRIVE_FILE,
+        CALENDAR_READ, CALENDAR_EVENTS, CONTACTS_READ, TASKS_READ, TASKS_WRITE)
 
     fun isAllowedRequest(scopes: List<String>): Boolean =
         scopes.isNotEmpty() && scopes.all { it in ALLOWED }
