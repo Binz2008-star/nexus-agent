@@ -7,15 +7,25 @@ SQL never live on the device.
 
 ## Implementation status (2026-11-01)
 
-- ✅ **Backend** (`backend/main.py` + `backend/sql_queries.py`): the four endpoints below, hardened
-  (constant-time bearer, connect timeout, input caps), 21 pytest tests, `backend-tests` CI job.
+- ✅ **Backend** (`backend/main.py` + `backend/sql_queries.py` + `backend/auth.py`): the four
+  endpoints below, hardened: device identity (`NEXUS_KEYS` → name + scopes) + scoped `read`/`write`
+  authorization + per-identity rate limiting + JSON-lines audit log, constant-time bearer, connect
+  timeout, input caps, stable error codes. 34 unit tests, `backend-tests` CI job.
   Note: endpoint is `/v1/memory/recent` (not `/v1/memory/recall`); `recallMemory` ranking stays
   on-device (`MemoryRecall`), so the backend only needs the bounded recent-fetch.
+- ✅ **Reproducible Postgres + parity**: `docker-compose.test.yml` + `db/init/*.sql` (two DBs,
+  `pg_trgm`, least-privilege roles, fixtures); 9 integration tests (`pytest -m integration`) cover
+  search/memory/mirror parity (score tolerance + deterministic ordering), permission failures, and
+  error recovery; `test_sql_parity.py` reads `SecondBrainSql.kt` directly. CI job
+  `backend-integration-tests`.
+- ✅ **Cloud Run deploy prep** (no billing): `Dockerfile` (non-root), `cloudrun/service.yaml`
+  (scale-to-zero, Secret Manager), `cloudrun/README.md` (secrets/deploy/rollback).
 - ✅ **Android** `NeonHttpClient` (+ `NeonBackendClient` interface) returns the same domain types
   as the JDBC path. `NeonRepository` routes to HTTP when `use_neon_backend` is on and a client is
   configured — JDBC stays the default. Settings UI (URL + key + toggle). No Neon credential or
   backend token is compiled into the APK.
-- ⏳ **Parity vs staging** and **Phase B/C/D/E** require Neon access + a deployed backend (owner).
+- ⏳ **Live parity vs Neon staging** and **Phase B/C/D/E** require a Neon staging branch + a
+  deployed backend (owner).
 
 
 ## 1. Current state (risk)
