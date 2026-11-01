@@ -10,6 +10,7 @@ import com.nexus.agent.domain.tool.ToolOrchestrator
 import com.nexus.agent.domain.tool.ToolResult
 import com.nexus.agent.domain.tool.ToolSource
 import kotlinx.serialization.json.JsonObject
+import kotlinx.coroutines.CancellationException
 
 /** What the model proposed: either a direct answer, or one or more tool calls. */
 sealed interface ToolProposal {
@@ -32,7 +33,11 @@ class ToolLoop(
 ) {
 
     sealed interface Outcome {
-        data class Answered(val content: String, val sources: List<ToolSource>) : Outcome
+        data class Answered(
+            val content: String,
+            val sources: List<ToolSource>,
+            val evidence: List<ActionEvidence> = emptyList()
+        ) : Outcome
         data class Failed(val reason: String) : Outcome
     }
 
@@ -41,22 +46,63 @@ class ToolLoop(
         model: String,
         schemas: List<JsonObject>,
         propose: suspend (List<ChatMessage>, String, List<JsonObject>) -> Result<ToolProposal>,
-        grantedScopes: Set<String> = emptySet()
+        grantedScopes: Set<String> = emptySet(),
+        taskContract: AgentTaskContract = AgentTaskContract(),
+        independentlyVerify: suspend (ToolCall, ToolResult.Success) -> Boolean = { _, _ -> false }
     ): Outcome {
         val current = history.toMutableList()
         val sources = mutableListOf<ToolSource>()
+        val evidence = mutableListOf<ActionEvidence>()
+        var successfulActions = 0
+        var verifiedActions = 0
+        var attemptedActions = 0
+        var failedActions = 0
 
         repeat(maxRounds) {
             val proposal = propose(current, model, schemas).getOrNull()
                 ?: return Outcome.Failed("completion_failed")
 
             when (proposal) {
-                is ToolProposal.Answer -> return Outcome.Answered(proposal.content, sources)
+                is ToolProposal.Answer -> {
+                    if (taskContract.actionRequired && successfulActions == 0) {
+                        failedActions++
+                        if (failedActions >= taskContract.maxFailedActions) {
+                            return Outcome.Failed("failure_budget_exceeded")
+                        }
+                        current += ChatMessage(
+                            ChatMessage.Role.SYSTEM,
+                            "Trusted caller requires a successful tool execution before answering. " +
+                                "A statement or plan is not execution evidence. Do not claim completion."
+                        )
+                        return@repeat
+                    }
+                    if (taskContract.independentVerificationRequired && verifiedActions == 0) {
+                        failedActions++
+                        if (failedActions >= taskContract.maxFailedActions) {
+                            return Outcome.Failed("failure_budget_exceeded")
+                        }
+                        current += ChatMessage(
+                            ChatMessage.Role.SYSTEM,
+                            "No independently verified postcondition exists for this task. " +
+                                "Tool success alone is not proof of task completion."
+                        )
+                        return@repeat
+                    }
+                    return Outcome.Answered(proposal.content, sources.toList(), evidence.toList())
+                }
                 is ToolProposal.Calls -> {
                     val notes = mutableListOf<String>()
+                    if (proposal.calls.isEmpty() && taskContract.actionRequired) {
+                        failedActions++
+                        notes += "No tool action proposed; required action remains unmet"
+                    }
                     for (call in proposal.calls) {
+                        if (taskContract.actionRequired && attemptedActions >= taskContract.maxActions) {
+                            return Outcome.Failed("action_budget_exceeded")
+                        }
+                        attemptedActions++
                         val input = ToolCallParser.toJsonObject(call)
-                        // COMMIT-level tools need an approval receipt bound to this exact call.
+                        // Approval and scope policy stay with the original orchestrator.
                         var receipt: ApprovalReceipt? = null
                         if (orchestrator.riskLevelOf(call.name) == RiskLevel.COMMIT) {
                             val request = ApprovalRequest(
@@ -66,7 +112,13 @@ class ToolLoop(
                             )
                             receipt = requestApproval(request)
                             if (receipt == null) {
+                                evidence += ActionEvidence(call.name, ActionEvidenceStatus.BLOCKED)
                                 notes += "Tool ${call.name} requires approval (not granted)"
+                                if (taskContract.actionRequired) failedActions++
+                                if (taskContract.actionRequired &&
+                                    failedActions >= taskContract.maxFailedActions) {
+                                    return Outcome.Failed("failure_budget_exceeded")
+                                }
                                 continue
                             }
                         }
@@ -76,15 +128,50 @@ class ToolLoop(
                         )
                         when (result) {
                             is ToolResult.Success -> {
+                                successfulActions++
                                 sources += result.sources
-                                notes += "Tool ${call.name}:\n${result.content}"
+                                var verified = false
+                                if (taskContract.independentVerificationRequired) {
+                                    verified = try {
+                                        independentlyVerify(call, result)
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (_: Exception) {
+                                        false
+                                    }
+                                }
+                                if (verified) verifiedActions++
+                                evidence += ActionEvidence(call.name, if (verified) {
+                                    ActionEvidenceStatus.VERIFIED
+                                } else ActionEvidenceStatus.EXECUTED)
+                                notes += "Tool ${call.name}:\\n${result.content}"
+                                if (taskContract.independentVerificationRequired && !verified) {
+                                    notes += "Tool ${call.name}: independent postcondition NOT verified"
+                                    failedActions++
+                                }
                             }
-                            is ToolResult.Failure -> notes += "Tool ${call.name} failed: ${result.errorCode}"
-                            is ToolResult.Blocked -> notes += "Tool ${call.name} blocked: ${result.reason}"
+                            is ToolResult.Failure -> {
+                                evidence += ActionEvidence(call.name, ActionEvidenceStatus.FAILED)
+                                notes += "Tool ${call.name} failed: ${result.errorCode}"
+                                if (taskContract.actionRequired) failedActions++
+                            }
+                            is ToolResult.Blocked -> {
+                                evidence += ActionEvidence(call.name, ActionEvidenceStatus.BLOCKED)
+                                notes += "Tool ${call.name} blocked: ${result.reason}"
+                                if (taskContract.actionRequired) failedActions++
+                            }
+                        }
+                        if (taskContract.actionRequired &&
+                            failedActions >= taskContract.maxFailedActions) {
+                            return Outcome.Failed("failure_budget_exceeded")
                         }
                     }
                     if (notes.isNotEmpty()) {
                         current += ChatMessage(ChatMessage.Role.SYSTEM, fenceToolResults(notes))
+                    }
+                    if (taskContract.actionRequired &&
+                        failedActions >= taskContract.maxFailedActions) {
+                        return Outcome.Failed("failure_budget_exceeded")
                     }
                 }
             }
