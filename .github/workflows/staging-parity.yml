@@ -1,0 +1,41 @@
+name: staging-parity
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'backend/**'
+
+# Least-privilege: only repo contents read; the Neon API key is read via secrets.NEON.
+permissions:
+  contents: read
+
+jobs:
+  staging-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      # Live parity against Neon staging branches (never production). The connection strings are
+      # fetched at run time via neonctl + secrets.NEON; they are never committed or logged (GitHub
+      # masks the password-bearing strings in logs).
+      - name: Run staging parity
+        env:
+          NEON_API_KEY: ${{ secrets.NEON }}
+          NEON_ORG_ID: org-wandering-dew-97098159
+          READ_PROJECT_ID: misty-sun-80388989
+          READ_BRANCH_ID: br-snowy-butterfly-av3rwiuh
+          WRITE_PROJECT_ID: jolly-math-11598326
+          WRITE_BRANCH_ID: br-autumn-haze-b5ecvgmj
+        run: bash backend/scripts/staging-parity.sh
