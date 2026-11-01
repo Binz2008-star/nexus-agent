@@ -31,16 +31,37 @@ jobs:
       - name: Run unit tests
         run: ./gradlew test --no-daemon
 
-      - name: Decode test signing keystore
+      # Fork PRs never receive repository secrets. Use the normal ephemeral debug key
+      # there; trusted CI must fail closed if stable signing credentials are missing.
+      - name: Configure test signing when available
         shell: bash
+        env:
+          TEST_SIGNING_KEYSTORE_BASE64: ${{ secrets.TEST_SIGNING_KEYSTORE_BASE64 }}
+          TEST_SIGNING_KEYSTORE_PASSWORD: ${{ secrets.TEST_SIGNING_KEYSTORE_PASSWORD }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
         run: |
-          echo "${{ secrets.TEST_SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > "${{ runner.temp }}/nexus-test-signing.p12"
+          if [[ -z "$TEST_SIGNING_KEYSTORE_BASE64" || -z "$TEST_SIGNING_KEYSTORE_PASSWORD" ]]; then
+            if [[ "$EVENT_NAME" == "pull_request" && "$HEAD_REPO" != "$BASE_REPO" ]]; then
+              echo "::notice::Fork PR uses an ephemeral debug signing key; its APK cannot upgrade the official test build in place"
+              echo "TEST_SIGNING_MODE=fork-ephemeral" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "::error::Stable test signing secrets missing on trusted CI"
+            exit 1
+          fi
+          printf '%s' "$TEST_SIGNING_KEYSTORE_BASE64" |
+            base64 --decode > "$RUNNER_TEMP/nexus-test-signing.p12"
+          test -s "$RUNNER_TEMP/nexus-test-signing.p12"
+          chmod 600 "$RUNNER_TEMP/nexus-test-signing.p12"
+          echo "TEST_SIGNING_KEYSTORE=$RUNNER_TEMP/nexus-test-signing.p12" >> "$GITHUB_ENV"
+          echo "TEST_SIGNING_MODE=stable" >> "$GITHUB_ENV"
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
-          TEST_SIGNING_KEYSTORE: ${{ runner.temp }}/nexus-test-signing.p12
           TEST_SIGNING_KEYSTORE_PASSWORD: ${{ secrets.TEST_SIGNING_KEYSTORE_PASSWORD }}
           TEST_SIGNING_KEY_ALIAS: nexustest
           TEST_SIGNING_KEY_PASSWORD: ${{ secrets.TEST_SIGNING_KEYSTORE_PASSWORD }}
@@ -58,7 +79,8 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: nexus-agent-debug-apk
+          # Distinguish a one-off fork build from an upgradeable stable-test APK.
+          name: ${{ env.TEST_SIGNING_MODE == 'stable' && 'nexus-agent-debug-apk' || 'nexus-agent-fork-debug-apk-ephemeral-key' }}
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
