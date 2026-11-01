@@ -26,6 +26,10 @@ import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.culture.CultureContext
 import com.nexus.agent.domain.commands.Command
 import com.nexus.agent.domain.commands.CommandDetector
+import com.nexus.agent.domain.commands.EmailIntent
+import com.nexus.agent.domain.commands.EmailIntentRouter
+import com.nexus.agent.domain.commands.EmailTaskMessages
+import com.nexus.agent.domain.connectors.GmailConnector
 import com.nexus.agent.domain.commands.GreetingDetector
 import com.nexus.agent.domain.memory.RememberCommandDetector
 import com.nexus.agent.domain.neon.MemoryRecall
@@ -359,8 +363,27 @@ class ChatViewModel(
                         return@launch
                     }
                     command == Command.Email -> {
-                        launchGmailTask(convId, text, generation)
-                        handedOffToTask = true
+                        when (EmailIntentRouter.classify(text)) {
+                            EmailIntent.STATUS -> {
+                                // Report the actual NEXUS OAuth status, not generic Gmail tips
+                                // or a fabricated claim of inbox access.
+                                repository.persistUserMessage(convId, text.trim())
+                                val connected = GmailConnector.GMAIL_READONLY_SCOPE in gmailScopesProvider()
+                                repository.persistAssistantMessage(
+                                    convId, EmailTaskMessages.connectionStatus(connected)
+                                )
+                            }
+                            EmailIntent.READ -> {
+                                launchGmailTask(convId, text, generation)
+                                handedOffToTask = true
+                            }
+                            EmailIntent.AGENT -> {
+                                // Writing, sending, drafting and generic questions must go through
+                                // the tool-aware agent + existing one-shot approval gate.
+                                launchAgentTask(convId, text, generation)
+                                handedOffToTask = true
+                            }
+                        }
                     }
                     GreetingDetector.isConversational(text) -> {
                         launchConversationalTask(convId, text, generation)
@@ -723,9 +746,8 @@ class ChatViewModel(
     }
 
     /**
-     * Runs a read-only Gmail inbox search and streams an answer grounded in the matching
-     * messages. Same lifecycle/cancel semantics as [launchAgentTask]. A failed search (e.g. not
-     * connected) contributes no sources and falls back to a direct answer.
+     * Read-only Gmail search. Never use the generic model fallback when Gmail is disconnected,
+     * the API fails, or returns zero results: that fallback produced fabricated Gmail guidance.
      */
     private fun launchGmailTask(conversationId: Long, text: String, generation: Long) {
         _streamingText.value = ""
@@ -736,35 +758,64 @@ class ChatViewModel(
                 update(TaskStatus.Running(startedAt, "searching"))
                 repository.persistUserMessage(conversationId, text)
 
-                val toolResult = toolOrchestrator.execute(
-                    TOOL_GMAIL,
-                    buildJsonObject {
-                        put("query", JsonPrimitive(gmailQuery(text)))
-                        put("max_results", JsonPrimitive("10"))
-                    },
-                    grantedScopes = gmailScopesProvider()
-                )
-                if (toolResult is ToolResult.Blocked) {
-                    _errorMessage.value = toolResult.reason
-                    update(TaskStatus.Failed("blocked"))
+                val scopes = gmailScopesProvider()
+                if (GmailConnector.GMAIL_READONLY_SCOPE !in scopes) {
+                    repository.persistAssistantMessage(
+                        conversationId, EmailTaskMessages.connectionStatus(false)
+                    )
+                    update(TaskStatus.Completed(emptyList()))
                     return@run
                 }
 
-                val sources = (toolResult as? ToolResult.Success)?.sources.orEmpty()
-                val context = if (sources.isEmpty()) null else buildContextPrompt(sources)
-                lastContext = context
-
-                update(TaskStatus.Running(startedAt, "thinking"))
-                val result = repository.completeWithContext(
-                    conversationId, _selectedModel.value, context
-                ) { delta -> _streamingText.value += delta }
-                _streamingText.value = ""
-
-                when (result) {
-                    is SendResult.Success -> update(TaskStatus.Completed(sources))
-                    is SendResult.Failure -> {
-                        _errorMessage.value = result.errorCode
-                        update(TaskStatus.Failed(result.errorCode))
+                // The Gmail API accepts q=in:inbox to list recent inbox messages.
+                // Never send the bare word "gmail" as the search query.
+                val query = gmailQuery(text).ifBlank { "in:inbox" }
+                val toolResult = toolOrchestrator.execute(
+                    TOOL_GMAIL,
+                    buildJsonObject {
+                        put("query", JsonPrimitive(query))
+                        put("max_results", JsonPrimitive("10"))
+                    },
+                    grantedScopes = scopes
+                )
+                when (toolResult) {
+                    is ToolResult.Blocked -> {
+                        repository.persistAssistantMessage(
+                            conversationId, EmailTaskMessages.searchFailure(toolResult.reason)
+                        )
+                        update(TaskStatus.Completed(emptyList()))
+                        return@run
+                    }
+                    is ToolResult.Failure -> {
+                        repository.persistAssistantMessage(
+                            conversationId, EmailTaskMessages.searchFailure(toolResult.errorCode)
+                        )
+                        update(TaskStatus.Completed(emptyList()))
+                        return@run
+                    }
+                    is ToolResult.Success -> {
+                        if (toolResult.sources.isEmpty()) {
+                            repository.persistAssistantMessage(
+                                conversationId, EmailTaskMessages.NO_MATCHES
+                            )
+                            update(TaskStatus.Completed(emptyList()))
+                            return@run
+                        }
+                        val sources = toolResult.sources
+                        val context = buildContextPrompt(sources)
+                        lastContext = context
+                        update(TaskStatus.Running(startedAt, "thinking"))
+                        val result = repository.completeWithContext(
+                            conversationId, _selectedModel.value, context
+                        ) { delta -> _streamingText.value += delta }
+                        _streamingText.value = ""
+                        when (result) {
+                            is SendResult.Success -> update(TaskStatus.Completed(sources))
+                            is SendResult.Failure -> {
+                                _errorMessage.value = result.errorCode
+                                update(TaskStatus.Failed(result.errorCode))
+                            }
+                        }
                     }
                 }
             } finally {
