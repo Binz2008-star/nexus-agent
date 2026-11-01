@@ -52,24 +52,38 @@ from sql_queries import (
     tags_literal,
 )
 
-app = FastAPI(title="NEXUS Neon backend")
+app = FastAPI(
+    title="NEXUS Neon backend",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 _bearer = HTTPBearer(auto_error=False)
 
 READ_URL = os.environ.get("NEON_READ_URL", "")
 WRITE_URL = os.environ.get("NEON_WRITE_URL", "")
-CONNECT_TIMEOUT = int(os.environ.get("NEON_CONNECT_TIMEOUT", "10"))
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+CONNECT_TIMEOUT = _int_env("NEON_CONNECT_TIMEOUT", 10)
 
 IDENTITIES: dict[str, Identity] = load_identities()
-RATE_LIMITER = RateLimiter(per_min=int(os.environ.get("NEXUS_RATE_LIMIT_PER_MIN", "120")))
+RATE_LIMITER = RateLimiter(per_min=_int_env("NEXUS_RATE_LIMIT_PER_MIN", 120))
 
 
 def _require_auth(request: Request, cred: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> Identity:
     ident = authenticate(IDENTITIES, cred.credentials if cred else None)
     if ident is None:
         raise HTTPException(status_code=401, detail="auth")
+    request.state.identity = ident.name
     if not RATE_LIMITER.allow(ident.name):
         raise HTTPException(status_code=429, detail="rate")
-    request.state.identity = ident.name
     return ident
 
 

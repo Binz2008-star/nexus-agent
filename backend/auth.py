@@ -9,6 +9,7 @@ environment (injected from Secret Manager on Cloud Run), never committed:
 The audit log is JSON Lines on stdout (Cloud Run captures stdout → Cloud Logging). It records
 identity/method/path/status/scope only — never request bodies, queries, or keys.
 """
+import hashlib
 import json
 import os
 import secrets
@@ -29,6 +30,30 @@ class Identity:
     scopes: frozenset
 
 
+def _safe_name(key: str, meta) -> str:
+    """Never expose the raw key as an identity name (it is written to the audit log)."""
+    if isinstance(meta, dict):
+        name = meta.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return "key-" + hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
+def _scopes(meta) -> frozenset:
+    """Resolve scopes. Fails closed: an explicit empty scope list grants nothing."""
+    if not isinstance(meta, dict):
+        return ALL_SCOPES  # legacy plain string value -> all scopes
+    raw = meta.get("scopes")
+    if raw is None:
+        return ALL_SCOPES
+    if isinstance(raw, str):
+        return frozenset({raw}) if raw in (READ_SCOPE, WRITE_SCOPE) else frozenset()
+    try:
+        return frozenset(s for s in raw if s in (READ_SCOPE, WRITE_SCOPE))
+    except TypeError:
+        return frozenset()
+
+
 def load_identities() -> dict[str, Identity]:
     """Returns {api_key: Identity}. Fails closed: malformed NEXUS_KEYS leaves only the legacy key."""
     ids: dict[str, Identity] = {}
@@ -43,13 +68,7 @@ def load_identities() -> dict[str, Identity]:
             for key, meta in data.items():
                 if not isinstance(key, str) or not key:
                     continue
-                if isinstance(meta, dict):
-                    name = str(meta.get("name") or key)
-                    scopes = set(meta.get("scopes") or [READ_SCOPE, WRITE_SCOPE])
-                else:
-                    name = key
-                    scopes = set(ALL_SCOPES)
-                ids[key] = Identity(name=name, scopes=frozenset(scopes))
+                ids[key] = Identity(name=_safe_name(key, meta), scopes=_scopes(meta))
         except (json.JSONDecodeError, TypeError, AttributeError):
             pass  # fail closed
     return ids

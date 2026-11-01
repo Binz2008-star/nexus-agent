@@ -51,6 +51,27 @@ def test_load_identities_empty(monkeypatch):
     assert load_identities() == {}
 
 
+def test_load_identities_name_omitted_uses_hash_not_key(monkeypatch):
+    _env(monkeypatch, keys=json.dumps({"supersecretkey": {"scopes": ["read"]}}))
+    ids = load_identities()
+    ident = ids["supersecretkey"]
+    assert ident.name != "supersecretkey"
+    assert ident.name.startswith("key-")
+    assert "supersecretkey" not in ident.name
+
+
+def test_load_identities_empty_scopes_fails_closed(monkeypatch):
+    _env(monkeypatch, keys=json.dumps({"k1": {"name": "disabled", "scopes": []}}))
+    ids = load_identities()
+    assert ids["k1"].scopes == frozenset()
+
+
+def test_load_identities_null_scopes_defaults_full(monkeypatch):
+    _env(monkeypatch, keys=json.dumps({"k1": {"name": "phone", "scopes": None}}))
+    ids = load_identities()
+    assert ids["k1"].scopes == ALL_SCOPES
+
+
 def test_authenticate_returns_identity_or_none():
     ids = {
         "k1": Identity(name="phone", scopes=ALL_SCOPES),
