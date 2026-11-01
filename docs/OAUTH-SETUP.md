@@ -1,6 +1,6 @@
 # NEXUS — Google Workspace OAuth and service integrations
 
-**Status: implementation in feature branch; Gmail/Drive/Calendar/Contacts/Tasks not yet
+**Status: code integrated, but Gmail/Drive/Calendar/Contacts/Tasks not yet
 verified on a physical Android device.** Do not publish or claim production readiness based
 on CI alone. This replaces the old AppAuth custom-redirect instructions.
 
@@ -11,11 +11,19 @@ client registered for `com.nexus.agent` with the stable TEST APK signing SHA-1:
 
 `15:88:D3:C3:46:01:62:71:66:76:5C:05:64:20:79:04:BD:CB:40:34`
 
-Add the **public Android client ID** as GitHub Actions repository secret
-`GOOGLE_OAUTH_CLIENT_ID`. Never commit any OAuth JSON, refresh token, credentials, private
-signing key, or Gmail/Drive data. A client ID identifies an app and is not an authorization
-grant or a client secret. Trusted CI injects this at compile time; fork builds receive no
-repository secret and must not be used for OAuth acceptance testing.
+The public Android OAuth client ID is now included as a build **fallback** so local
+and CI builds cannot silently ship an empty Client ID. `GOOGLE_OAUTH_CLIENT_ID` may
+override it at build time for another registered Android OAuth client. A Client ID is
+**not a secret**: do not commit OAuth credential JSON, refresh tokens, private signing
+keys, Neon URLs, or Gmail/Drive data. The build validates the Client ID format; this
+does **not** establish that the configured package and test APK signing SHA-1 match
+Google Cloud.
+
+When upgrading a phone with a previously installed APK, use the **latest build artifact**
+from a successful workflow run for the exact intended commit; an old installed APK will
+not retroactively gain the client ID after updating GitHub secrets. If the update
+is rejected for signature mismatch, do **not** uninstall/clear app data without an
+encrypted backup and verified recovery procedure.
 
 Do not use Desktop OAuth clients, localhost redirects, or
 `com.nexus.agent:/oauth2redirect` in the new Android flow.
