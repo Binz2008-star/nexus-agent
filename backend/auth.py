@@ -88,8 +88,9 @@ def authenticate(identities: dict[str, Identity], token: str | None) -> Identity
 class RateLimiter:
     """Sliding-window request limiter, keyed by identity name. Thread-safe."""
 
-    def __init__(self, per_min: int):
+    def __init__(self, per_min: int, max_buckets: int = 1024):
         self.per_min = per_min
+        self.max_buckets = max_buckets
         self._buckets: dict[str, deque] = defaultdict(deque)
         self._lock = threading.Lock()
 
@@ -104,7 +105,14 @@ class RateLimiter:
             if len(q) >= self.per_min:
                 return False
             q.append(now)
+            if len(self._buckets) > self.max_buckets:
+                self._evict_idle()
             return True
+
+    def _evict_idle(self) -> None:
+        """Drop empty (idle) buckets so memory stays bounded under identity churn."""
+        for key in [k for k, q in self._buckets.items() if not q]:
+            del self._buckets[key]
 
 
 def audit(name: str | None, method: str, path: str, status: int, scope: str | None) -> None:

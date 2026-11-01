@@ -147,6 +147,12 @@ def test_memory_save_rejects_long_type():
     assert r.status_code == 400
 
 
+def test_memory_save_rejects_unknown_type():
+    r = client.post("/v1/memory/save", json={"type": "note", "content": "hi"}, headers=AUTH)
+    assert r.status_code == 400
+    assert r.json()["detail"] == "type_invalid"
+
+
 def test_transcript_mirror_rejects_long_role():
     r = client.post("/v1/transcript/mirror", json={"session_id": "s", "role": "x" * 21, "content": "hi"}, headers=AUTH)
     assert r.status_code == 400

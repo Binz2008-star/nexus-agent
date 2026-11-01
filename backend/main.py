@@ -43,6 +43,7 @@ from sql_queries import (
     MAX_TAG_LEN,
     MAX_TOP_K,
     MAX_TYPE_LEN,
+    MEMORY_TYPES,
     MIN_TOP_K,
     RECALL_CAP,
     SEARCH_CHUNKS_SQL,
@@ -184,6 +185,8 @@ def memory_save(req: MemorySaveRequest) -> dict:
         raise HTTPException(status_code=400, detail="content_too_long")
     if len(req.type) > MAX_TYPE_LEN:
         raise HTTPException(status_code=400, detail="type_too_long")
+    if req.type not in MEMORY_TYPES:
+        raise HTTPException(status_code=400, detail="type_invalid")
     if len(req.tags) > MAX_TAGS or any(len(t) > MAX_TAG_LEN for t in req.tags):
         raise HTTPException(status_code=400, detail="tags_invalid")
     try:
@@ -198,6 +201,9 @@ def memory_save(req: MemorySaveRequest) -> dict:
 
 @app.get("/v1/memory/recent", dependencies=[Depends(require_scope(READ_SCOPE))])
 def memory_recent(limit: int = Query(default=100, ge=1, le=RECALL_CAP)) -> dict:
+    # NOTE: `nexus_memory` lives in the write DB (personal_ai_core), so this READ endpoint connects
+    # via WRITE_URL. Only SELECT runs, but the connection holds write credentials until Phase E
+    # introduces a dedicated read-only role for this table.
     try:
         with _connect(WRITE_URL) as conn:
             with conn.cursor() as cur:

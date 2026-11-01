@@ -32,6 +32,8 @@ MAX_CONTENT_LEN = 20_000
 MAX_TAG_LEN = 100
 MAX_TAGS = 20
 MAX_TYPE_LEN = 50
+# Allowed memory `type` values (matches MemorySaveTool's "fact" and the seed data).
+MEMORY_TYPES = frozenset({"fact", "pref"})
 MAX_ROLE_LEN = 20
 MAX_SESSION_ID_LEN = 100
 
@@ -47,7 +49,23 @@ def tags_literal(tags: list[str]) -> str:
 
 
 def error_code(e: BaseException) -> str:
-    """Maps a database error to a stable, non-sensitive code (mirrors SecondBrainSql.errorCode)."""
+    """Maps a database error to a stable, non-sensitive code (mirrors SecondBrainSql.errorCode).
+
+    Prefers the SQLSTATE code when the exception exposes one (psycopg sets `.sqlstate`);
+    otherwise falls back to the legacy substring match for non-DB errors (e.g. a socket
+    "connection refused" OSError).
+    """
+    sqlstate = getattr(e, "sqlstate", None)
+    if isinstance(sqlstate, str) and sqlstate:
+        if sqlstate == "28P01":  # invalid_password
+            return "auth"
+        if sqlstate == "42501":  # insufficient_privilege
+            return "permission"
+        if sqlstate == "42P01":  # undefined_table
+            return "not_found"
+        if sqlstate.startswith("08"):  # connection_exception family
+            return "network"
+        return "server"
     msg = str(e)
     if "password authentication failed" in msg or "28P01" in msg:
         return "auth"

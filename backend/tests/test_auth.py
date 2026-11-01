@@ -96,6 +96,17 @@ def test_rate_limiter_disabled_at_zero():
     assert all(rl.allow("a") for _ in range(100))
 
 
+def test_rate_limiter_bounds_bucket_count():
+    rl = RateLimiter(per_min=1, max_buckets=2)
+    assert rl.allow("a") is True
+    assert rl.allow("b") is True
+    # Simulate "a" going idle: its single timestamp expired and was drained.
+    rl._buckets["a"].clear()
+    # A third identity trips the cap; the empty "a" bucket is evicted.
+    assert rl.allow("c") is True
+    assert "a" not in rl._buckets
+
+
 def test_audit_emits_json_line_without_secrets(capsys):
     audit("phone", "POST", "/v1/memory/save", 200, "write")
     record = json.loads(capsys.readouterr().out.strip())

@@ -48,6 +48,19 @@ def test_error_code_default():
     assert error_code(Exception("other")) == "server"
 
 
+class _SqlstateError(Exception):
+    def __init__(self, sqlstate):
+        self.sqlstate = sqlstate
+
+
+def test_error_code_prefers_sqlstate():
+    assert error_code(_SqlstateError("28P01")) == "auth"
+    assert error_code(_SqlstateError("42501")) == "permission"
+    assert error_code(_SqlstateError("42P01")) == "not_found"
+    assert error_code(_SqlstateError("08006")) == "network"
+    assert error_code(_SqlstateError("22012")) == "server"
+
+
 def test_sql_strings_are_parameterized():
     # No f-string / %-format interpolation of user values: placeholders are the DB driver's %s.
     assert "%s" in SEARCH_CHUNKS_SQL
