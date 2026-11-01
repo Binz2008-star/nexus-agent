@@ -7,6 +7,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -152,17 +155,6 @@ fun ChatScreen(
     val preferredDialect by preferences.preferredDialect.collectAsState(initial = "auto")
     val preferredTone by preferences.preferredTone.collectAsState(initial = "friendly")
     val mashaaerEmotionEnabled by preferences.mashaaerEmotionEnabled.collectAsState(initial = false)
-    val personaInstruction = remember(cultureContext, preferredDialect, preferredTone) {
-        val dialect = if (preferredDialect == "auto") regionToDialect(cultureContext.region)
-            else Dialect.fromId(preferredDialect)
-        val tone = Tone.fromId(preferredTone)
-        val english = cultureContext.region == Region.EN_GLOBAL || cultureContext.region == Region.FR_GLOBAL
-        if (english) {
-            AdaptiveTone.buildRewriteInstructionEnglish(dialect, tone)
-        } else {
-            AdaptiveTone.buildRewriteInstruction(dialect, tone)
-        }
-    }
     val neonRepository = remember {
         NeonRepository(
             readUrlProvider = {
@@ -200,7 +192,13 @@ fun ChatScreen(
                 val selectedTone = Tone.fromId(preferences.preferredTone.first())
                 val dialect = if (selectedDialect == "auto") regionToDialect(cultureContext.region)
                     else Dialect.fromId(selectedDialect)
-                AdaptiveTone.buildRewriteInstruction(dialect, selectedTone)
+                val englishLocale = cultureContext.region == Region.EN_GLOBAL ||
+                    cultureContext.region == Region.FR_GLOBAL
+                if (englishLocale) {
+                    AdaptiveTone.buildRewriteInstructionEnglish(dialect, selectedTone)
+                } else {
+                    AdaptiveTone.buildRewriteInstruction(dialect, selectedTone)
+                }
             },
             mashaaerEmotionEnabledProvider = { preferences.mashaaerEmotionEnabled.first() },
             mirror = object : ConversationMirror {
@@ -676,7 +674,7 @@ private fun SettingsDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.settings)) },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -763,7 +761,7 @@ private fun SettingsDialog(
                         onCheckedChange = onMashaaerEmotionEnabledChange)
                 }
                 Text("اللهجة", style = MaterialTheme.typography.bodyMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf("auto" to "تلقائي", "gulf" to "خليجي",
                         "levant" to "شامي", "egypt" to "مصري").forEach { (id, label) ->
                         TextButton(onClick = { onPreferredDialectChange(id) }) {
@@ -772,7 +770,7 @@ private fun SettingsDialog(
                     }
                 }
                 Text("النبرة", style = MaterialTheme.typography.bodyMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf("friendly" to "ودّي", "calm" to "هادئ",
                         "professional" to "مهني").forEach { (id, label) ->
                         TextButton(onClick = { onPreferredToneChange(id) }) {
