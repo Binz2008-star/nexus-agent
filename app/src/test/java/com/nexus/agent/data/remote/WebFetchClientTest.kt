@@ -29,10 +29,11 @@ class WebFetchClientTest {
     }
 
     // A validator that accepts the localhost-hosted MockWebServer (the SSRF logic itself is
-    // covered by UrlSafetyValidatorTest; here we exercise the HTTP/redirect/extract path).
+    // covered by UrlSafetyValidatorTest; here we exercise the HTTP/redirect/extract + DNS-pin path).
     private fun permissiveValidator() = UrlSafetyValidator(
-        resolver = { listOf(InetAddress.getByAddress(byteArrayOf(8, 8, 8, 8))) },
-        isHostBlocked = { false }
+        resolver = { listOf(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))) },
+        isHostBlocked = { false },
+        isPublic = { true }
     )
 
     @Test

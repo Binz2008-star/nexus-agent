@@ -33,7 +33,8 @@ class UrlSafetyValidator(
             emptyList()
         }
     },
-    private val isHostBlocked: (String) -> Boolean = { isBlockedHostname(it) }
+    private val isHostBlocked: (String) -> Boolean = { isBlockedHostname(it) },
+    private val isPublic: (ByteArray) -> Boolean = { isPublicAddress(it) }
 ) {
 
     /** Validates [url] and returns the parsed [HttpUrl] + pinned IPs on success, or a typed failure. */
@@ -55,13 +56,14 @@ class UrlSafetyValidator(
         return Result.success(ValidatedUrl(parsed, addresses))
     }
 
-    private fun isPublic(bytes: ByteArray): Boolean =
-        if (bytes.size == 4) isPublicIpv4(bytes) else isPublicIpv6(bytes)
-
     companion object {
         const val ERR_MALFORMED = "fetch_malformed_url"
         const val ERR_BLOCKED = "fetch_blocked_url"
         const val ERR_UNRESOLVED = "fetch_unresolved"
+
+        /** True only for a globally-routable, non-reserved IPv4 or IPv6 address. */
+        fun isPublicAddress(bytes: ByteArray): Boolean =
+            if (bytes.size == 4) isPublicIpv4(bytes) else isPublicIpv6(bytes)
 
         /**
          * True only for a globally-routable, non-reserved IPv4 address. Rejects loopback, private,
