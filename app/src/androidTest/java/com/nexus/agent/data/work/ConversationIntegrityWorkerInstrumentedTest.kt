@@ -35,6 +35,19 @@ class ConversationIntegrityWorkerInstrumentedTest {
         assertTrue(data.getInt(ConversationIntegrityWorker.KEY_MESSAGE_COUNT, -1) >= 0)
     }
 
+    @Test fun missingSnapshotCannotBeReportedAsVerified() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val verified = TestListenableWorkerBuilder<ConversationIntegrityWorker>(context)
+            .build()
+            .doWork()
+        assertTrue(verified is ListenableWorker.Result.Failure)
+        assertEquals(
+            "snapshot_required",
+            (verified as ListenableWorker.Result.Failure).outputData
+                .getString(ConversationIntegrityWorker.KEY_ERROR_CODE)
+        )
+    }
+
     @Test fun changedSnapshotCannotBeReportedAsVerified() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val wrongData = workDataOf(
