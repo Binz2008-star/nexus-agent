@@ -1,58 +1,52 @@
-# NEXUS Agent — Gmail OAuth setup and release gate
+# NEXUS Gmail OAuth — Android client authorization
 
-**Status: NOT VERIFIED for real-device Gmail authorization.**
-Do not follow the older “Desktop app client + `com.nexus.agent:/oauth2redirect`” instructions.
-A passing unit test and an embedded public client ID do not prove that Google accepts the
-redirect or that a Gmail token can be obtained on an Android device.
+**Status:** Code migrated to Google Identity Services in draft PR. GitHub CI and real-device OAuth acceptance must pass before Gmail is considered operational. This is **not** a production readiness signoff.
 
-## Current implementation (development only)
+## Google Cloud configuration
 
-NEXUS currently implements an AppAuth PKCE browser flow, attempts a custom-scheme redirect
-(`com.nexus.agent:/oauth2redirect`), and requests
-`https://www.googleapis.com/auth/gmail.readonly`. The code may compile while the Google
-authorization server rejects this flow. The custom redirect is **not** evidence of a
-Google-supported production Android integration.
+Project: `gmail-ai-bot-452308` (Gmail-AI-Bot).
 
-- Google's current Desktop Apps OAuth documentation states that custom URI schemes are
-  **no longer supported on Android and Chrome apps**; loopback redirects are for desktop
-  use and deprecated on mobile client types.
-- Android custom-scheme authorization is disabled by default in Google Cloud and is
-  vulnerable to app impersonation. It may be available by explicit advanced configuration,
-  but that does **not** establish that our present AppAuth flow is correctly configured.
-- `gmail.readonly` is a **restricted** Gmail scope, not a non-sensitive scope.
-  OAuth app verification and additional requirements may apply, particularly when
-  distributing to users or transmitting restricted data to a backend.
+1. Configure Google Auth Platform consent screen under the selected project and add the intended Google account as a **test user** if External/Testing.
+2. Enable **Gmail API** in that same project.
+3. Use an **Android** OAuth 2.0 Client with package name `com.nexus.agent` and the exact certificate SHA-1 of the installed APK. The current stable *test* APK signer SHA-1 is `15:88:D3:C3:46:01:62:71:66:76:5C:05:64:20:79:04:BD:CB:40:34`. Production signing needs a separately registered fingerprint.
+4. The public Android OAuth Client ID can be supplied to **GitHub Actions repository secret** `GOOGLE_OAUTH_CLIENT_ID`. This is injected into `BuildConfig` only to confirm a configured build; it is **not a client secret** and is not sent as a custom-redirect client credential.
+5. Do **not** commit a `client_secret_*.json` file or any client secret, refresh token, Google account password, APK signing key, or private credentials.
 
-Source documentation (verify at time of implementation):
-- https://developers.google.com/identity/protocols/oauth2/native-app
-- https://support.google.com/googleapi/answer/6158849
+## Android authorization implementation
+
+- Uses `com.google.android.gms:play-services-auth:22.0.0` and `Identity.getAuthorizationClient(context)`.
+- The user explicitly taps **Settings → Gmail → Connect**; requested scope is **only** `https://www.googleapis.com/auth/gmail.readonly`.
+- Google Play services either returns an already-authorized result or a PendingIntent. NEXUS launches the PendingIntent via Android's Activity Result API, then checks the granted scopes **and** reads `users/me/profile` to confirm Gmail API access and the current account.
+- The UI shows a generic failure message if authorization is rejected/cancelled, Gmail API access cannot be verified, or Play services is unavailable.
+- Background Gmail tool calls may silently renew an already-connected token, but **never start consent UI**, expand scopes or run send/delete/modify actions.
+- **No offline/refresh-token flow and no persistent Google access token in this phase.** After app process restart, the user may need to tap Connect again. This avoids introducing a backend client secret or token storage before the backend architecture is designed.
+- Disconnect clears the local authorization state and legacy AppAuth secret keys; when a verified Gmail email is known it also attempts to revoke access through Google Play services. Revocation errors are reported; the app remains disconnected locally.
+- The obsolete custom-scheme AppAuth browser intent filters and code exchange are removed.
+
+This design intentionally differs from a server-side/offline integration. If future automation requires Gmail access while the app is closed, use an authenticated backend with a **separate Web OAuth Client**, server-owned token exchange, encrypted refresh-token storage, and appropriate OAuth review. Never embed a Web client secret into Android.
+
+## Validation / release gates
+
+A successful CI build does **not** prove real Gmail authorization. On a physical Android device with Google Play services:
+
+1. Verify that the APK certificate SHA-1 matches the Android OAuth client in Google Cloud.
+2. Verify Gmail API enabled, External test user and consent-screen/scopes.
+3. Install without losing local Room data; tap Connect, select the expected account and consent.
+4. Verify the **actual Gmail profile** and read-only message search result; confirm permission denial and cancellation do not connect.
+5. Test restart/reconnect, revoked scope, multiple accounts, lost network, expired access token, and Disconnect/revoke.
+6. Confirm no Gmail access token, refresh token, full mailbox contents or OAuth private material appears in logs, APK or Neon transcript mirror.
+7. Run Google OAuth restricted-scope verification/security assessment as applicable **before public distribution**.
+
+## References
+
+- https://developer.android.com/identity/authorization
+- https://developers.google.com/identity/protocols/oauth2/resources/loopback-migration
+- https://developers.google.com/android/reference/com/google/android/gms/auth/api/identity/AuthorizationClient
 - https://developers.google.com/workspace/gmail/api/auth/scopes
-- https://developers.googleblog.com/improving-user-safety-in-oauth-flows-through-new-oauth-custom-uri-scheme-restrictions/
+- https://developers.google.com/android/guides/releases
 
-## Required remediation before live Gmail acceptance
+## Known constraints
 
-1. Select an officially supported **Android** Google authorization method for the Gmail
-   API and requested scope. Evaluate Google Identity Services AuthorizationClient and
-   alternatives against the current Google developer documentation.
-2. Register the correct **Android OAuth client** with package `com.nexus.agent` and the
-   actual test signing certificate SHA-1; verify the correct redirect/client pairing
-   in a real browser-to-app authorization exchange.
-3. Enable Gmail API, configure the correct OAuth consent screen and restricted scope,
-   and add authorized test users while in Testing mode. Do not change account settings
-   without the owner taking the relevant steps.
-4. Keep secrets/refresh tokens private and encrypted; a client ID is public but must not
-   be confused with a client secret. No server credentials in the APK.
-5. Test: connect, consent, browser redirect, token exchange, list/read messages, token
-   refresh, disconnect, unauthorized search denial, and reinstall/update behavior on
-   an actual Android device. Record evidence without personal email content.
-
-## Signing and release
-
-CI injects a dedicated, stable **test signing** keystore from GitHub encrypted secrets;
-this is not a production signing identity. Check the exact certificate fingerprint of
-each build. Existing installations signed with a different certificate may reject an
-upgrade. Back up valuable on-device data before considering uninstall/reinstall.
-
-**Do not claim that Gmail works on a physical Android device until these checks pass.**
-The rest of the PR (memory, tool scopes, context injection) may be integrated into
-development `main` independently of this release gate.
+- Gmail `gmail.readonly` is a Google **restricted** scope. Public release may require Google verification and additional independent security assessment depending on where data is stored/transmitted.
+- Current NEXUS Android → Neon direct JDBC remains a separate production blocker.
+- A Google Cloud OAuth Client ID alone does not prove correct consent screen, Gmail API enablement or live authorization.
