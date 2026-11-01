@@ -28,6 +28,7 @@ import com.nexus.agent.domain.commands.Command
 import com.nexus.agent.domain.commands.CommandDetector
 import com.nexus.agent.domain.commands.EmailIntent
 import com.nexus.agent.domain.commands.EmailIntentRouter
+import com.nexus.agent.domain.commands.GmailQueryParser
 import com.nexus.agent.domain.commands.EmailTaskMessages
 import com.nexus.agent.domain.connectors.GmailConnector
 import com.nexus.agent.domain.commands.GreetingDetector
@@ -769,7 +770,7 @@ class ChatViewModel(
 
                 // The Gmail API accepts q=in:inbox to list recent inbox messages.
                 // Never send the bare word "gmail" as the search query.
-                val query = gmailQuery(text).ifBlank { "in:inbox" }
+                val query = GmailQueryParser.fromReadRequest(text)
                 val toolResult = toolOrchestrator.execute(
                     TOOL_GMAIL,
                     buildJsonObject {
@@ -823,15 +824,6 @@ class ChatViewModel(
             }
         }
     }
-
-    /** Extracts a Gmail search term from a "check/read my email" command; empty = list recent. */
-    private fun gmailQuery(text: String): String =
-        text.trim()
-            .replace(Regex("(?i)^\\s*(check|read|search|show|list)\\s+(my\\s+)?(email|emails|inbox|gmail|mail|messages)\\s*"), "")
-            .replace(Regex("^\\s*(تفقد|اقرأ|ابحث|اعرض|أظهر|افحص|استعرض)\\s+(بريدي|ايميلي|إيميلي|رسائلي|رسائل|البريد|الايميل|الإيميل)\\s*"), "")
-            .replace(Regex("(?i)^\\s*(for|about|regarding)\\s+"), "")
-            .replace(Regex("^\\s*(عن|بخصوص|حول)\\s+"), "")
-            .trim()
 
     private fun breathingGuideText(): String {
         val guide = BreathingCompanion.buildGuide(BreathingPattern.RELAXING, "ar")
