@@ -100,6 +100,15 @@ import com.nexus.agent.domain.tool.TaskStatus
 import com.nexus.agent.domain.tool.ToolOrchestrator
 import com.nexus.agent.domain.tool.WebSearchAdapter
 import com.nexus.agent.data.connectors.GoogleAuthManager
+import com.nexus.agent.data.connectors.GoogleScopePolicy
+import com.nexus.agent.data.remote.GmailSendApiClient
+import com.nexus.agent.domain.tool.GmailSendTool
+import com.nexus.agent.domain.tool.GoogleWorkspaceApiClient
+import com.nexus.agent.domain.tool.GoogleDriveSearchTool
+import com.nexus.agent.domain.tool.GoogleDriveCreateTool
+import com.nexus.agent.domain.tool.GoogleCalendarUpcomingTool
+import com.nexus.agent.domain.tool.GoogleTasksListsTool
+import com.nexus.agent.domain.tool.GoogleContactsListTool
 import com.nexus.agent.data.remote.GmailApiClient
 import com.nexus.agent.data.repository.GmailRepository
 import com.nexus.agent.domain.connectors.GmailConnector
@@ -235,16 +244,38 @@ fun ChatScreen(
         val repo = GmailRepository(searchApi = { q, n -> api.searchMessages(q, n) })
         GmailSearchTool(repo)
     }
+    val googleApi = remember(googleAuthManager) {
+        GoogleWorkspaceApiClient(tokenFor = { scopes ->
+            googleAuthManager.accessTokenForScopes(scopes)
+        })
+    }
+    val gmailSendTool = remember(googleAuthManager) {
+        GmailSendTool(GmailSendApiClient(tokenProvider = {
+            googleAuthManager.accessTokenForScopes(listOf(GoogleScopePolicy.GMAIL_SEND))
+        }))
+    }
+    val driveSearchTool = remember(googleApi) { GoogleDriveSearchTool(googleApi) }
+    val driveCreateTool = remember(googleApi) { GoogleDriveCreateTool(googleApi) }
+    val calendarTool = remember(googleApi) { GoogleCalendarUpcomingTool(googleApi) }
+    val tasksTool = remember(googleApi) { GoogleTasksListsTool(googleApi) }
+    val contactsTool = remember(googleApi) { GoogleContactsListTool(googleApi) }
+
     val memorySaveTool = remember(neonRepository) {
         MemorySaveTool(save = { content -> neonRepository.saveMemory("fact", content) })
     }
     val approvalGate = remember { ApprovalGate() }
-    val toolOrchestrator = remember(approvalGate, memorySaveTool) {
+    val toolOrchestrator = remember(approvalGate, memorySaveTool, googleApi, gmailSendTool) {
         ToolOrchestrator(
             mapOf(
                 webSearchAdapter.name to webSearchAdapter,
                 knowledgeSearchTool.name to knowledgeSearchTool,
                 gmailSearchTool.name to gmailSearchTool,
+                gmailSendTool.name to gmailSendTool,
+                driveSearchTool.name to driveSearchTool,
+                driveCreateTool.name to driveCreateTool,
+                calendarTool.name to calendarTool,
+                tasksTool.name to tasksTool,
+                contactsTool.name to contactsTool,
                 memorySaveTool.name to memorySaveTool
             ),
             approvalGate
@@ -256,7 +287,7 @@ fun ChatScreen(
             repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
             emotionAnalyzer, loadManager, cultureContext, neonRepository,
             gmailScopesProvider = {
-                if (gmailConnector.isConnected.value) gmailConnector.scopes.toSet() else emptySet()
+                googleAuthManager.grantedScopes.value
             },
             approvalGate = approvalGate
         )
@@ -268,6 +299,7 @@ fun ChatScreen(
     val streamingText by viewModel.streamingText.collectAsState()
     val taskStatus by viewModel.taskStatus.collectAsState()
     val gmailConnected by gmailConnector.isConnected.collectAsState()
+    val grantedGoogleScopes by googleAuthManager.grantedScopes.collectAsState()
     val gmailEmail by gmailConnector.email.collectAsState()
     val gmailAuthError by googleAuthManager.error.collectAsState()
     LaunchedEffect(gmailAuthError) {
@@ -451,6 +483,10 @@ fun ChatScreen(
             neonWriteUrl = neonWriteUrlInput,
             onNeonWriteUrlChange = { neonWriteUrlInput = it; neonWriteDirty = true },
             gmailConnected = gmailConnected,
+            grantedGoogleScopes = grantedGoogleScopes,
+            onAuthorizeGoogle = { requested ->
+                googleAuthManager.startAuthorization(requested)
+            },
             gmailEmail = gmailEmail,
             onConnectGmail = {
                 if (BuildConfig.GOOGLE_OAUTH_CLIENT_ID.isBlank()) {
@@ -684,6 +720,8 @@ private fun SettingsDialog(
     neonWriteUrl: String,
     onNeonWriteUrlChange: (String) -> Unit,
     gmailConnected: Boolean,
+    grantedGoogleScopes: Set<String>,
+    onAuthorizeGoogle: (List<String>) -> Unit,
     gmailEmail: String?,
     onConnectGmail: () -> Unit,
     onDisconnectGmail: () -> Unit,
@@ -731,6 +769,33 @@ private fun SettingsDialog(
                     } else {
                         Button(onClick = onConnectGmail) {
                             Text(stringResource(R.string.connect))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("Google services · خدمات جوجل", style = MaterialTheme.typography.titleSmall)
+                Text("Authorize each capability separately. Sending and changes require confirmation.",
+                    style = MaterialTheme.typography.bodySmall)
+                val services = listOf(
+                    "Gmail · قراءة" to listOf(GoogleScopePolicy.GMAIL_READ),
+                    "Gmail · إرسال" to listOf(GoogleScopePolicy.GMAIL_SEND),
+                    "Drive · قراءة" to listOf(GoogleScopePolicy.DRIVE_READ),
+                    "Drive · إنشاء ملفات Docs / Sheets / Slides" to listOf(GoogleScopePolicy.DRIVE_FILE),
+                    "Calendar · قراءة" to listOf(GoogleScopePolicy.CALENDAR_READ),
+                    "Contacts · قراءة" to listOf(GoogleScopePolicy.CONTACTS_READ),
+                    "Tasks · قراءة" to listOf(GoogleScopePolicy.TASKS_READ)
+                )
+                services.forEach { (name, scopes) ->
+                    Row(modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall)
+                        if (grantedGoogleScopes.containsAll(scopes)) {
+                            Text("✓", color = MaterialTheme.colorScheme.primary)
+                        } else {
+                            TextButton(onClick = { onAuthorizeGoogle(scopes) }) {
+                                Text("Connect")
+                            }
                         }
                     }
                 }
