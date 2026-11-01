@@ -50,6 +50,22 @@ class ChatRepository(
         conversationDao.insert(ConversationEntity(title = title))
     }
 
+    /** Returns a conversation by id, or null if it no longer exists (e.g. deleted on another launch). */
+    suspend fun getConversation(id: Long): ConversationEntity? = withContext(Dispatchers.IO) {
+        conversationDao.getById(id)
+    }
+
+    /** Returns the most recently updated conversation, or null when the store is empty. */
+    suspend fun getMostRecentConversation(): ConversationEntity? = withContext(Dispatchers.IO) {
+        conversationDao.getMostRecent()
+    }
+
+    /** Deletes a conversation and its messages (idempotent). */
+    suspend fun deleteConversation(id: Long) = withContext(Dispatchers.IO) {
+        messageDao.deleteByConversation(id)
+        conversationDao.delete(id)
+    }
+
     /**
      * Persists the user message, then streams a completion.
      * onDelta is called with each text fragment.

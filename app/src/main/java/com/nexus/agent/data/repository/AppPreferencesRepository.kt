@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -33,6 +34,7 @@ class AppPreferencesRepository(
     private val lastEngineKey = stringPreferencesKey("last_engine")
     private val neonBackendUrlKey = stringPreferencesKey("neon_backend_url")
     private val useNeonBackendKey = booleanPreferencesKey("use_neon_backend")
+    private val lastConversationIdKey = longPreferencesKey("last_conversation_id")
 
     val systemPrompt: Flow<String> = dataStore.data.map { it[systemPromptKey] ?: "" }
     val lastModel: Flow<String> = dataStore.data.map { it[lastModelKey] ?: "deepseek-flash" }
@@ -57,6 +59,9 @@ class AppPreferencesRepository(
     // Feature flag: route Neon reads/writes through the HTTPS backend instead of direct JDBC.
     // Default false — JDBC stays the default until the backend is proven equivalent.
     val useNeonBackend: Flow<Boolean> = dataStore.data.map { it[useNeonBackendKey] ?: false }
+    // Last active conversation id (nonsecret); -1 = none. Restored on cold start so the visible
+    // chat survives process death.
+    val lastConversationId: Flow<Long> = dataStore.data.map { it[lastConversationIdKey] ?: -1L }
 
     suspend fun setSystemPrompt(prompt: String) {
         dataStore.edit { prefs ->
@@ -131,6 +136,10 @@ class AppPreferencesRepository(
 
     suspend fun setUseNeonBackend(enabled: Boolean) {
         dataStore.edit { it[useNeonBackendKey] = enabled }
+    }
+
+    suspend fun setLastConversationId(id: Long) {
+        dataStore.edit { it[lastConversationIdKey] = id }
     }
 
     companion object {

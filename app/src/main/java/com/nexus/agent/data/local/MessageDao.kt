@@ -15,4 +15,7 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp ASC, id ASC")
     suspend fun getByConversationOnce(conversationId: Long): List<MessageEntity>
+
+    @Query("DELETE FROM messages WHERE conversationId = :conversationId")
+    suspend fun deleteByConversation(conversationId: Long)
 }

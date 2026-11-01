@@ -13,6 +13,12 @@ interface ConversationDao {
     @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
     fun getAll(): Flow<List<ConversationEntity>>
 
+    @Query("SELECT * FROM conversations WHERE id = :id")
+    suspend fun getById(id: Long): ConversationEntity?
+
+    @Query("SELECT * FROM conversations ORDER BY updatedAt DESC LIMIT 1")
+    suspend fun getMostRecent(): ConversationEntity?
+
     @Query("UPDATE conversations SET updatedAt = :ts, title = :title WHERE id = :id")
     suspend fun updateTitleAndTimestamp(id: Long, title: String, ts: Long)
 

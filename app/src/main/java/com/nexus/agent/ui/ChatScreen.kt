@@ -11,6 +11,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,7 +33,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -71,6 +76,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nexus.agent.analytics.NexusAnalytics
 import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
+import com.nexus.agent.data.local.ConversationEntity
 import com.nexus.agent.data.network.DeepSeekClient
 import com.nexus.agent.data.remote.NeonJdbcClient
 import com.nexus.agent.data.remote.NeonHttpClient
@@ -345,6 +351,8 @@ fun ChatScreen(
     )
 
     val messages by viewModel.messages.collectAsState()
+    val conversations by viewModel.conversations.collectAsState()
+    val currentConversationId by viewModel.currentConversationId.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val streamingText by viewModel.streamingText.collectAsState()
@@ -373,6 +381,7 @@ fun ChatScreen(
     val hermesApproval by viewModel.hermesApproval.collectAsState()
 
     var showSettings by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
     var systemPromptInput by remember { mutableStateOf("") }
     var knowledgeBaseUrlInput by remember { mutableStateOf("") }
@@ -468,6 +477,9 @@ fun ChatScreen(
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(stringResource(R.string.new_chat))
+                    }
+                    IconButton(onClick = { showHistory = true }) {
+                        Icon(Icons.AutoMirrored.Filled.List, contentDescription = "History")
                     }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
@@ -637,6 +649,19 @@ fun ChatScreen(
                     }
                 }
             }
+        )
+    }
+
+    if (showHistory) {
+        HistoryDialog(
+            conversations = conversations,
+            currentId = currentConversationId,
+            onSelect = { id ->
+                viewModel.selectConversation(id)
+                showHistory = false
+            },
+            onDelete = { id -> viewModel.deleteConversation(id) },
+            onDismiss = { showHistory = false }
         )
     }
 
@@ -818,6 +843,84 @@ private fun Composer(
         }
     }
 }
+
+@Composable
+private fun HistoryDialog(
+    conversations: List<ConversationEntity>,
+    currentId: Long?,
+    onSelect: (Long) -> Unit,
+    onDelete: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var pendingDelete by remember { mutableStateOf<ConversationEntity?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Chat history · سجل المحادثات") },
+        text = {
+            if (conversations.isEmpty()) {
+                Text("No saved conversations yet.")
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(conversations, key = { it.id }) { conv ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onSelect(conv.id) }
+                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    conv.title.ifBlank { "Chat ${conv.id}" },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (conv.id == currentId) FontWeight.Bold else null
+                                )
+                                Text(
+                                    formatTimestamp(conv.updatedAt),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(onClick = { pendingDelete = conv }) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = {}
+    )
+
+    pendingDelete?.let { conv ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete conversation?") },
+            text = { Text("This removes the chat and its messages. This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete(conv.id)
+                    pendingDelete = null
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } }
+        )
+    }
+}
+
+private fun formatTimestamp(ts: Long): String =
+    java.text.DateFormat.getDateTimeInstance(
+        java.text.DateFormat.SHORT, java.text.DateFormat.SHORT
+    ).format(java.util.Date(ts))
 
 @Composable
 private fun SettingsDialog(

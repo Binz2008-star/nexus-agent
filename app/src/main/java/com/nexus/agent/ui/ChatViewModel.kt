@@ -231,11 +231,27 @@ class ChatViewModel(
     }
 
     init {
-        // Restore the last-used model + engine across restarts.
+        // Restore the last-used model + engine + active conversation across restarts.
         viewModelScope.launch {
             _selectedModel.value = preferences.lastModel.first()
             _selectedEngine.value = AiEngine.fromId(preferences.lastEngine.first())
+            restoreLastConversation()
         }
+    }
+
+    /**
+     * Cold-start restore: reopen the last active conversation; if it no longer exists, fall back
+     * to the most recently updated conversation; otherwise show a true empty state. Runs after
+     * Room is available so the id is validated against the actual store.
+     */
+    private suspend fun restoreLastConversation() {
+        val lastId = preferences.lastConversationId.first()
+        val restored = when {
+            lastId > 0 && repository.getConversation(lastId) != null -> lastId
+            else -> repository.getMostRecentConversation()?.id
+        }
+        _currentConversationId.value = restored
+        preferences.setLastConversationId(restored ?: -1L)
     }
 
     override fun onCleared() {
@@ -267,6 +283,7 @@ class ChatViewModel(
         _streamingText.value = ""
         _errorMessage.value = null
         lastContext = null
+        viewModelScope.launch { preferences.setLastConversationId(id) }
     }
 
     fun createNewConversation() {
@@ -276,6 +293,25 @@ class ChatViewModel(
             _streamingText.value = ""
             _errorMessage.value = null
             lastContext = null
+            preferences.setLastConversationId(id)
+        }
+    }
+
+    /**
+     * Deletes a conversation (and its messages). If it was the active one, switches to the most
+     * recently updated remaining conversation, or a true empty state when none remain.
+     */
+    fun deleteConversation(id: Long) {
+        viewModelScope.launch {
+            repository.deleteConversation(id)
+            if (_currentConversationId.value == id) {
+                val next = repository.getMostRecentConversation()?.id
+                _currentConversationId.value = next
+                preferences.setLastConversationId(next ?: -1L)
+                _streamingText.value = ""
+                _errorMessage.value = null
+                lastContext = null
+            }
         }
     }
 
