@@ -901,8 +901,14 @@ private fun HistoryDialog(
         )
     }
     val auditInfos by auditFlow.collectAsState(initial = emptyList())
-    val audit = auditInfos.firstOrNull { !it.state.isFinished } ?: auditInfos.firstOrNull()
-    val auditStatus = when (audit?.state) {
+    val snapshot = auditInfos.firstOrNull { "nexus-audit-snapshot" in it.tags }
+    val verify = auditInfos.firstOrNull { "nexus-audit-verify" in it.tags }
+    val audit = verify ?: snapshot
+    val auditStatus = when {
+        snapshot?.state == WorkInfo.State.RUNNING -> "جارٍ تسجيل حالة البيانات محلياً"
+        snapshot?.state == WorkInfo.State.FAILED -> "تعذّر تسجيل حالة البيانات؛ لم تُمسح المحادثات"
+        verify?.state == WorkInfo.State.BLOCKED -> "تم حفظ الخطوة الأولى؛ بانتظار التحقق"
+        else -> when (audit?.state) {
         WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> "الفحص في قائمة الانتظار"
         WorkInfo.State.RUNNING -> "جارٍ فحص البيانات المحلية"
         WorkInfo.State.SUCCEEDED -> {
@@ -913,6 +919,7 @@ private fun HistoryDialog(
         WorkInfo.State.FAILED -> "تعذر تأكيد سلامة السجل — البيانات لم تُمسح"
         WorkInfo.State.CANCELLED -> "تم إلغاء الفحص"
         null -> "لم يُجرَ فحص حفظ محلي بعد"
+        }
     }
     AlertDialog(
         onDismissRequest = onDismiss,
