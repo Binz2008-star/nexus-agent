@@ -66,6 +66,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nexus.agent.BuildConfig
+import com.nexus.agent.analytics.NexusAnalytics
 import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
@@ -270,6 +271,13 @@ fun ChatScreen(
     val gmailConnected by gmailConnector.isConnected.collectAsState()
     val gmailEmail by gmailConnector.email.collectAsState()
     val mirrorEnabled by preferences.mirrorEnabled.collectAsState(initial = false)
+    val analyticsEnabled by preferences.analyticsEnabled.collectAsState(initial = false)
+
+    // Restore explicit consent only. No automatic capture or app data is sent without it.
+    LaunchedEffect(analyticsEnabled) {
+        NexusAnalytics.setConsent(analyticsEnabled)
+        if (analyticsEnabled) NexusAnalytics.track(NexusAnalytics.Event.APP_OPENED)
+    }
     val pendingApproval by viewModel.pendingApproval.collectAsState()
 
     var showSettings by remember { mutableStateOf(false) }
@@ -425,6 +433,7 @@ fun ChatScreen(
                 sendEnabled = !isLoading && taskStatus !is TaskStatus.Running && input.isNotBlank(),
                 onSend = {
                     viewModel.sendMessageWithAgent(input)
+                    NexusAnalytics.track(NexusAnalytics.Event.CHAT_SUBMITTED)
                     input = ""
                 }
             )
@@ -454,6 +463,11 @@ fun ChatScreen(
             },
             onDisconnectGmail = { scope.launch { gmailConnector.disconnect() } },
             mirrorEnabled = mirrorEnabled,
+            analyticsEnabled = analyticsEnabled,
+            onAnalyticsEnabledChange = { enabled ->
+                NexusAnalytics.setConsent(enabled)
+                scope.launch { preferences.setAnalyticsEnabled(enabled) }
+            },
             mashaaerEmotionEnabled = mashaaerEmotionEnabled,
             onMashaaerEmotionEnabledChange = { scope.launch { preferences.setMashaaerEmotionEnabled(it) } },
             preferredDialect = preferredDialect,
@@ -682,6 +696,8 @@ private fun SettingsDialog(
     onDisconnectGmail: () -> Unit,
     mirrorEnabled: Boolean,
     onMirrorEnabledChange: (Boolean) -> Unit,
+    analyticsEnabled: Boolean,
+    onAnalyticsEnabledChange: (Boolean) -> Unit,
     mashaaerEmotionEnabled: Boolean,
     onMashaaerEmotionEnabledChange: (Boolean) -> Unit,
     preferredDialect: String,
@@ -775,6 +791,28 @@ private fun SettingsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
+                Spacer(Modifier.height(16.dp))
+                Text("Anonymous app analytics · إحصاءات التطبيق", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (NexusAnalytics.isConfigured) {
+                        "Optional. Sends only app-open and chat-submitted counts. No messages, prompts, Gmail, memories, email addresses, or session recordings."
+                    } else {
+                        "Unavailable in this build. Configure POSTHOG_PROJECT_TOKEN and POSTHOG_HOST during build."
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Share anonymous usage counts · مشاركة إحصاءات مجهولة",
+                        modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = analyticsEnabled && NexusAnalytics.isConfigured,
+                        onCheckedChange = onAnalyticsEnabledChange,
+                        enabled = NexusAnalytics.isConfigured
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
                 Text("Mashaaer · مشاعر", style = MaterialTheme.typography.titleSmall)
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
