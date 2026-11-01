@@ -212,7 +212,7 @@ jobs:
         env:
           NEON_READ_URL: postgresql://nexus_reader:readerpass@localhost:5432/second_brain
           NEON_WRITE_URL: postgresql://nexus_writer:writerpass@localhost:5432/personal_ai_core
-        run: ./gradlew test --tests "com.nexus.agent.data.repository.NeonJdbcIntegrationTest" --no-daemon
+        run: ./gradlew testDebugUnitTest --tests "com.nexus.agent.data.repository.NeonJdbcIntegrationTest" --no-daemon
 
       - name: Tear down PostgreSQL
         if: always()
