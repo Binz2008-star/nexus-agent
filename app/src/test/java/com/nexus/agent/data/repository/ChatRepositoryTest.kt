@@ -25,6 +25,8 @@ class ChatRepositoryTest {
             flow.value = store.toList()
             return withId.id
         }
+        override suspend fun countMessages(): Int = store.size
+        override suspend fun countOrphanedMessages(): Int = 0
         override fun getByConversation(conversationId: Long): Flow<List<MessageEntity>> = flow.asStateFlow()
         override suspend fun getByConversationOnce(conversationId: Long): List<MessageEntity> = store.toList()
         override suspend fun deleteByConversation(conversationId: Long) {
@@ -35,6 +37,7 @@ class ChatRepositoryTest {
 
     private class FakeConversationDao : ConversationDao {
         override suspend fun insert(conversation: ConversationEntity): Long = 1L
+        override suspend fun countConversations(): Int = 0
         override fun getAll(): Flow<List<ConversationEntity>> = flowOf(emptyList())
         override suspend fun getById(id: Long): ConversationEntity? = null
         override suspend fun getMostRecent(): ConversationEntity? = null
