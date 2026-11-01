@@ -185,7 +185,8 @@ class NeonHttpClient(
         const val ERROR_NO_CONNECTION = "no_connection"
 
         /** Backend `error_code()` values that are safe to surface verbatim (mirror the JDBC path). */
-        private val KNOWN_BACKEND_CODES = setOf("auth", "permission", "not_found", "network", "server")
+        private val KNOWN_BACKEND_CODES =
+            setOf("auth", "permission", "not_found", "network", "server", "body_too_large")
 
         /** Maximum bytes of an error response body to buffer when extracting a detail code. */
         private const val MAX_ERROR_BODY_BYTES = 4096L
