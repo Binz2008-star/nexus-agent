@@ -98,6 +98,7 @@ import com.nexus.agent.domain.model.ChatMessage
 import com.nexus.agent.domain.neon.CredentialFileParser
 import com.nexus.agent.domain.neon.NeonConnectionParser
 import com.nexus.agent.domain.persona.AdaptiveTone
+import com.nexus.agent.domain.persona.SoftPersonaPolicy
 import com.nexus.agent.domain.persona.Dialect
 import com.nexus.agent.domain.persona.Tone
 import com.nexus.agent.domain.persona.regionToDialect
@@ -188,6 +189,7 @@ fun ChatScreen(
     val preferredDialect by preferences.preferredDialect.collectAsState(initial = "auto")
     val preferredTone by preferences.preferredTone.collectAsState(initial = "friendly")
     val mashaaerEmotionEnabled by preferences.mashaaerEmotionEnabled.collectAsState(initial = false)
+    val softModeEnabled by preferences.softModeEnabled.collectAsState(initial = false)
     val neonRepository = remember {
         val httpClient = NeonHttpClient(
             baseUrlProvider = { preferences.neonBackendUrl.first().takeIf { it.isNotBlank() } },
@@ -257,11 +259,17 @@ fun ChatScreen(
                     else Dialect.fromId(selectedDialect)
                 val englishLocale = cultureContext.region == Region.EN_GLOBAL ||
                     cultureContext.region == Region.FR_GLOBAL
-                if (englishLocale) {
+                val base = if (englishLocale) {
                     AdaptiveTone.buildRewriteInstructionEnglish(dialect, selectedTone)
                 } else {
                     AdaptiveTone.buildRewriteInstruction(dialect, selectedTone)
                 }
+                // Layer the opt-in Good Mode (الوضع الحنون) style on top when enabled.
+                val soft = if (preferences.softModeEnabled.first()) {
+                    if (englishLocale) SoftPersonaPolicy.buildStyleInstructionEnglish(dialect, selectedTone)
+                    else SoftPersonaPolicy.buildStyleInstruction(dialect, selectedTone)
+                } else null
+                listOfNotNull(base, soft).joinToString("\n\n")
             },
             mashaaerEmotionEnabledProvider = { preferences.mashaaerEmotionEnabled.first() },
             mirror = object : ConversationMirror {
@@ -602,6 +610,8 @@ fun ChatScreen(
             },
             mashaaerEmotionEnabled = mashaaerEmotionEnabled,
             onMashaaerEmotionEnabledChange = { scope.launch { preferences.setMashaaerEmotionEnabled(it) } },
+            softModeEnabled = softModeEnabled,
+            onSoftModeEnabledChange = { scope.launch { preferences.setSoftModeEnabled(it) } },
             preferredDialect = preferredDialect,
             onPreferredDialectChange = { scope.launch { preferences.setPreferredDialect(it) } },
             preferredTone = preferredTone,
@@ -978,6 +988,8 @@ private fun SettingsDialog(
     onAnalyticsEnabledChange: (Boolean) -> Unit,
     mashaaerEmotionEnabled: Boolean,
     onMashaaerEmotionEnabledChange: (Boolean) -> Unit,
+    softModeEnabled: Boolean = false,
+    onSoftModeEnabledChange: (Boolean) -> Unit = {},
     preferredDialect: String,
     onPreferredDialectChange: (String) -> Unit,
     preferredTone: String,
@@ -1190,6 +1202,12 @@ private fun SettingsDialog(
                     Text("تحليل المشاعر الاختياري (محلي، دون حفظ)", modifier = Modifier.weight(1f))
                     Switch(checked = mashaaerEmotionEnabled,
                         onCheckedChange = onMashaaerEmotionEnabledChange)
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("الشخصية والصوت · Persona & Voice", style = MaterialTheme.typography.titleSmall)
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("الوضع الحنون · Soft mode (أسلوب هادئ ودود)", modifier = Modifier.weight(1f))
+                    Switch(checked = softModeEnabled, onCheckedChange = onSoftModeEnabledChange)
                 }
                 Text("اللهجة", style = MaterialTheme.typography.bodyMedium)
                 Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {

@@ -35,6 +35,7 @@ class AppPreferencesRepository(
     private val neonBackendUrlKey = stringPreferencesKey("neon_backend_url")
     private val useNeonBackendKey = booleanPreferencesKey("use_neon_backend")
     private val lastConversationIdKey = longPreferencesKey("last_conversation_id")
+    private val softModeEnabledKey = booleanPreferencesKey("soft_mode_enabled")
 
     val systemPrompt: Flow<String> = dataStore.data.map { it[systemPromptKey] ?: "" }
     val lastModel: Flow<String> = dataStore.data.map { it[lastModelKey] ?: "deepseek-flash" }
@@ -62,6 +63,8 @@ class AppPreferencesRepository(
     // Last active conversation id (nonsecret); -1 = none. Restored on cold start so the visible
     // chat survives process death.
     val lastConversationId: Flow<Long> = dataStore.data.map { it[lastConversationIdKey] ?: -1L }
+    // Mashaaer Good Mode (الوضع الحنون): opt-in soft response persona. Default OFF.
+    val softModeEnabled: Flow<Boolean> = dataStore.data.map { it[softModeEnabledKey] ?: false }
 
     suspend fun setSystemPrompt(prompt: String) {
         dataStore.edit { prefs ->
@@ -140,6 +143,10 @@ class AppPreferencesRepository(
 
     suspend fun setLastConversationId(id: Long) {
         dataStore.edit { it[lastConversationIdKey] = id }
+    }
+
+    suspend fun setSoftModeEnabled(enabled: Boolean) {
+        dataStore.edit { it[softModeEnabledKey] = enabled }
     }
 
     companion object {
