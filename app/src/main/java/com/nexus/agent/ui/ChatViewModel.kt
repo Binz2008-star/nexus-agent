@@ -37,6 +37,7 @@ import com.nexus.agent.domain.neon.MemoryRecall
 import com.nexus.agent.domain.orchestration.ToolLoop
 import com.nexus.agent.domain.orchestration.ToolProposal
 import com.nexus.agent.domain.persona.EmotionPoetry
+import com.nexus.agent.domain.persona.SoftPersonaPolicy
 import com.nexus.agent.domain.policy.ApprovalGate
 import com.nexus.agent.domain.policy.ApprovalReceipt
 import com.nexus.agent.domain.policy.ApprovalRequest
@@ -374,6 +375,30 @@ class ChatViewModel(
                     repository.persistUserMessage(convId, text.trim())
                     repository.persistAssistantMessage(convId, rememberFact(remembered.fact))
                     return@launch
+                }
+
+                // 2c) Mashaaer Good Mode (الوضع الحنون) activation/deactivation — local, persisted,
+                // before any agent/tool routing. Tools/permissions/approvals are unaffected.
+                when (SoftPersonaPolicy.detectCommand(text.trim())) {
+                    SoftPersonaPolicy.Command.Enable -> {
+                        val convId = _currentConversationId.value ?: repository.createConversation().also {
+                            _currentConversationId.value = it
+                        }
+                        repository.persistUserMessage(convId, text.trim())
+                        preferences.setSoftModeEnabled(true)
+                        repository.persistAssistantMessage(convId, SOFT_MODE_ENABLED_REPLY)
+                        return@launch
+                    }
+                    SoftPersonaPolicy.Command.Disable -> {
+                        val convId = _currentConversationId.value ?: repository.createConversation().also {
+                            _currentConversationId.value = it
+                        }
+                        repository.persistUserMessage(convId, text.trim())
+                        preferences.setSoftModeEnabled(false)
+                        repository.persistAssistantMessage(convId, SOFT_MODE_DISABLED_REPLY)
+                        return@launch
+                    }
+                    null -> Unit
                 }
 
                 // 3) Greeting/small talk → direct concise answer; commands → dedicated flow;
@@ -1018,5 +1043,9 @@ class ChatViewModel(
         private const val REMEMBER_FAILED = "تعذّر حفظها في الذاكرة، حاول لاحقًا."
         private const val REMEMBER_UNAVAILABLE =
             "قاعدة البيانات غير مربوطة بعد — اربطها من الإعدادات أولًا."
+        private const val SOFT_MODE_ENABLED_REPLY =
+            "تم تفعيل الوضع الحنون ✓ سأرد عليك بأسلوب هادئ ودود ومحترم من الآن."
+        private const val SOFT_MODE_DISABLED_REPLY =
+            "تم تعطيل الوضع الحنون ✓ سأعود إلى الأسلوب الافتراضي."
     }
 }
