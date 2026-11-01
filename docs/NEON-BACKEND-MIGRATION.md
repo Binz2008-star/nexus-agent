@@ -1,8 +1,33 @@
 # Neon Backend Migration Plan (secure architecture)
 
-**Status:** proposal — no code, no production-credential change, no user-data migration yet.
+**Status:** Phase A implemented (backend + Android HTTP client behind a flag, off by default).
+Phases B–E pending. No production-credential change, no user-data migration yet.
 **Goal:** remove direct Android→Neon PostgreSQL access so database credentials and privileged
 SQL never live on the device.
+
+## Implementation status (2026-11-01)
+
+- ✅ **Backend** (`backend/main.py` + `backend/sql_queries.py` + `backend/auth.py`): the four
+  endpoints below, hardened: device identity (`NEXUS_KEYS` → name + scopes) + scoped `read`/`write`
+  authorization + per-identity rate limiting + JSON-lines audit log, constant-time bearer, connect
+  timeout, input caps, stable error codes. 34 unit tests, `backend-tests` CI job.
+  Note: endpoint is `/v1/memory/recent` (not `/v1/memory/recall`); `recallMemory` ranking stays
+  on-device (`MemoryRecall`), so the backend only needs the bounded recent-fetch.
+- ✅ **Reproducible Postgres + parity**: `docker-compose.test.yml` + `db/init/*.sql` (two DBs,
+  `pg_trgm`, least-privilege roles, fixtures); 9 integration tests (`pytest -m integration`) cover
+  search/memory/mirror parity (score tolerance + deterministic ordering), permission failures, and
+  error recovery; `test_sql_parity.py` reads `SecondBrainSql.kt` directly. CI job
+  `backend-integration-tests`. The Android `NeonJdbcIntegrationTest` runs the real pgjdbc path
+  against the same Postgres (`jdbc-integration` CI job), so JDBC↔HTTP parity is proven bidirectionally.
+- ✅ **Cloud Run deploy prep** (no billing): `Dockerfile` (non-root), `cloudrun/service.yaml`
+  (scale-to-zero, Secret Manager), `cloudrun/README.md` (secrets/deploy/rollback).
+- ✅ **Android** `NeonHttpClient` (+ `NeonBackendClient` interface) returns the same domain types
+  as the JDBC path. `NeonRepository` routes to HTTP when `use_neon_backend` is on and a client is
+  configured — JDBC stays the default. Settings UI (URL + key + toggle). No Neon credential or
+  backend token is compiled into the APK.
+- ⏳ **Live parity vs Neon staging** and **Phase B/C/D/E** require a Neon staging branch + a
+  deployed backend (owner).
+
 
 ## 1. Current state (risk)
 

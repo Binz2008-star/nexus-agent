@@ -1,0 +1,72 @@
+# Cloud Run service manifest (reference; deploy with `gcloud run deploy` — see cloudrun/README.md).
+#
+# This file documents the intended production shape. It does NOT contain credentials:
+#   - NEON_READ_URL / NEON_WRITE_URL / NEXUS_BACKEND_KEY (or NEXUS_KEYS) are injected from
+#     Google Secret Manager at deploy time (see README §Secrets), never committed here.
+#
+# Activate ONLY after explicit owner authorization (this is billable infrastructure).
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: nexus-neon-backend
+  annotations:
+    # Ingress restricted to HTTPS; the service itself is reached only via the app's bearer auth.
+    run.googleapis.com/ingress: all
+    run.googleapis.com/launch-stage: BETA
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"      # scale-to-zero when idle (no cost at rest)
+        autoscaling.knative.dev/maxScale: "2"      # personal scale; keep the blast radius tiny
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 10
+      timeoutSeconds: 30
+      serviceAccountName: nexus-neon-backend@PROJECT.iam.gserviceaccount.com
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT/nexus/nexus-neon-backend:VERSION
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            # Values come from Secret Manager; the literal strings are references, not secrets.
+            - name: NEON_READ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: neon-read-url
+                  key: latest
+            - name: NEON_WRITE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: neon-write-url
+                  key: latest
+            - name: NEXUS_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: nexus-backend-keys
+                  key: latest
+            - name: NEXUS_CONNECT_TIMEOUT
+              value: "10"
+            - name: NEXUS_RATE_LIMIT_PER_MIN
+              value: "120"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"

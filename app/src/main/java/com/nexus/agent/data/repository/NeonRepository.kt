@@ -2,6 +2,7 @@ package com.nexus.agent.data.repository
 
 import com.nexus.agent.data.remote.NeonJdbc
 import com.nexus.agent.domain.neon.MemoryRecall
+import com.nexus.agent.domain.neon.NeonBackendClient
 import com.nexus.agent.domain.neon.NeonMemoryItem
 import com.nexus.agent.domain.neon.SecondBrainSql
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
@@ -19,12 +20,19 @@ import kotlinx.coroutines.withContext
  *
  * The read and write URLs are supplied by suspend providers (encrypted at rest) and never
  * hardcoded. All JDBC I/O runs on [ioDispatcher]; the pure SQL/mapping lives in [SecondBrainSql].
+ *
+ * When [useBackendProvider] returns true and [httpClient] is configured, the HTTPS backend
+ * ([httpClient]) is used instead of direct JDBC — the controlled migration path away from
+ * on-device credentials. The flag defaults to false, so JDBC remains the default until the
+ * backend is proven equivalent.
  */
 class NeonRepository(
     private val readUrlProvider: suspend () -> String?,
     private val writeUrlProvider: suspend () -> String?,
     private val jdbc: NeonJdbc,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val httpClient: NeonBackendClient? = null,
+    private val useBackendProvider: suspend () -> Boolean = { false }
 ) : KnowledgeTool, ConversationMirror {
 
     override suspend fun search(query: String, topK: Int): KnowledgeSearchResult {
@@ -32,6 +40,10 @@ class NeonRepository(
         if (trimmed.isEmpty()) return KnowledgeSearchResult.Failure(KnowledgeRepository.ERROR_EMPTY)
         val clamped = topK.coerceIn(KnowledgeRepository.MIN_TOP_K, KnowledgeRepository.MAX_TOP_K)
         return withContext(ioDispatcher) {
+            val backend = httpClient
+            if (backend != null && useBackendProvider()) {
+                return@withContext backend.search(trimmed, clamped)
+            }
             val url = readUrl() ?: return@withContext KnowledgeSearchResult.Failure(ERROR_NO_CONNECTION)
             try {
                 val pattern = SecondBrainSql.ilikePattern(trimmed)
@@ -59,6 +71,10 @@ class NeonRepository(
 
     suspend fun saveConversationMessage(sessionId: String, role: String, content: String): Result<Unit> =
         withContext(ioDispatcher) {
+            val backend = httpClient
+            if (backend != null && useBackendProvider()) {
+                return@withContext backend.mirror(sessionId, role, content)
+            }
             try {
                 val url = writeUrl() ?: return@withContext Result.failure(notConfigured())
                 jdbc.execute(url, SecondBrainSql.INSERT_CONVERSATION_SQL, listOf(sessionId, role, content))
@@ -74,6 +90,10 @@ class NeonRepository(
 
     suspend fun saveMemory(type: String, content: String, tags: List<String> = emptyList()): Result<Unit> =
         withContext(ioDispatcher) {
+            val backend = httpClient
+            if (backend != null && useBackendProvider()) {
+                return@withContext backend.saveMemory(type, content, tags)
+            }
             try {
                 val url = writeUrl() ?: return@withContext Result.failure(notConfigured())
                 jdbc.execute(
@@ -92,6 +112,10 @@ class NeonRepository(
 
     suspend fun loadMemory(limit: Int = 50): Result<List<NeonMemoryItem>> =
         withContext(ioDispatcher) {
+            val backend = httpClient
+            if (backend != null && useBackendProvider()) {
+                return@withContext backend.loadMemory(limit.coerceIn(1, 200))
+            }
             try {
                 val url = writeUrl() ?: return@withContext Result.failure(notConfigured())
                 val clamped = limit.coerceIn(1, 200)

@@ -53,6 +53,7 @@ class SecondBrainSqlTest {
     fun errorCodeMapsKnownFailures() {
         assertEquals("no_connection", SecondBrainSql.errorCode(IllegalStateException("no connection")))
         assertEquals("auth", SecondBrainSql.errorCode(RuntimeException("password authentication failed")))
+        assertEquals("permission", SecondBrainSql.errorCode(RuntimeException("permission denied for table nexus_memory")))
         assertEquals("network", SecondBrainSql.errorCode(RuntimeException("Connection refused")))
         assertEquals("not_found", SecondBrainSql.errorCode(RuntimeException("relation does not exist")))
         assertEquals("server", SecondBrainSql.errorCode(RuntimeException("something else")))

@@ -1,6 +1,9 @@
 package com.nexus.agent.data.repository
 
 import com.nexus.agent.data.remote.NeonJdbc
+import com.nexus.agent.domain.model.KnowledgeResult
+import com.nexus.agent.domain.neon.NeonBackendClient
+import com.nexus.agent.domain.neon.NeonMemoryItem
 import com.nexus.agent.domain.neon.SecondBrainSql
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +39,43 @@ class NeonRepositoryTest {
         read: suspend () -> String? = { readUrl },
         write: suspend () -> String? = { writeUrl }
     ) = NeonRepository(read, write, jdbc, Dispatchers.Unconfined)
+
+    private class FakeBackend : NeonBackendClient {
+        var searchResult: KnowledgeSearchResult = KnowledgeSearchResult.Success("", emptyList())
+        var searchCalls = 0
+        var saveMemoryCalls = 0
+        var loadMemoryCalls = 0
+        var mirrorCalls = 0
+        var loadMemoryResult: Result<List<NeonMemoryItem>> = Result.success(emptyList())
+
+        override suspend fun search(query: String, topK: Int): KnowledgeSearchResult {
+            searchCalls++
+            return searchResult
+        }
+
+        override suspend fun saveMemory(type: String, content: String, tags: List<String>): Result<Unit> {
+            saveMemoryCalls++
+            return Result.success(Unit)
+        }
+
+        override suspend fun loadMemory(limit: Int): Result<List<NeonMemoryItem>> {
+            loadMemoryCalls++
+            return loadMemoryResult
+        }
+
+        override suspend fun mirror(sessionId: String, role: String, content: String): Result<Unit> {
+            mirrorCalls++
+            return Result.success(Unit)
+        }
+    }
+
+    private fun repoHttp(
+        jdbc: NeonJdbc,
+        backend: NeonBackendClient?,
+        useBackend: suspend () -> Boolean = { true },
+        read: suspend () -> String? = { readUrl },
+        write: suspend () -> String? = { writeUrl }
+    ) = NeonRepository(read, write, jdbc, Dispatchers.Unconfined, backend, useBackend)
 
     @Test
     fun emptyQueryFailsWithEmpty() = runTest {
@@ -163,5 +203,61 @@ class NeonRepositoryTest {
     fun recallMemoryJdbcErrorReturnsFailureNotThrow() = runTest {
         val jdbc = FakeJdbc().apply { throwOnQuery = RuntimeException("Connection refused") }
         assertTrue(repo(jdbc).recallMemory("q").isFailure)
+    }
+
+    @Test
+    fun backendFlagRoutesSearchToHttpAndSkipsJdbc() = runTest {
+        val jdbc = FakeJdbc()
+        val backend = FakeBackend().apply {
+            searchResult = KnowledgeSearchResult.Success(
+                "hello", listOf(KnowledgeResult("proj", "f.txt", "txt", "hi", 0.9))
+            )
+        }
+        val result = repoHttp(jdbc, backend).search("hello", 8)
+        assertTrue(result is KnowledgeSearchResult.Success)
+        assertEquals(1, (result as KnowledgeSearchResult.Success).results.size)
+        assertEquals(1, backend.searchCalls)
+        assertTrue(jdbc.queries.isEmpty())
+    }
+
+    @Test
+    fun backendFlagRoutesSaveAndLoadToHttp() = runTest {
+        val jdbc = FakeJdbc()
+        val backend = FakeBackend()
+        val r = repoHttp(jdbc, backend)
+        assertTrue(r.saveMemory("fact", "x", listOf("t")).isSuccess)
+        assertTrue(r.saveConversationMessage("s", "user", "hi").isSuccess)
+        assertTrue(r.loadMemory().isSuccess)
+        assertEquals(1, backend.saveMemoryCalls)
+        assertEquals(1, backend.mirrorCalls)
+        assertEquals(1, backend.loadMemoryCalls)
+        assertTrue(jdbc.executions.isEmpty())
+        assertTrue(jdbc.queries.isEmpty())
+    }
+
+    @Test
+    fun backendFlagOffStillUsesJdbc() = runTest {
+        val jdbc = FakeJdbc(
+            mapOf(
+                SecondBrainSql.SEARCH_CHUNKS_SQL to emptyList(),
+                SecondBrainSql.SEARCH_MEMORY_SQL to emptyList()
+            )
+        )
+        val backend = FakeBackend()
+        repoHttp(jdbc, backend, useBackend = { false }).search("hello", 8)
+        assertEquals(0, backend.searchCalls)
+        assertEquals(2, jdbc.queries.size)
+    }
+
+    @Test
+    fun backendFlagOnWithoutClientFallsBackToJdbc() = runTest {
+        val jdbc = FakeJdbc(
+            mapOf(
+                SecondBrainSql.SEARCH_CHUNKS_SQL to emptyList(),
+                SecondBrainSql.SEARCH_MEMORY_SQL to emptyList()
+            )
+        )
+        repoHttp(jdbc, backend = null, useBackend = { true }).search("hello", 8)
+        assertEquals(2, jdbc.queries.size)
     }
 }

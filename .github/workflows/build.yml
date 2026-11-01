@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Cancel superseded runs on the same ref (saves CI minutes; latest commit wins).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Least-privilege: only repo contents read is needed. The debug APK is uploaded to
 # the workflow artifact store (not repo contents), so no id-token/packages/actions:write.
 permissions:
@@ -126,3 +131,101 @@ jobs:
             app/build/outputs/androidTest-results/connected/
           if-no-files-found: ignore
           retention-days: 14
+
+  # Neon backend (Python/FastAPI) — unit + endpoint tests. Independent of the Android build.
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run backend tests
+        run: |
+          cd backend
+          pytest -m "not integration" -q
+
+  # Backend integration/parity tests against a disposable PostgreSQL (no Neon access needed).
+  backend-integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Start disposable PostgreSQL
+        run: |
+          cd backend
+          docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 120
+
+      - name: Run integration tests
+        env:
+          NEON_READ_URL: postgresql://nexus_reader:readerpass@localhost:5432/second_brain
+          NEON_WRITE_URL: postgresql://nexus_writer:writerpass@localhost:5432/personal_ai_core
+          NEXUS_BACKEND_KEY: test-integration-key
+        run: |
+          cd backend
+          pytest -m integration -q
+
+      - name: Tear down PostgreSQL
+        if: always()
+        run: |
+          cd backend
+          docker compose -f docker-compose.test.yml down -v
+
+  # Real-JDBC parity test: the actual Android pgjdbc + NeonJdbcClient + SecondBrainSql path against
+  # the same disposable PostgreSQL the backend integration tests use (JDBC == HTTP proof).
+  jdbc-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Start disposable PostgreSQL
+        run: |
+          cd backend
+          docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 120
+
+      - name: Run JDBC parity test
+        env:
+          # pgjdbc uses jdbc:postgresql://host/db?user=...&password=... (NOT user:pass@host).
+          NEON_READ_URL: jdbc:postgresql://127.0.0.1:5432/second_brain?user=nexus_reader&password=readerpass
+          NEON_WRITE_URL: jdbc:postgresql://127.0.0.1:5432/personal_ai_core?user=nexus_writer&password=writerpass
+        run: ./gradlew testDebugUnitTest --tests "com.nexus.agent.data.repository.NeonJdbcIntegrationTest" --no-daemon
+
+      - name: Dump JDBC test report (on failure)
+        if: failure()
+        run: find app/build/test-results -name '*.xml' -exec cat {} \;
+
+      - name: Tear down PostgreSQL
+        if: always()
+        run: |
+          cd backend
+          docker compose -f docker-compose.test.yml down -v

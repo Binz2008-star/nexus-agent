@@ -74,6 +74,7 @@ import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
 import com.nexus.agent.data.remote.NeonJdbcClient
+import com.nexus.agent.data.remote.NeonHttpClient
 import com.nexus.agent.data.remote.WebFetchClient
 import com.nexus.agent.data.remote.WebSearchApiClient
 import com.nexus.agent.data.repository.ApiKeyReadResult
@@ -183,6 +184,15 @@ fun ChatScreen(
     val preferredTone by preferences.preferredTone.collectAsState(initial = "friendly")
     val mashaaerEmotionEnabled by preferences.mashaaerEmotionEnabled.collectAsState(initial = false)
     val neonRepository = remember {
+        val httpClient = NeonHttpClient(
+            baseUrlProvider = { preferences.neonBackendUrl.first().takeIf { it.isNotBlank() } },
+            apiKeyProvider = {
+                when (val r = secrets.readNeonBackendKey()) {
+                    is ApiKeyReadResult.Present -> r.value
+                    else -> null
+                }
+            }
+        )
         NeonRepository(
             readUrlProvider = {
                 when (val r = secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF)) {
@@ -196,7 +206,9 @@ fun ChatScreen(
                     else -> null
                 }
             },
-            jdbc = NeonJdbcClient()
+            jdbc = NeonJdbcClient(),
+            httpClient = httpClient,
+            useBackendProvider = { preferences.useNeonBackend.first() }
         )
     }
 
@@ -373,6 +385,9 @@ fun ChatScreen(
     var neonWriteDirty by remember { mutableStateOf(false) }
     var hermesEndpointInput by remember { mutableStateOf("") }
     var hermesKeyInput by remember { mutableStateOf("") }
+    var neonBackendUrlInput by remember { mutableStateOf("") }
+    var neonBackendKeyInput by remember { mutableStateOf("") }
+    var useNeonBackend by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
 
     // Import credentials from a user-placed file (nexus-neon-rotation.txt) so they don't need
@@ -421,6 +436,8 @@ fun ChatScreen(
             }
             neonReadDirty = false
             neonWriteDirty = false
+            neonBackendUrlInput = withContext(Dispatchers.IO) { preferences.neonBackendUrl.first() }
+            useNeonBackend = withContext(Dispatchers.IO) { preferences.useNeonBackend.first() }
         }
     }
 
@@ -573,6 +590,12 @@ fun ChatScreen(
             onHermesApiKeyChange = { hermesKeyInput = it },
             hermesState = hermesConnectionState,
             onVerifyHermes = { viewModel.verifyHermes() },
+            useNeonBackend = useNeonBackend,
+            onUseNeonBackendChange = { useNeonBackend = it },
+            neonBackendUrl = neonBackendUrlInput,
+            onNeonBackendUrlChange = { neonBackendUrlInput = it },
+            neonBackendKey = neonBackendKeyInput,
+            onNeonBackendKeyChange = { neonBackendKeyInput = it },
             onDismiss = { showSettings = false },
             onSave = {
                 scope.launch {
@@ -600,6 +623,15 @@ fun ChatScreen(
                             if (neonWriteDirty) {
                                 saveNeonUrl(secrets, neonWriteUrlInput, SecretStorageRepository.NEON_WRITE_URL_PREF)
                             }
+                        }
+                        withContext(Dispatchers.IO) {
+                            // Strip userinfo/path/query — never store credentials in plaintext prefs.
+                            preferences.setNeonBackendUrl(HermesSafety.sanitizeForStorage(neonBackendUrlInput))
+                            preferences.setUseNeonBackend(useNeonBackend)
+                        }
+                        val backendKey = neonBackendKeyInput.trim()
+                        if (backendKey.isNotEmpty()) {
+                            withContext(Dispatchers.IO) { secrets.saveNeonBackendKey(backendKey) }
                         }
                         keyInput = ""
                         showSettings = false
@@ -829,6 +861,12 @@ private fun SettingsDialog(
     onHermesApiKeyChange: (String) -> Unit,
     hermesState: HermesConnectionState,
     onVerifyHermes: () -> Unit,
+    useNeonBackend: Boolean,
+    onUseNeonBackendChange: (Boolean) -> Unit,
+    neonBackendUrl: String,
+    onNeonBackendUrlChange: (String) -> Unit,
+    neonBackendKey: String,
+    onNeonBackendKeyChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
@@ -921,6 +959,38 @@ private fun SettingsDialog(
                     onValueChange = onNeonWriteUrlChange,
                     label = { Text(stringResource(R.string.neon_write_url)) },
                     singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(16.dp))
+                Text("Neon backend · خادم Neon", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Optional: route Neon through an HTTPS backend instead of a direct connection.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Use backend · استخدم الخادم", modifier = Modifier.weight(1f))
+                    Switch(checked = useNeonBackend, onCheckedChange = onUseNeonBackendChange)
+                }
+                OutlinedTextField(
+                    value = neonBackendUrl,
+                    onValueChange = onNeonBackendUrlChange,
+                    label = { Text("Neon backend URL") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = neonBackendKey,
+                    onValueChange = onNeonBackendKeyChange,
+                    label = { Text("Neon backend key") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
@@ -1178,6 +1248,11 @@ private fun mapErrorCode(code: String): String {
         code == "empty_response" -> "Empty response from server"
         code == "timeout" -> "Request timed out"
         code == "network" -> "Network error. Check your connection."
+        code == "no_connection" -> "Neon connection not configured"
+        code == "not_found" -> "Not found"
+        code == "permission" -> "Neon access denied"
+        code == "server" -> "Neon server error"
+        code.startsWith("http_") -> "Neon server error (HTTP ${code.removePrefix("http_")})"
         code.startsWith("api_") -> "API error ${code.removePrefix("api_")}"
         code == "https_required" -> stringResource(R.string.hermes_https_required)
         code == "endpoint" -> stringResource(R.string.hermes_endpoint_invalid)

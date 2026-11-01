@@ -31,6 +31,8 @@ class AppPreferencesRepository(
     private val toneKey = stringPreferencesKey("preferred_tone")
     private val hermesEndpointKey = stringPreferencesKey("hermes_endpoint")
     private val lastEngineKey = stringPreferencesKey("last_engine")
+    private val neonBackendUrlKey = stringPreferencesKey("neon_backend_url")
+    private val useNeonBackendKey = booleanPreferencesKey("use_neon_backend")
 
     val systemPrompt: Flow<String> = dataStore.data.map { it[systemPromptKey] ?: "" }
     val lastModel: Flow<String> = dataStore.data.map { it[lastModelKey] ?: "deepseek-flash" }
@@ -49,6 +51,12 @@ class AppPreferencesRepository(
     val hermesEndpoint: Flow<String> = dataStore.data.map { it[hermesEndpointKey] ?: "" }
     // Last-selected AI engine id ("deepseek" | "hermes"); defaults to DeepSeek.
     val lastEngine: Flow<String> = dataStore.data.map { it[lastEngineKey] ?: "deepseek" }
+    // Non-secret Neon backend origin (e.g. https://nexus-backend.example.com). The bearer key lives
+    // encrypted in SecretStorageRepository; only the host address is stored here.
+    val neonBackendUrl: Flow<String> = dataStore.data.map { it[neonBackendUrlKey] ?: "" }
+    // Feature flag: route Neon reads/writes through the HTTPS backend instead of direct JDBC.
+    // Default false — JDBC stays the default until the backend is proven equivalent.
+    val useNeonBackend: Flow<Boolean> = dataStore.data.map { it[useNeonBackendKey] ?: false }
 
     suspend fun setSystemPrompt(prompt: String) {
         dataStore.edit { prefs ->
@@ -109,6 +117,20 @@ class AppPreferencesRepository(
 
     suspend fun setLastEngine(engineId: String) {
         dataStore.edit { it[lastEngineKey] = engineId }
+    }
+
+    suspend fun setNeonBackendUrl(url: String) {
+        dataStore.edit { prefs ->
+            if (url.isBlank()) {
+                prefs.remove(neonBackendUrlKey)
+            } else {
+                prefs[neonBackendUrlKey] = url.trim()
+            }
+        }
+    }
+
+    suspend fun setUseNeonBackend(enabled: Boolean) {
+        dataStore.edit { it[useNeonBackendKey] = enabled }
     }
 
     companion object {
