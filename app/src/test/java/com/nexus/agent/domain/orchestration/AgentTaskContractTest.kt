@@ -111,6 +111,90 @@ class AgentTaskContractTest {
         assertEquals(ActionEvidenceStatus.VERIFIED, done.evidence.single().status)
     }
 
+    @Test fun newerFailedPostconditionInvalidatesHistoricalVerification() = runTest {
+        val tool = FakeTool()
+        var proposals = 0
+        var checks = 0
+        val outcome = ToolLoop(ToolOrchestrator(mapOf("read_tool" to tool))).run(
+            history, "model", emptyList(),
+            propose = { _, _, _ ->
+                proposals++
+                Result.success(if (proposals == 1) {
+                    ToolProposal.Calls(listOf(ToolCall("read_tool"), ToolCall("read_tool")))
+                } else ToolProposal.Answer("Claimed completion"))
+            },
+            taskContract = AgentTaskContract(
+                actionRequired = true,
+                independentVerificationRequired = true
+            ),
+            independentlyVerify = { _, _ ->
+                checks++
+                checks == 1 // First postcondition passes; the second check fails.
+            }
+        )
+        assertTrue(outcome is ToolLoop.Outcome.Failed)
+        assertEquals(2, checks)
+        assertEquals(2, tool.executions)
+    }
+
+    @Test fun laterVerifiedCheckCanRestoreCurrentPostcondition() = runTest {
+        val tool = FakeTool()
+        var proposals = 0
+        var checks = 0
+        val outcome = ToolLoop(ToolOrchestrator(mapOf("read_tool" to tool))).run(
+            history, "model", emptyList(),
+            propose = { _, _, _ ->
+                proposals++
+                Result.success(if (proposals == 1) {
+                    ToolProposal.Calls(listOf(
+                        ToolCall("read_tool"), ToolCall("read_tool"), ToolCall("read_tool")
+                    ))
+                } else ToolProposal.Answer("Current state verified"))
+            },
+            taskContract = AgentTaskContract(
+                actionRequired = true,
+                independentVerificationRequired = true
+            ),
+            independentlyVerify = { _, _ ->
+                checks++
+                checks != 2
+            }
+        )
+        val done = outcome as ToolLoop.Outcome.Answered
+        assertEquals("Current state verified", done.content)
+        assertEquals(3, checks)
+        assertEquals(
+            listOf(ActionEvidenceStatus.VERIFIED, ActionEvidenceStatus.EXECUTED, ActionEvidenceStatus.VERIFIED),
+            done.evidence.map { it.status }
+        )
+    }
+
+    @Test fun laterBlockedActionCannotReusePreviousVerification() = runTest {
+        val read = FakeTool("read_tool")
+        val blocked = FakeTool("needs_scope", requiredScopes = listOf("test.permission"))
+        val outcome = ToolLoop(
+            ToolOrchestrator(mapOf(read.name to read, blocked.name to blocked))
+        ).run(
+            history, "model", emptyList(),
+            propose = { h, _, _ ->
+                if (h.none { it.text.contains("tool_results") }) {
+                    Result.success(ToolProposal.Calls(listOf(
+                        ToolCall("read_tool"), ToolCall("needs_scope")
+                    )))
+                } else {
+                    Result.success(ToolProposal.Answer("Claimed completion"))
+                }
+            },
+            taskContract = AgentTaskContract(
+                actionRequired = true,
+                independentVerificationRequired = true
+            ),
+            independentlyVerify = { _, _ -> true }
+        )
+        assertTrue(outcome is ToolLoop.Outcome.Failed)
+        assertEquals(0, blocked.executions)
+    }
+
     @Test fun deniedApprovalNeverCountsAsExecution() = runTest {
         val tool = FakeTool("unsafe_tool", RiskLevel.COMMIT)
         val loop = ToolLoop(ToolOrchestrator(mapOf(tool.name to tool), ApprovalGate()),
