@@ -1,22 +1,36 @@
 """NEXUS Neon backend — narrow HTTPS API between the Android app and Neon Postgres.
 
-Purpose: remove direct JDBC from the device. The app calls this service; only this
-service holds the Neon credentials. Reads use the `nexus_reader` URL; writes use the
-`nexus` URL. Every statement is parameterized (no string interpolation of values).
+Purpose: remove direct JDBC from the device. The app calls this service; only this service
+holds the Neon credentials. Reads use the `nexus_reader` URL; writes use the `nexus` URL. Every
+statement is parameterized (no string interpolation of values).
+
+Authentication: bearer key → named identity + scopes (auth.py). Endpoints enforce `read`/`write`
+scopes; a per-identity rate limiter and a JSON-lines audit log (stdout) are always on.
 
 Deploy anywhere (Cloud Run / VPS). Configure via environment:
-  NEON_READ_URL     — read connection URL (Second Brain `chunks_v4` + `memory`)
-  NEON_WRITE_URL    — write connection URL (`personal-ai-core.nexus_memory` / `nexus_conversations`)
-  NEXUS_BACKEND_KEY — bearer token the app must present
+  NEON_READ_URL           — read connection URL (Second Brain `chunks_v4` + `memory`)
+  NEON_WRITE_URL          — write connection URL (`personal-ai-core.nexus_memory` / `nexus_conversations`)
+  NEXUS_BACKEND_KEY       — legacy single bearer token (all scopes)
+  NEXUS_KEYS              — JSON map {"<key>": {"name": ..., "scopes": ["read","write"]}}
+  NEXUS_CONNECT_TIMEOUT   — DB connect timeout (default 10)
+  NEXUS_RATE_LIMIT_PER_MIN — per-identity requests/min (default 120; 0 disables)
 """
 import os
-import secrets
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from auth import (
+    READ_SCOPE,
+    WRITE_SCOPE,
+    Identity,
+    RateLimiter,
+    audit,
+    authenticate,
+    load_identities,
+)
 from sql_queries import (
     INSERT_CONVERSATION_SQL,
     INSERT_MEMORY_SQL,
@@ -43,14 +57,40 @@ _bearer = HTTPBearer(auto_error=False)
 
 READ_URL = os.environ.get("NEON_READ_URL", "")
 WRITE_URL = os.environ.get("NEON_WRITE_URL", "")
-API_KEY = os.environ.get("NEXUS_BACKEND_KEY", "")
 CONNECT_TIMEOUT = int(os.environ.get("NEON_CONNECT_TIMEOUT", "10"))
 
+IDENTITIES: dict[str, Identity] = load_identities()
+RATE_LIMITER = RateLimiter(per_min=int(os.environ.get("NEXUS_RATE_LIMIT_PER_MIN", "120")))
 
-def _require_auth(cred: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> None:
-    # Constant-time compare; also fail closed when no key is configured.
-    if not API_KEY or cred is None or not secrets.compare_digest(cred.credentials, API_KEY):
-        raise HTTPException(status_code=401, detail="unauthorized")
+
+def _require_auth(request: Request, cred: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> Identity:
+    ident = authenticate(IDENTITIES, cred.credentials if cred else None)
+    if ident is None:
+        raise HTTPException(status_code=401, detail="auth")
+    if not RATE_LIMITER.allow(ident.name):
+        raise HTTPException(status_code=429, detail="rate")
+    request.state.identity = ident.name
+    return ident
+
+
+def require_scope(scope: str):
+    def _dependency(request: Request, ident: Identity = Depends(_require_auth)) -> Identity:
+        if scope not in ident.scopes:
+            raise HTTPException(status_code=403, detail="forbidden")
+        request.state.scope = scope
+        return ident
+
+    return _dependency
+
+
+@app.middleware("http")
+async def audit_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path != "/health":
+        identity = getattr(request.state, "identity", None)
+        scope = getattr(request.state, "scope", None)
+        audit(identity, request.method, request.url.path, response.status_code, scope)
+    return response
 
 
 def _connect(url: str) -> psycopg.Connection:
@@ -79,7 +119,7 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-@app.post("/v1/brain/search", dependencies=[Depends(_require_auth)])
+@app.post("/v1/brain/search", dependencies=[Depends(require_scope(READ_SCOPE))])
 def brain_search(req: SearchRequest) -> dict:
     query = req.query.strip()
     if not query:
@@ -107,7 +147,7 @@ def brain_search(req: SearchRequest) -> dict:
         raise HTTPException(status_code=502, detail=error_code(e))
 
 
-@app.post("/v1/memory/save", dependencies=[Depends(_require_auth)])
+@app.post("/v1/memory/save", dependencies=[Depends(require_scope(WRITE_SCOPE))])
 def memory_save(req: MemorySaveRequest) -> dict:
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="empty")
@@ -127,7 +167,7 @@ def memory_save(req: MemorySaveRequest) -> dict:
         raise HTTPException(status_code=502, detail=error_code(e))
 
 
-@app.get("/v1/memory/recent", dependencies=[Depends(_require_auth)])
+@app.get("/v1/memory/recent", dependencies=[Depends(require_scope(READ_SCOPE))])
 def memory_recent(limit: int = Query(default=100, ge=1, le=RECALL_CAP)) -> dict:
     try:
         with _connect(WRITE_URL) as conn:
@@ -139,7 +179,7 @@ def memory_recent(limit: int = Query(default=100, ge=1, le=RECALL_CAP)) -> dict:
         raise HTTPException(status_code=502, detail=error_code(e))
 
 
-@app.post("/v1/transcript/mirror", dependencies=[Depends(_require_auth)])
+@app.post("/v1/transcript/mirror", dependencies=[Depends(require_scope(WRITE_SCOPE))])
 def transcript_mirror(req: MirrorRequest) -> dict:
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="empty")

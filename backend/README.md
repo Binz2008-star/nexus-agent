@@ -42,5 +42,14 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 
 ## Auth
 
-`NEXUS_BACKEND_KEY` is the bearer token the app presents. Generate a long random value and keep it
-out of the repo. The app will send it in `Authorization: Bearer …` and it is never logged.
+The app presents a bearer token in `Authorization: Bearer …`. Each token maps to a named identity
+with scopes (`read` = search/recent, `write` = save/mirror).
+
+- `NEXUS_BACKEND_KEY` — legacy single token (all scopes).
+- `NEXUS_KEYS` — JSON `{"<token>": {"name": "<device>", "scopes": ["read","write"]}}` for
+  device-specific identity and scoped authorization (a backup device can be read-only).
+- Rate limiting: `NEXUS_RATE_LIMIT_PER_MIN` (default 120) per identity; `0` disables.
+- Audit: every authenticated request writes a JSON line to stdout (identity/method/path/status/
+  scope only — never bodies or keys). Cloud Run ships stdout to Cloud Logging.
+
+See `auth.py` and `cloudrun/README.md` for deploy/secret wiring. Never commit a token.

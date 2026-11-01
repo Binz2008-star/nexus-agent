@@ -34,10 +34,12 @@ def _require_db():
 @pytest.fixture()
 def client():
     import main
+    from auth import ALL_SCOPES, Identity, RateLimiter
 
     main.READ_URL = NEON_READ_URL
     main.WRITE_URL = NEON_WRITE_URL
-    main.API_KEY = BACKEND_KEY
+    main.IDENTITIES = {BACKEND_KEY: Identity(name="test", scopes=ALL_SCOPES)}
+    main.RATE_LIMITER = RateLimiter(per_min=0)
 
     from fastapi.testclient import TestClient
 

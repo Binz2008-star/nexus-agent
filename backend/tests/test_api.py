@@ -2,9 +2,11 @@
 from fastapi.testclient import TestClient
 
 import main
+from auth import ALL_SCOPES, Identity, RateLimiter
 
-# Configure a known key for the tests (env vars are read at import time).
-main.API_KEY = "test-secret"
+# Configure a known key for the tests. Rate limiting is disabled so it can't mask other behavior.
+main.IDENTITIES = {"test-secret": Identity(name="test", scopes=ALL_SCOPES)}
+main.RATE_LIMITER = RateLimiter(per_min=0)
 main.READ_URL = "postgresql://reader@host/neondb"
 main.WRITE_URL = "postgresql://writer@host/neondb"
 
@@ -132,12 +134,12 @@ def test_db_error_maps_to_502(monkeypatch):
 
 
 def test_auth_fails_closed_when_no_key_configured():
-    original = main.API_KEY
-    main.API_KEY = ""
+    original = main.IDENTITIES
+    main.IDENTITIES = {}
     try:
         assert client.get("/v1/memory/recent", headers=AUTH).status_code == 401
     finally:
-        main.API_KEY = original
+        main.IDENTITIES = original
 
 
 def test_memory_save_rejects_long_type():
@@ -148,4 +150,39 @@ def test_memory_save_rejects_long_type():
 def test_transcript_mirror_rejects_long_role():
     r = client.post("/v1/transcript/mirror", json={"session_id": "s", "role": "x" * 21, "content": "hi"}, headers=AUTH)
     assert r.status_code == 400
+
+
+def test_readonly_identity_cannot_write():
+    from auth import READ_SCOPE, Identity, RateLimiter
+
+    original_ids = main.IDENTITIES
+    original_rl = main.RATE_LIMITER
+    main.IDENTITIES = {"readonly": Identity(name="ro", scopes=frozenset({READ_SCOPE}))}
+    main.RATE_LIMITER = RateLimiter(per_min=0)
+    try:
+        ro = {"Authorization": "Bearer readonly"}
+        r = client.post("/v1/memory/save", json={"type": "fact", "content": "x"}, headers=ro)
+        assert r.status_code == 403
+    finally:
+        main.IDENTITIES = original_ids
+        main.RATE_LIMITER = original_rl
+
+
+def test_rate_limited_identity_returns_429(monkeypatch):
+    from auth import ALL_SCOPES, Identity, RateLimiter
+
+    original_ids = main.IDENTITIES
+    original_rl = main.RATE_LIMITER
+    main.IDENTITIES = {"limited": Identity(name="limited", scopes=ALL_SCOPES)}
+    main.RATE_LIMITER = RateLimiter(per_min=1)
+    monkeypatch.setattr(main, "_connect", lambda url: FakeConn(rowsets=[[("fact", "c")]]))
+    try:
+        h = {"Authorization": "Bearer limited"}
+        first = client.get("/v1/memory/recent", params={"limit": 10}, headers=h)
+        second = client.get("/v1/memory/recent", params={"limit": 10}, headers=h)
+        assert first.status_code == 200
+        assert second.status_code == 429
+    finally:
+        main.IDENTITIES = original_ids
+        main.RATE_LIMITER = original_rl
 
