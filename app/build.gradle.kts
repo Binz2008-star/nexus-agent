@@ -117,6 +117,9 @@ dependencies {
     implementation("net.openid:appauth:0.11.1")
     implementation("androidx.browser:browser:1.8.0")
 
+    // Web fetch — jsoup for robust HTML → readable-text extraction.
+    implementation("org.jsoup:jsoup:1.17.2")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
