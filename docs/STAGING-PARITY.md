@@ -1,9 +1,9 @@
 # Neon Staging Parity — branch IDs + run procedure
 
-**Status: READY — staging branches are reachable and data-verified (2026-11-01).** Read access and
-data parity with production were confirmed via `psql` (`chunks_v4`=9577, `memory`=31, `nexus_memory`=1,
-`nexus_conversations`=1) and the search SQL returns correct ranked rows. Live parity + memory-persistence
-tests remain the next step (procedure below). This doc records the exact target branch IDs and procedure.
+**Status: ✅ PASSED (2026-11-01) — live backend↔SQL parity ran against Neon staging in CI
+(`staging-parity` workflow, 4/4 tests green).** Search parity (data-agnostic queries), memory
+save/recent round-trip, and transcript mirror all match direct SQL; writes go to staging only and
+are cleaned up. Run procedure below is now automated in `backend/scripts/staging-parity.sh`.
 
 ## Target staging branches (CTO-verified)
 
