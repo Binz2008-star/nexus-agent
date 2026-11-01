@@ -22,6 +22,15 @@ class CiphertextFormatTest {
     }
 
     @Test
+    fun encodeParseRoundTripV2() {
+        val iv = ByteArray(CiphertextFormat.IV_LENGTH) { it.toByte() }
+        val ct = ByteArray(20) { (it + 1).toByte() }
+        val encoded = CiphertextFormat.encode(iv, ct, CiphertextFormat.VERSION_AAD)
+        assertEquals(CiphertextFormat.VERSION_AAD, encoded[0].toInt() and 0xFF)
+        assertEquals(CiphertextFormat.VERSION_AAD, CiphertextFormat.parse(encoded).version)
+    }
+
+    @Test
     fun rejectsTooShortInput() {
         assertThrows(InvalidCiphertextException::class.java) {
             CiphertextFormat.parse(ByteArray(CiphertextFormat.MIN_LENGTH - 1))

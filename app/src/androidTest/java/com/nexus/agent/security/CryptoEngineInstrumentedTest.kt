@@ -34,9 +34,9 @@ class CryptoEngineInstrumentedTest {
     fun stringRoundTripSupportsUnicode() {
         val engine = CryptoEngine(AndroidKeystoreKeyProvider(newAlias()))
         val original = "\u0645\u0631\u062D\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645 \u2014 hello \u4E16\u754C \uD83D\uDD10"
-        val encoded = engine.encryptString(original)
+        val encoded = engine.encryptString(original, "test-slot")
         assertFalse("ciphertext must not contain the plaintext", encoded.contains(original))
-        assertEquals(original, engine.decryptString(encoded))
+        assertEquals(original, engine.decryptString(encoded, "test-slot"))
     }
 
     @Test

@@ -13,8 +13,8 @@ class CryptoEngine(
     private val keyProvider: KeyProvider,
     private val cipher: AesGcmCipher = AesGcmCipher()
 ) : SecretCipher {
-    fun encrypt(plaintext: ByteArray): ByteArray = try {
-        cipher.encrypt(plaintext, keyProvider.getOrCreateKey())
+    fun encrypt(plaintext: ByteArray, aad: ByteArray? = null): ByteArray = try {
+        cipher.encrypt(plaintext, keyProvider.getOrCreateKey(), aad)
     } catch (e: CryptoException) {
         throw e
     } catch (e: KeyStoreException) {
@@ -25,8 +25,8 @@ class CryptoEngine(
         throw CryptoException("encryption failed: ${e.javaClass.simpleName} (${e.message})", e)
     }
 
-    fun decrypt(encoded: ByteArray): ByteArray = try {
-        cipher.decrypt(encoded, keyProvider.getOrCreateKey())
+    fun decrypt(encoded: ByteArray, aad: ByteArray? = null): ByteArray = try {
+        cipher.decrypt(encoded, keyProvider.getOrCreateKey(), aad)
     } catch (e: CryptoException) {
         throw e
     } catch (e: KeyStoreException) {
@@ -37,16 +37,19 @@ class CryptoEngine(
         throw CryptoException("decryption failed: ${e.javaClass.simpleName} (${e.message})", e)
     }
 
-    override fun encryptString(value: String): String =
-        Base64.encodeToString(encrypt(value.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+    override fun encryptString(value: String, context: String): String =
+        Base64.encodeToString(
+            encrypt(value.toByteArray(Charsets.UTF_8), context.toByteArray(Charsets.UTF_8)),
+            Base64.NO_WRAP,
+        )
 
-    override fun decryptString(value: String): String {
+    override fun decryptString(value: String, context: String): String {
         val bytes = try {
             Base64.decode(value, Base64.NO_WRAP)
         } catch (e: IllegalArgumentException) {
             throw InvalidCiphertextException("input is not valid Base64")
         }
-        val plaintext = decrypt(bytes)
+        val plaintext = decrypt(bytes, context.toByteArray(Charsets.UTF_8))
         return try {
             String(plaintext, Charsets.UTF_8)
         } finally {

@@ -32,13 +32,18 @@ class SecretStorageRepositoryTest {
         private val encryptError: CryptoException? = null,
         private val decryptError: CryptoException? = null
     ) : SecretCipher {
-        override fun encryptString(value: String): String {
+        var lastEncryptContext: String? = null
+        var lastDecryptContext: String? = null
+
+        override fun encryptString(value: String, context: String): String {
             encryptError?.let { throw it }
+            lastEncryptContext = context
             return "enc:$value"
         }
 
-        override fun decryptString(value: String): String {
+        override fun decryptString(value: String, context: String): String {
             decryptError?.let { throw it }
+            lastDecryptContext = context
             if (!value.startsWith("enc:")) throw InvalidCiphertextException("not ciphertext")
             return value.removePrefix("enc:")
         }
@@ -150,6 +155,23 @@ class SecretStorageRepositoryTest {
                 val repo = SecretStorageRepository(dataStore, cipher)
                 repo.saveApiKey("sk-test-abc")
                 assertEquals(ApiKeyReadResult.KeyUnavailable, repo.readApiKey())
+            }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun slotNameIsBoundAsAad() {
+        val (dataStore, scope) = createDataStore()
+        try {
+            runBlocking {
+                val cipher = FakeCipher()
+                val repo = SecretStorageRepository(dataStore, cipher)
+                repo.saveNeonBackendKey("sk-backend-123")
+                assertEquals(SecretStorageRepository.NEON_BACKEND_KEY_PREF, cipher.lastEncryptContext)
+                repo.readNeonBackendKey()
+                assertEquals(SecretStorageRepository.NEON_BACKEND_KEY_PREF, cipher.lastDecryptContext)
             }
         } finally {
             scope.cancel()

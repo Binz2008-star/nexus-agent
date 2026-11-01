@@ -70,7 +70,7 @@ class SecretStorageRepository(
 
     /** Generic encrypted-secret storage (used for the DeepSeek key and Neon connection strings). */
     suspend fun saveSecret(name: String, plaintext: String) {
-        val ciphertext = cipher.encryptString(plaintext)
+        val ciphertext = cipher.encryptString(plaintext, name)
         dataStore.edit { it[stringPreferencesKey(name)] = ciphertext }
     }
 
@@ -78,7 +78,7 @@ class SecretStorageRepository(
         val ciphertext = dataStore.data.map { it[stringPreferencesKey(name)] }.first()
             ?: return ApiKeyReadResult.Missing
         return try {
-            ApiKeyReadResult.Present(cipher.decryptString(ciphertext))
+            ApiKeyReadResult.Present(cipher.decryptString(ciphertext, name))
         } catch (e: KeyUnavailableException) {
             ApiKeyReadResult.KeyUnavailable
         } catch (e: CryptoException) {

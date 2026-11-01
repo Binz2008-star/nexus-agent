@@ -13,18 +13,25 @@ import javax.crypto.spec.GCMParameterSpec
  * runs on Android and the JVM (which is what makes the round-trip/tamper unit tests work).
  */
 class AesGcmCipher {
-    fun encrypt(plaintext: ByteArray, key: SecretKey): ByteArray {
+    fun encrypt(plaintext: ByteArray, key: SecretKey, aad: ByteArray? = null): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key)
+        aad?.let { cipher.updateAAD(it) }
         val iv = cipher.iv ?: throw CryptoException("provider did not generate an IV")
-        return CiphertextFormat.encode(iv, cipher.doFinal(plaintext))
+        val version = if (aad != null) CiphertextFormat.VERSION_AAD else CiphertextFormat.VERSION
+        return CiphertextFormat.encode(iv, cipher.doFinal(plaintext), version)
     }
 
-    fun decrypt(encoded: ByteArray, key: SecretKey): ByteArray {
+    fun decrypt(encoded: ByteArray, key: SecretKey, aad: ByteArray? = null): ByteArray {
         val parsed = CiphertextFormat.parse(encoded)
         val cipher = Cipher.getInstance(TRANSFORMATION)
         return try {
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, parsed.iv))
+            // v2+ ciphertext is AAD-bound; v1 legacy ciphertext is not. v1 values decrypt without
+            // AAD so previously-stored secrets migrate losslessly on read.
+            if (parsed.version >= CiphertextFormat.VERSION_AAD) {
+                cipher.updateAAD(aad ?: throw CryptoException("AAD required for AAD-bound ciphertext"))
+            }
             cipher.doFinal(parsed.ciphertextAndTag)
         } catch (e: AEADBadTagException) {
             throw TamperDetectedException(

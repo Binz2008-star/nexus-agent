@@ -11,16 +11,18 @@ package com.nexus.agent.security
  * ambiguity. Pure Kotlin — no Android dependencies, so it is JVM unit-testable.
  */
 object CiphertextFormat {
-    const val VERSION: Int = 1
+    const val VERSION: Int = 1        // legacy: no additional authenticated data (AAD)
+    const val VERSION_AAD: Int = 2    // AAD-bound: ciphertext is tied to its secret slot
     const val IV_LENGTH: Int = 12
     const val TAG_LENGTH: Int = 16
     const val MIN_LENGTH: Int = 1 + IV_LENGTH + TAG_LENGTH // 29
 
     data class Parsed(val version: Int, val iv: ByteArray, val ciphertextAndTag: ByteArray)
 
-    fun encode(iv: ByteArray, ciphertextAndTag: ByteArray): ByteArray {
+    fun encode(iv: ByteArray, ciphertextAndTag: ByteArray, version: Int = VERSION): ByteArray {
         require(iv.size == IV_LENGTH) { "IV must be $IV_LENGTH bytes, got ${iv.size}" }
-        return byteArrayOf(VERSION.toByte()) + iv + ciphertextAndTag
+        require(version == VERSION || version == VERSION_AAD) { "unknown version: $version" }
+        return byteArrayOf(version.toByte()) + iv + ciphertextAndTag
     }
 
     fun parse(encoded: ByteArray): Parsed {
@@ -30,7 +32,7 @@ object CiphertextFormat {
             )
         }
         val version = encoded[0].toInt() and 0xFF
-        if (version != VERSION) {
+        if (version != VERSION && version != VERSION_AAD) {
             throw InvalidCiphertextException("unsupported ciphertext version: $version")
         }
         val iv = encoded.copyOfRange(1, 1 + IV_LENGTH)

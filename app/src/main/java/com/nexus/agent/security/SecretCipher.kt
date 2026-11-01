@@ -6,6 +6,7 @@ package com.nexus.agent.security
  * instead of a real Keystore-backed engine.
  */
 interface SecretCipher {
-    fun encryptString(value: String): String
-    fun decryptString(value: String): String
+    /** [context] is used as GCM additional authenticated data, binding the ciphertext to its slot. */
+    fun encryptString(value: String, context: String): String
+    fun decryptString(value: String, context: String): String
 }
