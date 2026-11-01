@@ -59,11 +59,11 @@ object GmailMessageComposer {
             body.isBlank() || body.length > 40_000 || '\u0000' in body) return null
         val subjectHeader = Base64.getEncoder()
             .encodeToString(headline.toByteArray(StandardCharsets.UTF_8))
-        val mime = "To: $recipient\\r\\n" +
-            "Subject: =?UTF-8?B?$subjectHeader?=\\r\\n" +
-            "MIME-Version: 1.0\\r\\n" +
-            "Content-Type: text/plain; charset=UTF-8\\r\\n" +
-            "Content-Transfer-Encoding: base64\\r\\n\\r\\n" +
+        val mime = "To: $recipient\r\n" +
+            "Subject: =?UTF-8?B?$subjectHeader?=\r\n" +
+            "MIME-Version: 1.0\r\n" +
+            "Content-Type: text/plain; charset=UTF-8\r\n" +
+            "Content-Transfer-Encoding: base64\r\n\r\n" +
             Base64.getMimeEncoder().encodeToString(body.toByteArray(StandardCharsets.UTF_8))
         return Base64.getUrlEncoder().withoutPadding()
             .encodeToString(mime.toByteArray(StandardCharsets.UTF_8))
