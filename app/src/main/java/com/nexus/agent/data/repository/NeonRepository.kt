@@ -21,10 +21,9 @@ import kotlinx.coroutines.withContext
  * The read and write URLs are supplied by suspend providers (encrypted at rest) and never
  * hardcoded. All JDBC I/O runs on [ioDispatcher]; the pure SQL/mapping lives in [SecondBrainSql].
  *
- * When [useBackendProvider] returns true and [httpClient] is configured, the HTTPS backend
- * ([httpClient]) is used instead of direct JDBC — the controlled migration path away from
- * on-device credentials. The flag defaults to false, so JDBC remains the default until the
- * backend is proven equivalent.
+ * When [useBackendProvider] returns true, HTTPS is the ONLY allowed transport.
+ * A missing [httpClient] fails closed instead of silently falling back to direct JDBC.
+ * The flag defaults to false for existing installations until backend parity is verified.
  */
 class NeonRepository(
     private val readUrlProvider: suspend () -> String?,
@@ -40,8 +39,9 @@ class NeonRepository(
         if (trimmed.isEmpty()) return KnowledgeSearchResult.Failure(KnowledgeRepository.ERROR_EMPTY)
         val clamped = topK.coerceIn(KnowledgeRepository.MIN_TOP_K, KnowledgeRepository.MAX_TOP_K)
         return withContext(ioDispatcher) {
-            val backend = httpClient
-            if (backend != null && useBackendProvider()) {
+            if (useBackendProvider()) {
+                val backend = httpClient
+                    ?: return@withContext KnowledgeSearchResult.Failure(ERROR_NO_CONNECTION)
                 return@withContext backend.search(trimmed, clamped)
             }
             val url = readUrl() ?: return@withContext KnowledgeSearchResult.Failure(ERROR_NO_CONNECTION)
@@ -71,8 +71,9 @@ class NeonRepository(
 
     suspend fun saveConversationMessage(sessionId: String, role: String, content: String): Result<Unit> =
         withContext(ioDispatcher) {
-            val backend = httpClient
-            if (backend != null && useBackendProvider()) {
+            if (useBackendProvider()) {
+                val backend = httpClient
+                    ?: return@withContext Result.failure(notConfigured())
                 return@withContext backend.mirror(sessionId, role, content)
             }
             try {
@@ -90,8 +91,9 @@ class NeonRepository(
 
     suspend fun saveMemory(type: String, content: String, tags: List<String> = emptyList()): Result<Unit> =
         withContext(ioDispatcher) {
-            val backend = httpClient
-            if (backend != null && useBackendProvider()) {
+            if (useBackendProvider()) {
+                val backend = httpClient
+                    ?: return@withContext Result.failure(notConfigured())
                 return@withContext backend.saveMemory(type, content, tags)
             }
             try {
@@ -112,8 +114,9 @@ class NeonRepository(
 
     suspend fun loadMemory(limit: Int = 50): Result<List<NeonMemoryItem>> =
         withContext(ioDispatcher) {
-            val backend = httpClient
-            if (backend != null && useBackendProvider()) {
+            if (useBackendProvider()) {
+                val backend = httpClient
+                    ?: return@withContext Result.failure(notConfigured())
                 return@withContext backend.loadMemory(limit.coerceIn(1, 200))
             }
             try {
