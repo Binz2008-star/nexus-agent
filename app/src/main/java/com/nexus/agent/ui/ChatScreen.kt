@@ -223,12 +223,6 @@ fun ChatScreen(
             else ttsSpeaking = false
         }
     }
-    // Autoplay: speak a newly-arrived assistant message once (opt-in).
-    LaunchedEffect(messages.lastOrNull { it.role == ChatMessage.Role.ASSISTANT }?.id) {
-        if (ttsEnabled && ttsAutoplay) {
-            messages.lastOrNull { it.role == ChatMessage.Role.ASSISTANT }?.let { speakText(it.text) }
-        }
-    }
     val neonRepository = remember {
         val httpClient = NeonHttpClient(
             baseUrlProvider = { preferences.neonBackendUrl.first().takeIf { it.isNotBlank() } },
@@ -398,6 +392,12 @@ fun ChatScreen(
     )
 
     val messages by viewModel.messages.collectAsState()
+    // Autoplay: speak a newly-arrived assistant message once (opt-in).
+    LaunchedEffect(messages.lastOrNull { it.role == ChatMessage.Role.ASSISTANT }?.id) {
+        if (ttsEnabled && ttsAutoplay) {
+            messages.lastOrNull { it.role == ChatMessage.Role.ASSISTANT }?.let { speakText(it.text) }
+        }
+    }
     val conversations by viewModel.conversations.collectAsState()
     val currentConversationId by viewModel.currentConversationId.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
