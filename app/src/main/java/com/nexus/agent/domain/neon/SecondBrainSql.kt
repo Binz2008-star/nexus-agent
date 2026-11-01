@@ -76,6 +76,8 @@ object SecondBrainSql {
                 msg.contains("no url", ignoreCase = true) -> "no_connection"
             msg.contains("password authentication failed", ignoreCase = true) ||
                 msg.contains("28P01") -> "auth"
+            msg.contains("permission denied", ignoreCase = true) ||
+                msg.contains("42501") -> "permission"
             msg.contains("does not exist", ignoreCase = true) -> "not_found"
             msg.contains("refused", ignoreCase = true) ||
                 msg.contains("timeout", ignoreCase = true) ||

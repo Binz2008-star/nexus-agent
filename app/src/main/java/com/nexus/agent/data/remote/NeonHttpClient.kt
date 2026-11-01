@@ -184,7 +184,7 @@ class NeonHttpClient(
         const val ERROR_NO_CONNECTION = "no_connection"
 
         /** Backend `error_code()` values that are safe to surface verbatim (mirror the JDBC path). */
-        private val KNOWN_BACKEND_CODES = setOf("auth", "not_found", "network", "server")
+        private val KNOWN_BACKEND_CODES = setOf("auth", "permission", "not_found", "network", "server")
 
         private val JSON = "application/json; charset=utf-8".toMediaType()
 

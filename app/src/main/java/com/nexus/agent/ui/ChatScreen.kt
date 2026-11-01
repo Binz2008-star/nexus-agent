@@ -1250,6 +1250,7 @@ private fun mapErrorCode(code: String): String {
         code == "network" -> "Network error. Check your connection."
         code == "no_connection" -> "Neon connection not configured"
         code == "not_found" -> "Not found"
+        code == "permission" -> "Neon access denied"
         code == "server" -> "Neon server error"
         code.startsWith("http_") -> "Neon server error (HTTP ${code.removePrefix("http_")})"
         code.startsWith("api_") -> "API error ${code.removePrefix("api_")}"

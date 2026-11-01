@@ -1,0 +1,28 @@
+# Disposable PostgreSQL for integration/parity tests. No production data, no Neon access.
+#
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   export NEON_READ_URL='postgresql://nexus_reader:readerpass@localhost:5432/second_brain'
+#   export NEON_WRITE_URL='postgresql://nexus_writer:writerpass@localhost:5432/personal_ai_core'
+#   export NEXUS_BACKEND_KEY='test-integration-key'
+#   pytest -m integration
+#
+#   docker compose -f docker-compose.test.yml down -v   # tear down (drop data volume)
+#
+# The db/init scripts create the two databases (second_brain, personal_ai_core), the least-
+# privilege roles (nexus_reader / nexus_writer), the pg_trgm extension, and realistic fixtures.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

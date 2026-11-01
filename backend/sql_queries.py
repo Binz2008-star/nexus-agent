@@ -51,6 +51,8 @@ def error_code(e: BaseException) -> str:
     msg = str(e)
     if "password authentication failed" in msg or "28P01" in msg:
         return "auth"
+    if "permission denied" in msg or "42501" in msg:
+        return "permission"
     if "does not exist" in msg:
         return "not_found"
     if "refused" in msg or "timeout" in msg or "resolve host" in msg:

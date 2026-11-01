@@ -147,4 +147,41 @@ jobs:
       - name: Run backend tests
         run: |
           cd backend
-          pytest -q
+          pytest -m "not integration" -q
+
+  # Backend integration/parity tests against a disposable PostgreSQL (no Neon access needed).
+  backend-integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Start disposable PostgreSQL
+        run: |
+          cd backend
+          docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 120
+
+      - name: Run integration tests
+        env:
+          NEON_READ_URL: postgresql://nexus_reader:readerpass@localhost:5432/second_brain
+          NEON_WRITE_URL: postgresql://nexus_writer:writerpass@localhost:5432/personal_ai_core
+          NEXUS_BACKEND_KEY: test-integration-key
+        run: |
+          cd backend
+          pytest -m integration -q
+
+      - name: Tear down PostgreSQL
+        if: always()
+        run: |
+          cd backend
+          docker compose -f docker-compose.test.yml down -v
