@@ -25,7 +25,8 @@ object CommandDetector {
             t.contains("قصيدة") || POETRY_WORD.containsMatchIn(t) || t.contains("poem") || t.contains("poetry") -> Command.Poetry
             t.contains("تنفس") || t.contains("تنفّس") || t.contains("breathe") || t.contains("breathing") -> Command.Breathing
             EMAIL_WORD.containsMatchIn(t) ||
-                t.contains("بريد") || t.contains("ايميل") || t.contains("إيميل") || t.contains("رسائل") -> Command.Email
+                t.contains("بريد") || t.contains("ايميل") || t.contains("إيميل") ||
+                t.contains("جيميل") || t.contains("جي ميل") || t.contains("رسائل") -> Command.Email
             else -> null
         }
     }
