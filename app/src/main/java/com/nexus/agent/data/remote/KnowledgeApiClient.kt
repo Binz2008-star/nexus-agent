@@ -3,6 +3,7 @@ package com.nexus.agent.data.remote
 import com.nexus.agent.domain.model.KnowledgeResult
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
