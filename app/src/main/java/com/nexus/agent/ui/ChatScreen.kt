@@ -73,6 +73,7 @@ import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
 import com.nexus.agent.data.remote.NeonJdbcClient
+import com.nexus.agent.data.remote.WebFetchClient
 import com.nexus.agent.data.remote.WebSearchApiClient
 import com.nexus.agent.data.repository.ApiKeyReadResult
 import com.nexus.agent.data.repository.AppPreferencesRepository
@@ -102,6 +103,7 @@ import com.nexus.agent.domain.tool.MemorySaveTool
 import com.nexus.agent.domain.tool.TaskStatus
 import com.nexus.agent.domain.tool.ToolOrchestrator
 import com.nexus.agent.domain.tool.WebSearchAdapter
+import com.nexus.agent.domain.tool.WebFetchTool
 import com.nexus.agent.data.connectors.GoogleAuthManager
 import com.nexus.agent.data.remote.GmailApiClient
 import com.nexus.agent.data.remote.HermesRemoteClientImpl
@@ -268,6 +270,10 @@ fun ChatScreen(
     val memorySaveTool = remember(neonRepository) {
         MemorySaveTool(save = { content -> neonRepository.saveMemory("fact", content) })
     }
+    val webFetchTool = remember {
+        val client = WebFetchClient()
+        WebFetchTool(fetch = { url -> client.fetch(url) })
+    }
     val approvalGate = remember { ApprovalGate() }
     val toolOrchestrator = remember(approvalGate, memorySaveTool) {
         ToolOrchestrator(
@@ -275,7 +281,8 @@ fun ChatScreen(
                 webSearchAdapter.name to webSearchAdapter,
                 knowledgeSearchTool.name to knowledgeSearchTool,
                 gmailSearchTool.name to gmailSearchTool,
-                memorySaveTool.name to memorySaveTool
+                memorySaveTool.name to memorySaveTool,
+                webFetchTool.name to webFetchTool
             ),
             approvalGate
         )
