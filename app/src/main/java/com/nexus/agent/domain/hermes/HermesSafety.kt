@@ -1,6 +1,7 @@
 package com.nexus.agent.domain.hermes
 
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Client-side safety rules for the Hermes connector. The *server* is a separate execution
@@ -26,7 +27,7 @@ object HermesSafety {
         if (trimmed.length > 2048) return failure(ERR_TOO_LONG)
 
         val withScheme = if (trimmed.contains("://")) trimmed else "https://$trimmed"
-        val url = HttpUrl.parse(withScheme) ?: return failure(ERR_MALFORMED)
+        val url = withScheme.toHttpUrlOrNull() ?: return failure(ERR_MALFORMED)
 
         val host = url.host
         if (host.isNullOrEmpty()) return failure(ERR_MALFORMED)
@@ -49,7 +50,7 @@ object HermesSafety {
         val trimmed = raw?.trim().orEmpty()
         if (trimmed.isEmpty()) return ""
         val withScheme = if (trimmed.contains("://")) trimmed else "https://$trimmed"
-        val url = HttpUrl.parse(withScheme) ?: return trimmed
+        val url = withScheme.toHttpUrlOrNull() ?: return trimmed
         val host = url.host ?: return trimmed
         return origin(url, url.scheme, host)
     }
@@ -68,7 +69,7 @@ object HermesSafety {
         return Result.success(key)
     }
 
-    private fun failure(code: String) =
+    private fun failure(code: String): Result<String> =
         Result.failure(IllegalStateException(code))
 
     const val ERR_EMPTY = "hermes_endpoint_empty"
