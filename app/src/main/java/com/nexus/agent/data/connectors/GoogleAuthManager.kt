@@ -10,7 +10,6 @@ import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.auth.api.identity.RevokeAccessRequest
 import com.google.android.gms.common.api.Scope
-import com.nexus.agent.BuildConfig
 import com.nexus.agent.data.repository.SecretStorageRepository
 import com.nexus.agent.domain.connectors.GmailConnector
 import com.nexus.agent.domain.connectors.GoogleAuthSession
@@ -80,10 +79,6 @@ class GoogleAuthManager(
 
     /** This method is called only from the user's explicit Connect button. */
     fun startAuthorization(scopes: List<String>) {
-        if (BuildConfig.GOOGLE_OAUTH_CLIENT_ID.isBlank()) {
-            _error.value = "Google OAuth client ID is missing from this build"
-            return
-        }
         if (!GoogleScopePolicy.isAllowedRequest(scopes)) {
             _error.value = "Unsupported Gmail permission request"
             return
