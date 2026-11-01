@@ -26,6 +26,10 @@ android {
         // contain credentials and are user-supplied + stored encrypted at rest (Settings).
         buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"${System.getenv("GOOGLE_OAUTH_CLIENT_ID") ?: ""}\"")
 
+        // Public PostHog project token (not a secret), supplied by CI/local environment.
+        // Absent configuration keeps telemetry completely disabled.
+        buildConfigField("String", "POSTHOG_PROJECT_TOKEN", "\"${System.getenv("POSTHOG_PROJECT_TOKEN") ?: ""}\"")
+        buildConfigField("String", "POSTHOG_HOST", "\"${System.getenv("POSTHOG_HOST") ?: ""}\"")
     }
 
     // Stable test-signing identity for CI-generated APKs. The keystore + passwords are injected
@@ -98,6 +102,11 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     // Phase 2A: DeepSeek networking
+    // Opt-in anonymous analytics (no screen replay, no sensitive payloads).
+    // Pinned to an exact version: 3.38.0 is the last release whose transitive kotlin-stdlib is
+    // 1.8.x (metadata 1.8.0), readable by this project's Kotlin 1.9.24 compiler. 3.39.0+ pulls
+    // kotlin-stdlib 2.1.x (metadata 2.1.0) and okio 3.11.x, which KSP/Kotlin 1.9 cannot read.
+    implementation("com.posthog:posthog-android:3.38.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

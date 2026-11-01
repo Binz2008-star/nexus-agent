@@ -62,6 +62,8 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          POSTHOG_PROJECT_TOKEN: ${{ secrets.POSTHOG_PROJECT_TOKEN }}
+          POSTHOG_HOST: https://us.i.posthog.com
           TEST_SIGNING_KEYSTORE_PASSWORD: ${{ secrets.TEST_SIGNING_KEYSTORE_PASSWORD }}
           TEST_SIGNING_KEY_ALIAS: nexustest
           TEST_SIGNING_KEY_PASSWORD: ${{ secrets.TEST_SIGNING_KEYSTORE_PASSWORD }}
