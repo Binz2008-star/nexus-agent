@@ -1,18 +1,29 @@
 name: staging-parity
 
+# SECURITY: privileged (uses secrets.NEON against Neon staging). Deliberately NOT triggered by
+# pull_request — untrusted PR changes must never reach Neon credentials. Runs only via manual
+# dispatch by a trusted maintainer, and only after the `staging` environment gate is satisfied.
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'backend/**'
+    inputs:
+      read_branch_id:
+        description: 'Second Brain staging branch id'
+        required: false
+        default: br-snowy-butterfly-av3rwiuh
+      write_branch_id:
+        description: 'Personal AI Core staging branch id'
+        required: false
+        default: br-autumn-haze-b5ecvgmj
 
-# Least-privilege: only repo contents read; the Neon API key is read via secrets.NEON.
 permissions:
   contents: read
 
 jobs:
   staging-parity:
     runs-on: ubuntu-latest
+    # Protected environment: secrets live in the `staging` environment, not repo-level; configure
+    # a required-reviewer / wait-timer gate here (Settings -> Environments -> staging).
+    environment: staging
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,15 +38,12 @@ jobs:
           cd backend
           pip install -r requirements.txt -r requirements-dev.txt
 
-      # Live parity against Neon staging branches (never production). The connection strings are
-      # fetched at run time via neonctl + secrets.NEON; they are never committed or logged (GitHub
-      # masks the password-bearing strings in logs).
       - name: Run staging parity
         env:
           NEON_API_KEY: ${{ secrets.NEON }}
           NEON_ORG_ID: org-wandering-dew-97098159
           READ_PROJECT_ID: misty-sun-80388989
-          READ_BRANCH_ID: br-snowy-butterfly-av3rwiuh
+          READ_BRANCH_ID: ${{ inputs.read_branch_id || 'br-snowy-butterfly-av3rwiuh' }}
           WRITE_PROJECT_ID: jolly-math-11598326
-          WRITE_BRANCH_ID: br-autumn-haze-b5ecvgmj
+          WRITE_BRANCH_ID: ${{ inputs.write_branch_id || 'br-autumn-haze-b5ecvgmj' }}
         run: bash backend/scripts/staging-parity.sh
