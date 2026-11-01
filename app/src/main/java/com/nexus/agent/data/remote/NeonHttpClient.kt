@@ -164,7 +164,8 @@ class NeonHttpClient(
     /** Prefers the backend's stable, non-sensitive `detail` code; otherwise maps the HTTP status. */
     private fun errorCodeFrom(resp: Response): String {
         val detail = try {
-            json.decodeFromString<ErrorResponse>(resp.body?.string().orEmpty()).detail
+            // Cap the error-body read so a misbehaving backend can't force an unbounded buffer.
+            json.decodeFromString<ErrorResponse>(resp.peekBody(MAX_ERROR_BODY_BYTES).string()).detail
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -185,6 +186,9 @@ class NeonHttpClient(
 
         /** Backend `error_code()` values that are safe to surface verbatim (mirror the JDBC path). */
         private val KNOWN_BACKEND_CODES = setOf("auth", "permission", "not_found", "network", "server")
+
+        /** Maximum bytes of an error response body to buffer when extracting a detail code. */
+        private const val MAX_ERROR_BODY_BYTES = 4096L
 
         private val JSON = "application/json; charset=utf-8".toMediaType()
 
