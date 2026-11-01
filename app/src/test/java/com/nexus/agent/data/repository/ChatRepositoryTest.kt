@@ -17,7 +17,7 @@ import org.junit.Test
 
 class ChatRepositoryTest {
     private class FakeDao : MessageDao {
-        private val store = mutableListOf<MessageEntity>()
+        val store = mutableListOf<MessageEntity>()
         private val flow = MutableStateFlow<List<MessageEntity>>(emptyList())
         override suspend fun insert(message: MessageEntity): Long {
             val withId = message.copy(id = (store.size + 1).toLong())
@@ -242,5 +242,14 @@ class ChatRepositoryTest {
         assertEquals(1, history.size)
         assertEquals(ChatMessage.Role.USER, history[0].role)
         assertEquals("hi", history[0].text)
+    }
+
+    @Test
+    fun deleteConversation_removesMessages() = runBlocking {
+        val dao = FakeDao()
+        dao.insert(MessageEntity.fromDomain(ChatMessage(ChatMessage.Role.USER, "hi"), 7L))
+        val r = repo(dao, FakeClient(emptyList()))
+        r.deleteConversation(7L)
+        assertTrue(dao.store.isEmpty())
     }
 }
