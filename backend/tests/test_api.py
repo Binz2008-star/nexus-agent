@@ -168,6 +168,18 @@ def test_readonly_identity_cannot_write():
         main.RATE_LIMITER = original_rl
 
 
+def test_body_size_limit_rejects_oversized():
+    # A >MAX_BODY_BYTES payload is rejected (413) before pydantic ever parses it.
+    big = ("x" * (main.MAX_BODY_BYTES + 1)).encode()
+    r = client.post(
+        "/v1/memory/save",
+        content=big,
+        headers={**AUTH, "Content-Type": "application/json"},
+    )
+    assert r.status_code == 413
+    assert r.json()["detail"] == "body_too_large"
+
+
 def test_rate_limited_identity_returns_429(monkeypatch):
     from auth import ALL_SCOPES, Identity, RateLimiter
 

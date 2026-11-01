@@ -21,6 +21,7 @@ import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 
 from auth import (
     READ_SCOPE,
@@ -105,6 +106,20 @@ async def audit_middleware(request: Request, call_next):
         scope = getattr(request.state, "scope", None)
         audit(identity, request.method, request.url.path, response.status_code, scope)
     return response
+
+
+# Reject oversized request bodies before pydantic parses them (defense-in-depth against
+# memory-exhaustion DoS). Content-Length covers the common client case; a chunked body still
+# relies on the reverse proxy (Cloud Run) for a hard upper bound.
+MAX_BODY_BYTES = 64 * 1024
+
+
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length is not None and content_length.isdigit() and int(content_length) > MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"detail": "body_too_large"})
+    return await call_next(request)
 
 
 def _connect(url: str) -> psycopg.Connection:
