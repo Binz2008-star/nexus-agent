@@ -27,11 +27,17 @@ class ChatRepositoryTest {
         }
         override fun getByConversation(conversationId: Long): Flow<List<MessageEntity>> = flow.asStateFlow()
         override suspend fun getByConversationOnce(conversationId: Long): List<MessageEntity> = store.toList()
+        override suspend fun deleteByConversation(conversationId: Long) {
+            store.removeAll { it.conversationId == conversationId }
+            flow.value = store.toList()
+        }
     }
 
     private class FakeConversationDao : ConversationDao {
         override suspend fun insert(conversation: ConversationEntity): Long = 1L
         override fun getAll(): Flow<List<ConversationEntity>> = flowOf(emptyList())
+        override suspend fun getById(id: Long): ConversationEntity? = null
+        override suspend fun getMostRecent(): ConversationEntity? = null
         override suspend fun updateTitleAndTimestamp(id: Long, title: String, ts: Long) {}
         override suspend fun delete(id: Long) {}
     }
