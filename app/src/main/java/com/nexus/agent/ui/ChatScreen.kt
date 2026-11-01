@@ -194,7 +194,14 @@ fun ChatScreen(
             },
             systemPromptProvider = { preferences.systemPrompt.first() },
             router = router,
-            personaProvider = { personaInstruction },
+            personaProvider = {
+                // Read current persisted preferences at request-time (repository is remembered).
+                val selectedDialect = preferences.preferredDialect.first()
+                val selectedTone = Tone.fromId(preferences.preferredTone.first())
+                val dialect = if (selectedDialect == "auto") regionToDialect(cultureContext.region)
+                    else Dialect.fromId(selectedDialect)
+                AdaptiveTone.buildRewriteInstruction(dialect, selectedTone)
+            },
             mashaaerEmotionEnabledProvider = { preferences.mashaaerEmotionEnabled.first() },
             mirror = object : ConversationMirror {
                 override suspend fun mirror(sessionId: String, role: String, content: String) {
