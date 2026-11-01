@@ -10,6 +10,12 @@ interface MessageDao {
     @Insert
     suspend fun insert(message: MessageEntity): Long
 
+    @Query("SELECT COUNT(*) FROM messages")
+    suspend fun countMessages(): Int
+
+    @Query("SELECT COUNT(*) FROM messages m LEFT JOIN conversations c ON c.id = m.conversationId WHERE c.id IS NULL")
+    suspend fun countOrphanedMessages(): Int
+
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp ASC, id ASC")
     fun getByConversation(conversationId: Long): Flow<List<MessageEntity>>
 
