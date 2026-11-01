@@ -19,7 +19,7 @@ object EmailIntentRouter {
     private val englishReadVerb = Regex("^(check|read|search|show|list|find|review|summarize|fetch|scan)\\b")
     private val arabicReadVerb = Regex("^(تفقد|اقرأ|ابحث|اعرض|أظهر|افحص|استعرض|راجع|لخص|شوف|ورجيني|اطلع)(?:\\s|$)")
     private val englishWriteVerb = Regex("\\b(send|compose|draft|reply|forward|write|create|delete|archive|modify|label)\\b")
-    private val arabicWriteVerb = Regex("(أرسل|ارسل|ابعت|ابعث|اكتب|صغ|جهز|رد على|أجب|حوّل|حول|احذف|امسح|أرشف|ارشِف)")
+    private val arabicWriteVerb = Regex("(أرسل|ارسل|ابعت|ابعث|اكتب|صغ|جهز|رد على|أجب|حوّل|احذف|امسح|أرشف|ارشِف)")
 
     fun classify(message: String): EmailIntent {
         val normalized = message.trim().lowercase().replace(Regex("\\s+"), " ")
