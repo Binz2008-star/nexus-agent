@@ -24,13 +24,13 @@ android {
         // Google OAuth client id for the connectors (Gmail). Injected at CI build time; a client
         // id is public (not a secret). Neon connection URLs are deliberately NOT baked in — they
         // contain credentials and are user-supplied + stored encrypted at rest (Settings).
-        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"\u0024{System.getenv("GOOGLE_OAUTH_CLIENT_ID") ?: ""}\"")
+        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"${System.getenv("GOOGLE_OAUTH_CLIENT_ID") ?: ""}\"")
 
         // AppAuth's manifest declares a redirect receiver using this placeholder.
         // Public PostHog project token (not a secret), supplied by CI/local environment.
         // Absent configuration keeps telemetry completely disabled.
-        buildConfigField("String", "POSTHOG_PROJECT_TOKEN", "\\"\u0024{System.getenv("POSTHOG_PROJECT_TOKEN") ?: ""}\\"")
-        buildConfigField("String", "POSTHOG_HOST", "\\"\u0024{System.getenv("POSTHOG_HOST") ?: ""}\\"")
+        buildConfigField("String", "POSTHOG_PROJECT_TOKEN", "\"${System.getenv("POSTHOG_PROJECT_TOKEN") ?: ""}\"")
+        buildConfigField("String", "POSTHOG_HOST", "\"${System.getenv("POSTHOG_HOST") ?: ""}\"")
 
         manifestPlaceholders["appAuthRedirectScheme"] = "com.nexus.agent"
     }
