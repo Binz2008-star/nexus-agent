@@ -473,38 +473,15 @@ fun ChatScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Image(
-                            painter = painterResource(R.drawable.nexus_logo_premium_dark),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleMedium)
-                    }
-                },
-                actions = {
-                    TextButton(onClick = { viewModel.createNewConversation() }) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(stringResource(R.string.new_chat))
-                    }
-                    IconButton(onClick = { showHistory = true }) {
-                        Icon(Icons.AutoMirrored.Filled.List, contentDescription = "History")
-                    }
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
+            NexusXHeader(
+                engineLabel = if (selectedEngine == AiEngine.HERMES) "Hermes" else "DeepSeek",
+                conversationCount = conversations.size,
+                onNewChat = { viewModel.createNewConversation() },
+                onHistory = { showHistory = true },
+                onSettings = { showSettings = true }
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             AnimatedVisibility(visible = errorMessage != null, enter = fadeIn(), exit = fadeOut()) {
@@ -540,6 +517,13 @@ fun ChatScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                if (messages.isEmpty() && streamingText.isEmpty() && !isLoading) {
+                    item(key = "nexus-x-welcome") {
+                        NexusXWelcome(onSuggestionSelected = { suggestion ->
+                            input = suggestion
+                        })
+                    }
+                }
                 items(messages, key = { it.id }) { message ->
                     MessageBubble(message)
                 }
@@ -835,39 +819,53 @@ private fun Composer(
     onSend: () -> Unit
 ) {
     Surface(
-        tonalElevation = 3.dp,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp,
+        shadowElevation = 4.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text(stringResource(R.string.type_message)) },
-                enabled = enabled,
-                maxLines = 5,
-                shape = RoundedCornerShape(24.dp)
-            )
-            Spacer(Modifier.width(4.dp))
-            IconButton(
-                onClick = onSend,
-                enabled = sendEnabled,
-                modifier = Modifier.size(48.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    Icons.Default.Send,
-                    contentDescription = stringResource(R.string.send),
-                    tint = if (sendEnabled)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("اكتب رسالتك هنا…") },
+                    enabled = enabled,
+                    maxLines = 5,
+                    shape = RoundedCornerShape(22.dp)
                 )
+                Spacer(Modifier.width(8.dp))
+                IconButton(
+                    onClick = onSend,
+                    enabled = sendEnabled,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (sendEnabled) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                ) {
+                    Icon(
+                        Icons.Default.Send,
+                        contentDescription = stringResource(R.string.send),
+                        tint = if (sendEnabled) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "الردود والمعلومات الحساسة قد تحتاج إلى مراجعتك.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall
+            )
         }
     }
 }
@@ -1001,11 +999,18 @@ private fun SettingsDialog(
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
+    var selectedSection by remember { mutableStateOf(NexusXSettingsSection.SERVICES) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.settings)) },
+        title = { Text("NEXUS X · الإعدادات") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                NexusXSettingsNavigation(
+                    selected = selectedSection,
+                    onSelect = { selectedSection = it }
+                )
+                Spacer(Modifier.height(16.dp))
+                if (selectedSection == NexusXSettingsSection.SERVICES) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -1065,6 +1070,8 @@ private fun SettingsDialog(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                }
+                if (selectedSection == NexusXSettingsSection.AI) {
                 TextButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.import_from_file))
                 }
@@ -1083,6 +1090,8 @@ private fun SettingsDialog(
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(16.dp))
+                }
+                if (selectedSection == NexusXSettingsSection.KNOWLEDGE) {
                 OutlinedTextField(
                     value = neonReadUrl,
                     onValueChange = onNeonReadUrlChange,
@@ -1145,6 +1154,8 @@ private fun SettingsDialog(
                     shape = RoundedCornerShape(12.dp)
                 )
                 Spacer(Modifier.height(16.dp))
+                }
+                if (selectedSection == NexusXSettingsSection.ADVANCED) {
                 OutlinedTextField(
                     value = systemPrompt,
                     onValueChange = onSystemPromptChange,
@@ -1185,6 +1196,8 @@ private fun SettingsDialog(
                     )
                 }
                 Spacer(Modifier.height(16.dp))
+                }
+                if (selectedSection == NexusXSettingsSection.PERSONA) {
                 Text("Mashaaer · مشاعر", style = MaterialTheme.typography.titleSmall)
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("تحليل المشاعر الاختياري (محلي، دون حفظ)", modifier = Modifier.weight(1f))
@@ -1210,6 +1223,8 @@ private fun SettingsDialog(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                }
+                if (selectedSection == NexusXSettingsSection.KNOWLEDGE) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -1225,6 +1240,8 @@ private fun SettingsDialog(
                     )
                 }
                 Spacer(Modifier.height(16.dp))
+                }
+                if (selectedSection == NexusXSettingsSection.AI) {
                 EngineSelector(selectedEngine, hermesReady, onEngineChange)
                 Spacer(Modifier.height(16.dp))
                 HermesSettingsSection(
@@ -1235,6 +1252,7 @@ private fun SettingsDialog(
                     state = hermesState,
                     onVerify = onVerifyHermes
                 )
+                }
             }
         },
         confirmButton = {
