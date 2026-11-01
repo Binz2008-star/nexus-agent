@@ -66,3 +66,32 @@ object EmailTaskMessages {
 
     const val NO_MATCHES = "اكتمل البحث في Gmail ولم أجد رسائل مطابقة. لم أستخدم بيانات افتراضية."
 }
+
+/**
+ * Extracts a mailbox query from an explicit read intent without sending the command words
+ * themselves to Gmail. Blank/general requests list recent inbox messages.
+ */
+object GmailQueryParser {
+    private val englishPrefix = Regex(
+        "^(check|read|search|show|list|find|review|summarize|fetch|scan)\\\\s+(me\\\\s+)?(my\\\\s+)?(emails?|inbox|gmail|mail|messages)(\\\\s+(for|about|regarding))?\\\\s*",
+        RegexOption.IGNORE_CASE
+    )
+    private val arabicPrefix = Regex(
+        "^(تفقد|اقرأ|ابحث|اعرض|أظهر|افحص|استعرض|راجع|لخص|شوف|ورجيني|اطلع)\\\\s+(في\\\\s+)?(بريدي|ايميلي|إيميلي|رسائلي|رسائل البريد|رسائل|البريد|الايميل|الإيميل|جيميل|جي ميل)(\\\\s+(عن|بخصوص|حول))?\\\\s*"
+    )
+    private val arabicLatest = Regex(
+        "^(تفقد|اقرأ|اعرض|أظهر|افحص|راجع|استعرض|شوف)\\\\s+(آخر|اخر|أحدث|احدث|الجديدة|جديدة)\\\\s+(رسائلي|الرسائل|البريد|الإيميلات|ايميلاتي)\\\\s*$"
+    )
+    private val englishLatest = Regex(
+        "^(check|read|show|list|review)\\\\s+(my\\\\s+)?(latest|recent|new|last)\\\\s+(emails?|messages|gmail|mail|inbox)\\\\s*$",
+        RegexOption.IGNORE_CASE
+    )
+
+    fun fromReadRequest(message: String): String {
+        val trimmed = message.trim()
+        if (trimmed.isBlank() || arabicLatest.matches(trimmed) ||
+            englishLatest.matches(trimmed)) return "in:inbox"
+        val cleaned = trimmed.replace(englishPrefix, "").replace(arabicPrefix, "").trim()
+        return cleaned.ifBlank { "in:inbox" }
+    }
+}
