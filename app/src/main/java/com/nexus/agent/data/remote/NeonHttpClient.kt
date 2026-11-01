@@ -1,6 +1,7 @@
 package com.nexus.agent.data.remote
 
 import com.nexus.agent.domain.model.KnowledgeResult
+import com.nexus.agent.domain.neon.NeonBackendClient
 import com.nexus.agent.domain.neon.NeonMemoryItem
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import kotlinx.coroutines.CancellationException
@@ -62,9 +63,9 @@ class NeonHttpClient(
     private val apiKeyProvider: suspend () -> String?,
     private val httpClient: OkHttpClient = defaultClient(),
     private val json: Json = Json { ignoreUnknownKeys = true }
-) {
+) : NeonBackendClient {
 
-    suspend fun search(query: String, topK: Int): KnowledgeSearchResult {
+    override suspend fun search(query: String, topK: Int): KnowledgeSearchResult {
         val base = base() ?: return KnowledgeSearchResult.Failure(ERROR_NO_CONNECTION)
         val key = key() ?: return KnowledgeSearchResult.Failure(ERROR_NO_CONNECTION)
         val body = json.encodeToString(BrainSearchRequest(query, topK))
@@ -82,7 +83,7 @@ class NeonHttpClient(
         }
     }
 
-    suspend fun saveMemory(type: String, content: String, tags: List<String>): Result<Unit> {
+    override suspend fun saveMemory(type: String, content: String, tags: List<String>): Result<Unit> {
         val base = base() ?: return Result.failure(IOException(ERROR_NO_CONNECTION))
         val key = key() ?: return Result.failure(IOException(ERROR_NO_CONNECTION))
         val body = json.encodeToString(MemorySaveRequest(type, content, tags))
@@ -99,7 +100,7 @@ class NeonHttpClient(
         }
     }
 
-    suspend fun loadMemory(limit: Int): Result<List<NeonMemoryItem>> {
+    override suspend fun loadMemory(limit: Int): Result<List<NeonMemoryItem>> {
         val base = base() ?: return Result.failure(IOException(ERROR_NO_CONNECTION))
         val key = key() ?: return Result.failure(IOException(ERROR_NO_CONNECTION))
         val request = requestBuilder("$base/v1/memory/recent?limit=$limit", key).get().build()
@@ -116,7 +117,7 @@ class NeonHttpClient(
         }
     }
 
-    suspend fun mirror(sessionId: String, role: String, content: String): Result<Unit> {
+    override suspend fun mirror(sessionId: String, role: String, content: String): Result<Unit> {
         val base = base() ?: return Result.failure(IOException(ERROR_NO_CONNECTION))
         val key = key() ?: return Result.failure(IOException(ERROR_NO_CONNECTION))
         val body = json.encodeToString(MirrorRequest(sessionId, role, content))

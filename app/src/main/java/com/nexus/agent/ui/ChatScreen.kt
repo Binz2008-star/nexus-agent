@@ -74,6 +74,7 @@ import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.network.DeepSeekClient
 import com.nexus.agent.data.remote.NeonJdbcClient
+import com.nexus.agent.data.remote.NeonHttpClient
 import com.nexus.agent.data.remote.WebFetchClient
 import com.nexus.agent.data.remote.WebSearchApiClient
 import com.nexus.agent.data.repository.ApiKeyReadResult
@@ -183,6 +184,15 @@ fun ChatScreen(
     val preferredTone by preferences.preferredTone.collectAsState(initial = "friendly")
     val mashaaerEmotionEnabled by preferences.mashaaerEmotionEnabled.collectAsState(initial = false)
     val neonRepository = remember {
+        val httpClient = NeonHttpClient(
+            baseUrlProvider = { preferences.neonBackendUrl.first().takeIf { it.isNotBlank() } },
+            apiKeyProvider = {
+                when (val r = secrets.readNeonBackendKey()) {
+                    is ApiKeyReadResult.Present -> r.value
+                    else -> null
+                }
+            }
+        )
         NeonRepository(
             readUrlProvider = {
                 when (val r = secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF)) {
@@ -196,7 +206,9 @@ fun ChatScreen(
                     else -> null
                 }
             },
-            jdbc = NeonJdbcClient()
+            jdbc = NeonJdbcClient(),
+            httpClient = httpClient,
+            useBackendProvider = { preferences.useNeonBackend.first() }
         )
     }
 
