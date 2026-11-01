@@ -25,6 +25,7 @@ class AppPreferencesRepository(
     private val lastModelKey = stringPreferencesKey("last_model")
     private val knowledgeBaseUrlKey = stringPreferencesKey("knowledge_base_url")
     private val mirrorEnabledKey = booleanPreferencesKey("mirror_enabled")
+    private val analyticsEnabledKey = booleanPreferencesKey("analytics_enabled")
     private val mashaaerEnabledKey = booleanPreferencesKey("mashaaer_emotion_enabled")
     private val dialectKey = stringPreferencesKey("preferred_dialect")
     private val toneKey = stringPreferencesKey("preferred_tone")
@@ -34,6 +35,8 @@ class AppPreferencesRepository(
     val knowledgeBaseUrl: Flow<String> = dataStore.data.map { it[knowledgeBaseUrlKey] ?: "" }
     // Opt-in (default false): mirroring full transcripts to Neon is off unless the user enables it.
     val mirrorEnabled: Flow<Boolean> = dataStore.data.map { it[mirrorEnabledKey] ?: false }
+    // No consent means no telemetry. Stored locally, separate from chat mirroring.
+    val analyticsEnabled: Flow<Boolean> = dataStore.data.map { it[analyticsEnabledKey] ?: false }
     // Explicit opt-in. Only transient per-message emotional cues are computed; never persisted.
     val mashaaerEmotionEnabled: Flow<Boolean> =
         dataStore.data.map { it[mashaaerEnabledKey] ?: false }
@@ -66,6 +69,10 @@ class AppPreferencesRepository(
 
     suspend fun setMirrorEnabled(enabled: Boolean) {
         dataStore.edit { it[mirrorEnabledKey] = enabled }
+    }
+
+    suspend fun setAnalyticsEnabled(enabled: Boolean) {
+        dataStore.edit { it[analyticsEnabledKey] = enabled }
     }
 
     suspend fun setMashaaerEmotionEnabled(enabled: Boolean) {
