@@ -75,18 +75,25 @@ Conflict surface is concentrated in `ChatScreen.kt` + `build.gradle.kts`. Least-
 
 ---
 
-## 6. Security findings (pre-existing, from main audit)
+## 6. Security findings
 
 - 🔴 **Direct Android→PostgreSQL** with on-device-decryptable Neon credentials + a broad `nexus` role
-  (`docs/PRODUCTION-HARDENING.md`); the single biggest pre-release risk. Owner-gated.
-- 🟠 **Gmail id_token `email` not signature-verified** (`GoogleAuthManager.emailFromIdToken`) — base64-decode
-  only; display-only but a real crypto gap.
-- 🟡 Dead/orphaned code: `KnowledgeApiClient`, `KnowledgeRepository`, inert `knowledgeBaseUrl` settings field
-  (silent no-op), `McpBridge`, orphaned ViewModel search APIs, unwired action-contract verification.
-- 🟡 `ChatViewModel` God-object + manual composition root; non-streaming primary agentic path.
+  (`docs/PRODUCTION-HARDENING.md`); the single biggest pre-release risk. **Migration plan prepared**
+  (`docs/NEON-BACKEND-MIGRATION.md`): a thin HTTPS backend between the app and Neon, least-privilege
+  SQL roles, phased non-disruptive rollout. Owner-gated — no production-credential change yet.
+- ✅ **Gmail email verification — FIXED by PR #13.** The GWS rewrite replaced the unverified id_token
+  JWT decode with Google Identity Services (`toGoogleSignInAccount()`) plus HTTPS + `Authorization:
+  Bearer` calls to Google's `userinfo`/`gmail profile`/`drive about` endpoints, gated on
+  `email_verified=true`. Verified in `GoogleAuthManager.fetchProfileEmail`.
+- ⚠️ **PostHog host region** is CI-injected as `https://us.i.posthog.com` (US). Owner must confirm this
+  matches the actual PostHog project region (US vs EU). SDK is pinned (`3.38.0`) and disabled by
+  default (`optOut=true`, `PersonProfiles.NEVER`, all auto-capture off).
+- 🟡 Dead/orphaned code: `KnowledgeApiClient`, `KnowledgeRepository`, inert `knowledgeBaseUrl` settings
+  field (silent no-op), `McpBridge`, orphaned ViewModel search APIs, unwired action-contract
+  verification. Deferred for a dedicated cleanup pass (touches Settings UI + tests).
 
-None of the four PRs introduce a new secret-leak path; PostHog is opt-in (`optOut=true`, empty properties),
-and Hermes/web_fetch keys stay encrypted + never logged.
+None of the four PRs introduce a new secret-leak path; PostHog is opt-in (`optOut=true`, empty
+properties), and Hermes/web_fetch keys stay encrypted + never logged.
 
 ---
 
