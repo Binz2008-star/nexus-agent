@@ -26,13 +26,27 @@ class NeonJdbcIntegrationTest {
 
     private val jdbc = NeonJdbcClient()
 
+    private fun <T> query(url: String, sql: String, params: List<Any?>, mapper: (List<Any?>) -> T): List<T> =
+        try {
+            jdbc.query(url, sql, params, mapper)
+        } catch (e: Exception) {
+            throw AssertionError("url=$url :: ${e}", e)
+        }
+
+    private fun execute(url: String, sql: String, params: List<Any?>): Int =
+        try {
+            jdbc.execute(url, sql, params)
+        } catch (e: Exception) {
+            throw AssertionError("url=$url :: ${e}", e)
+        }
+
     private fun search(query: String, topK: Int): List<KnowledgeResult> {
         val pattern = SecondBrainSql.ilikePattern(query)
-        val chunks = jdbc.query(
+        val chunks = query(
             readUrl, SecondBrainSql.SEARCH_CHUNKS_SQL,
             listOf(query, pattern, topK), SecondBrainSql::mapChunkRow
         )
-        val memory = jdbc.query(
+        val memory = query(
             readUrl, SecondBrainSql.SEARCH_MEMORY_SQL,
             listOf(query, pattern, topK), SecondBrainSql::mapMemoryRow
         )
@@ -53,12 +67,12 @@ class NeonJdbcIntegrationTest {
     fun memorySaveAndRecentRoundTrip() {
         assumeTrue(writeUrl.isNotBlank())
         val tags = SecondBrainSql.tagsLiteral(listOf("t1", "t2"))
-        val inserted = jdbc.execute(
+        val inserted = execute(
             writeUrl, SecondBrainSql.INSERT_MEMORY_SQL,
             listOf("fact", "jdbc-parity-unique", tags)
         )
         assertEquals(1, inserted)
-        val items: List<NeonMemoryItem> = jdbc.query(
+        val items: List<NeonMemoryItem> = query(
             writeUrl, SecondBrainSql.SELECT_MEMORY_SQL,
             listOf(100), SecondBrainSql::mapMemoryItemRow
         )
@@ -68,7 +82,7 @@ class NeonJdbcIntegrationTest {
     @Test
     fun transcriptMirrorInserts() {
         assumeTrue(writeUrl.isNotBlank())
-        val inserted = jdbc.execute(
+        val inserted = execute(
             writeUrl, SecondBrainSql.INSERT_CONVERSATION_SQL,
             listOf("sess-jdbc", "user", "hello")
         )
