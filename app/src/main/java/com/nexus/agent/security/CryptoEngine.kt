@@ -46,6 +46,13 @@ class CryptoEngine(
         } catch (e: IllegalArgumentException) {
             throw InvalidCiphertextException("input is not valid Base64")
         }
-        return String(decrypt(bytes), Charsets.UTF_8)
+        val plaintext = decrypt(bytes)
+        return try {
+            String(plaintext, Charsets.UTF_8)
+        } finally {
+            // Wipe the transient plaintext buffer as soon as it's materialized into the String.
+            // (The returned String is immutable and cannot be zeroed; this removes the ByteArray copy.)
+            java.util.Arrays.fill(plaintext, 0)
+        }
     }
 }
