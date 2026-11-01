@@ -19,6 +19,7 @@ class HermesSseParser {
 
     private var eventType: String = DEFAULT_TYPE
     private val dataLines = mutableListOf<String>()
+    private var dataChars: Int = 0
 
     /**
      * Feed one line (without the trailing `\n`). Returns a complete [SseEvent] when a dispatch
@@ -26,6 +27,7 @@ class HermesSseParser {
      * stripped defensively.
      */
     fun feed(line: String): SseEvent? {
+        require(line.length <= MAX_LINE_CHARS) { "hermes_sse_line_too_large" }
         val t = line.trimEnd('\r')
         return when {
             t.isEmpty() -> {
@@ -37,11 +39,21 @@ class HermesSseParser {
             }
             t.startsWith(":") -> null
             t.startsWith("event:") -> {
-                eventType = t.removePrefix("event:").trim()
+                val nextType = t.removePrefix("event:").trim()
+                require(nextType.length <= MAX_EVENT_TYPE_CHARS) {
+                    "hermes_sse_event_type_too_large"
+                }
+                eventType = nextType
                 null
             }
             t.startsWith("data:") -> {
-                dataLines += t.removePrefix("data:").trimStart()
+                val nextData = t.removePrefix("data:").trimStart()
+                val nextChars = dataChars + nextData.length + if (dataLines.isEmpty()) 0 else 1
+                require(dataLines.size < MAX_DATA_LINES && nextChars <= MAX_EVENT_CHARS) {
+                    "hermes_sse_event_too_large"
+                }
+                dataChars = nextChars
+                dataLines += nextData
                 null
             }
             else -> null
@@ -51,9 +63,14 @@ class HermesSseParser {
     private fun reset() {
         eventType = DEFAULT_TYPE
         dataLines.clear()
+        dataChars = 0
     }
 
     companion object {
         const val DEFAULT_TYPE = "message"
+        const val MAX_LINE_CHARS = 65_536
+        const val MAX_EVENT_CHARS = 262_144
+        private const val MAX_EVENT_TYPE_CHARS = 128
+        private const val MAX_DATA_LINES = 256
     }
 }
