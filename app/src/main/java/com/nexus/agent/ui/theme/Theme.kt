@@ -15,7 +15,14 @@ private val LightColors = lightColorScheme(
     onSecondary = NexusOnSecondary,
     secondaryContainer = NexusSecondaryContainer,
     onSecondaryContainer = NexusOnSecondaryContainer,
-    tertiary = NexusTertiary
+    tertiary = NexusTertiary,
+    background = NexusBackground,
+    onBackground = NexusOnSurface,
+    surface = NexusSurface,
+    onSurface = NexusOnSurface,
+    surfaceVariant = NexusSurfaceVariant,
+    onSurfaceVariant = NexusOnSurfaceVariant,
+    outline = NexusOutline
 )
 
 private val DarkColors = darkColorScheme(
@@ -27,7 +34,14 @@ private val DarkColors = darkColorScheme(
     onSecondary = NexusOnSecondaryDark,
     secondaryContainer = NexusSecondaryContainerDark,
     onSecondaryContainer = NexusOnSecondaryContainerDark,
-    tertiary = NexusTertiary
+    tertiary = NexusTertiary,
+    background = NexusBackgroundDark,
+    onBackground = NexusOnSurfaceDark,
+    surface = NexusSurfaceDark,
+    onSurface = NexusOnSurfaceDark,
+    surfaceVariant = NexusSurfaceVariantDark,
+    onSurfaceVariant = NexusOnSurfaceVariantDark,
+    outline = NexusOutlineDark
 )
 
 /**
