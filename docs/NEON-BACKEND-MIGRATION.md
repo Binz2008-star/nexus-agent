@@ -17,7 +17,8 @@ SQL never live on the device.
   `pg_trgm`, least-privilege roles, fixtures); 9 integration tests (`pytest -m integration`) cover
   search/memory/mirror parity (score tolerance + deterministic ordering), permission failures, and
   error recovery; `test_sql_parity.py` reads `SecondBrainSql.kt` directly. CI job
-  `backend-integration-tests`.
+  `backend-integration-tests`. The Android `NeonJdbcIntegrationTest` runs the real pgjdbc path
+  against the same Postgres (`jdbc-integration` CI job), so JDBC↔HTTP parity is proven bidirectionally.
 - ✅ **Cloud Run deploy prep** (no billing): `Dockerfile` (non-root), `cloudrun/service.yaml`
   (scale-to-zero, Secret Manager), `cloudrun/README.md` (secrets/deploy/rollback).
 - ✅ **Android** `NeonHttpClient` (+ `NeonBackendClient` interface) returns the same domain types
