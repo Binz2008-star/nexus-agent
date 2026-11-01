@@ -31,6 +31,27 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 - `NEON_WRITE_URL` should use a narrowly-scoped writer (INSERT on `nexus_memory` +
   `nexus_conversations` only — no `UPDATE`/`DELETE`/`DROP`).
 
+## Connection-string formats (important)
+
+The backend (psycopg) and the app (pgjdbc) use **different** URL formats for the same Neon instance:
+
+- **Backend** (`NEON_READ_URL`/`NEON_WRITE_URL`): psycopg/libpq URI —
+  `postgresql://nexus_reader:password@host/db?sslmode=require`.
+- **App** (direct JDBC, being replaced): pgjdbc — `jdbc:postgresql://host/db?sslmode=require&user=nexus_reader&password=…`.
+
+pgjdbc does **not** accept the `user:password@host` form (it treats the whole thing as the
+hostname). When wiring the backend, drop the `jdbc:` prefix and pass the Neon connection string as
+the psycopg/libpq URI (userinfo form is fine for psycopg).
+
+## Testing
+
+- Unit + endpoint tests (no DB): `pytest -m "not integration"`.
+- Integration/parity tests (disposable Postgres): `docker compose -f docker-compose.test.yml up -d`
+  then `pytest -m integration` (see `tests/integration/`). The `test_sql_parity.py` reads
+  `SecondBrainSql.kt` directly to keep the backend SQL in lockstep with the Android JDBC path.
+- The Android side has a matching `NeonJdbcIntegrationTest` (real pgjdbc against the same
+  disposable Postgres), run by the `jdbc-integration` CI job — together they prove JDBC == HTTP.
+
 ## Staging parity test (before flipping the app)
 
 1. Point the backend at the **same** Neon databases the app currently uses.
