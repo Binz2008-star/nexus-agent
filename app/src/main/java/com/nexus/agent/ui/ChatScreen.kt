@@ -68,7 +68,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.nexus.agent.BuildConfig
 import com.nexus.agent.analytics.NexusAnalytics
 import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
@@ -543,11 +542,9 @@ fun ChatScreen(
             },
             gmailEmail = gmailEmail,
             onConnectGmail = {
-                if (BuildConfig.GOOGLE_OAUTH_CLIENT_ID.isBlank()) {
-                    context.showToast(context.getString(R.string.oauth_client_missing))
-                } else {
-                    googleAuthManager.startAuthorization(gmailConnector.scopes)
-                }
+                // AuthorizationClient identifies this Android app via Google Play services,
+                // package name and signing certificate; no client ID string is passed here.
+                googleAuthManager.startAuthorization(gmailConnector.scopes)
             },
             onDisconnectGmail = { scope.launch { gmailConnector.disconnect() } },
             mirrorEnabled = mirrorEnabled,
