@@ -40,8 +40,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -61,6 +63,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -119,6 +122,7 @@ import com.nexus.agent.domain.tool.WebFetchTool
 import com.nexus.agent.data.connectors.GoogleAuthManager
 import com.nexus.agent.data.connectors.GoogleScopePolicy
 import com.nexus.agent.data.remote.GmailSendApiClient
+import com.nexus.agent.data.voice.AndroidTextToSpeechEngine
 import com.nexus.agent.domain.tool.GmailSendTool
 import com.nexus.agent.domain.tool.GoogleWorkspaceApiClient
 import com.nexus.agent.domain.tool.GoogleDriveSearchTool
@@ -194,6 +198,37 @@ fun ChatScreen(
     val preferredTone by preferences.preferredTone.collectAsState(initial = "friendly")
     val mashaaerEmotionEnabled by preferences.mashaaerEmotionEnabled.collectAsState(initial = false)
     val softModeEnabled by preferences.softModeEnabled.collectAsState(initial = false)
+    val ttsEnabled by preferences.ttsEnabled.collectAsState(initial = false)
+    val ttsAutoplay by preferences.ttsAutoplay.collectAsState(initial = false)
+    val ttsRate by preferences.ttsSpeechRate.collectAsState(initial = 1.0f)
+    val ttsPitch by preferences.ttsPitch.collectAsState(initial = 1.0f)
+
+    // Voice engine (Issue #24): zero-cost Android TTS; voice (sound) is separate from persona.
+    val speechEngine = remember { AndroidTextToSpeechEngine(context) }
+    var ttsReady by remember { mutableStateOf(false) }
+    var ttsSpeaking by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) {
+        onDispose { speechEngine.shutdown() }
+    }
+    LaunchedEffect(ttsEnabled) {
+        if (ttsEnabled) speechEngine.initialize { ttsReady = it }
+        else speechEngine.shutdown()
+    }
+    fun speakText(text: String) {
+        if (!ttsEnabled || text.isBlank()) return
+        if (ttsSpeaking) { speechEngine.stop(); ttsSpeaking = false; return }
+        ttsSpeaking = true
+        speechEngine.initialize { ready ->
+            if (ready) speechEngine.speak(text, ttsRate, ttsPitch) { ttsSpeaking = false }
+            else ttsSpeaking = false
+        }
+    }
+    // Autoplay: speak a newly-arrived assistant message once (opt-in).
+    LaunchedEffect(messages.lastOrNull { it.role == ChatMessage.Role.ASSISTANT }?.id) {
+        if (ttsEnabled && ttsAutoplay) {
+            messages.lastOrNull { it.role == ChatMessage.Role.ASSISTANT }?.let { speakText(it.text) }
+        }
+    }
     val neonRepository = remember {
         val httpClient = NeonHttpClient(
             baseUrlProvider = { preferences.neonBackendUrl.first().takeIf { it.isNotBlank() } },
@@ -537,7 +572,22 @@ fun ChatScreen(
                     }
                 }
                 items(messages, key = { it.id }) { message ->
-                    MessageBubble(message)
+                    if (message.role == ChatMessage.Role.ASSISTANT && ttsEnabled) {
+                        Column {
+                            MessageBubble(message)
+                            TextButton(onClick = { speakText(message.text) }) {
+                                Icon(
+                                    if (ttsSpeaking) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                    contentDescription = if (ttsSpeaking) "Stop" else "Speak",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (ttsSpeaking) "إيقاف" else "استماع")
+                            }
+                        }
+                    } else {
+                        MessageBubble(message)
+                    }
                 }
                 if (streamingText.isNotEmpty()) {
                     item(key = "streaming") {
@@ -600,6 +650,11 @@ fun ChatScreen(
             onMashaaerEmotionEnabledChange = { scope.launch { preferences.setMashaaerEmotionEnabled(it) } },
             softModeEnabled = softModeEnabled,
             onSoftModeEnabledChange = { scope.launch { preferences.setSoftModeEnabled(it) } },
+            ttsEnabled = ttsEnabled,
+            onTtsEnabledChange = { scope.launch { preferences.setTtsEnabled(it) } },
+            ttsAutoplay = ttsAutoplay,
+            onTtsAutoplayChange = { scope.launch { preferences.setTtsAutoplay(it) } },
+            onTtsPreview = { speakText("مرحبًا، هذا صوت NEXUS. أهلاً بك في الوضع الصوتي.") },
             preferredDialect = preferredDialect,
             onPreferredDialectChange = { scope.launch { preferences.setPreferredDialect(it) } },
             preferredTone = preferredTone,
@@ -1030,6 +1085,11 @@ private fun SettingsDialog(
     onMashaaerEmotionEnabledChange: (Boolean) -> Unit,
     softModeEnabled: Boolean = false,
     onSoftModeEnabledChange: (Boolean) -> Unit = {},
+    ttsEnabled: Boolean = false,
+    onTtsEnabledChange: (Boolean) -> Unit = {},
+    ttsAutoplay: Boolean = false,
+    onTtsAutoplayChange: (Boolean) -> Unit = {},
+    onTtsPreview: () -> Unit = {},
     preferredDialect: String,
     onPreferredDialectChange: (String) -> Unit,
     preferredTone: String,
@@ -1263,6 +1323,20 @@ private fun SettingsDialog(
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("الوضع الحنون · Soft mode (أسلوب هادئ ودود)", modifier = Modifier.weight(1f))
                     Switch(checked = softModeEnabled, onCheckedChange = onSoftModeEnabledChange)
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("الصوت · Voice (قراءة الردود بصوت)", modifier = Modifier.weight(1f))
+                    Switch(checked = ttsEnabled, onCheckedChange = onTtsEnabledChange)
+                }
+                if (ttsEnabled) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("قراءة تلقائية · Autoplay", modifier = Modifier.weight(1f))
+                        Switch(checked = ttsAutoplay, onCheckedChange = onTtsAutoplayChange)
+                    }
+                    TextButton(onClick = onTtsPreview, modifier = Modifier.fillMaxWidth()) {
+                        Text("معاينة الصوت · Preview")
+                    }
                 }
                 Text("اللهجة", style = MaterialTheme.typography.bodyMedium)
                 Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {

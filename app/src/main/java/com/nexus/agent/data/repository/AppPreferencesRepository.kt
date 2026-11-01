@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -36,6 +37,12 @@ class AppPreferencesRepository(
     private val useNeonBackendKey = booleanPreferencesKey("use_neon_backend")
     private val lastConversationIdKey = longPreferencesKey("last_conversation_id")
     private val softModeEnabledKey = booleanPreferencesKey("soft_mode_enabled")
+    private val ttsEnabledKey = booleanPreferencesKey("tts_enabled")
+    private val ttsVoiceIdKey = stringPreferencesKey("tts_voice_id")
+    private val ttsEnginePackageKey = stringPreferencesKey("tts_engine_package")
+    private val ttsSpeechRateKey = floatPreferencesKey("tts_speech_rate")
+    private val ttsPitchKey = floatPreferencesKey("tts_pitch")
+    private val ttsAutoplayKey = booleanPreferencesKey("tts_autoplay")
 
     val systemPrompt: Flow<String> = dataStore.data.map { it[systemPromptKey] ?: "" }
     val lastModel: Flow<String> = dataStore.data.map { it[lastModelKey] ?: "deepseek-flash" }
@@ -65,6 +72,13 @@ class AppPreferencesRepository(
     val lastConversationId: Flow<Long> = dataStore.data.map { it[lastConversationIdKey] ?: -1L }
     // Mashaaer Good Mode (الوضع الحنون): opt-in soft response persona. Default OFF.
     val softModeEnabled: Flow<Boolean> = dataStore.data.map { it[softModeEnabledKey] ?: false }
+    // ---- Voice (Issue #24) ----
+    val ttsEnabled: Flow<Boolean> = dataStore.data.map { it[ttsEnabledKey] ?: false }
+    val ttsVoiceId: Flow<String> = dataStore.data.map { it[ttsVoiceIdKey] ?: "" }
+    val ttsEnginePackage: Flow<String> = dataStore.data.map { it[ttsEnginePackageKey] ?: "" }
+    val ttsSpeechRate: Flow<Float> = dataStore.data.map { it[ttsSpeechRateKey] ?: 1.0f }
+    val ttsPitch: Flow<Float> = dataStore.data.map { it[ttsPitchKey] ?: 1.0f }
+    val ttsAutoplay: Flow<Boolean> = dataStore.data.map { it[ttsAutoplayKey] ?: false }
 
     suspend fun setSystemPrompt(prompt: String) {
         dataStore.edit { prefs ->
@@ -147,6 +161,30 @@ class AppPreferencesRepository(
 
     suspend fun setSoftModeEnabled(enabled: Boolean) {
         dataStore.edit { it[softModeEnabledKey] = enabled }
+    }
+
+    suspend fun setTtsEnabled(enabled: Boolean) {
+        dataStore.edit { it[ttsEnabledKey] = enabled }
+    }
+
+    suspend fun setTtsVoiceId(id: String) {
+        dataStore.edit { it[ttsVoiceIdKey] = id }
+    }
+
+    suspend fun setTtsEnginePackage(pkg: String) {
+        dataStore.edit { it[ttsEnginePackageKey] = pkg }
+    }
+
+    suspend fun setTtsSpeechRate(rate: Float) {
+        dataStore.edit { it[ttsSpeechRateKey] = rate }
+    }
+
+    suspend fun setTtsPitch(pitch: Float) {
+        dataStore.edit { it[ttsPitchKey] = pitch }
+    }
+
+    suspend fun setTtsAutoplay(autoplay: Boolean) {
+        dataStore.edit { it[ttsAutoplayKey] = autoplay }
     }
 
     companion object {
