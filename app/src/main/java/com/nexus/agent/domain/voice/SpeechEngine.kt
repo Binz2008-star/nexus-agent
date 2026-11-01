@@ -23,6 +23,12 @@ interface SpeechEngine {
     /** Speaks [text]; [onDone] fires after the utterance completes (or is cancelled). */
     fun speak(text: String, rate: Float, pitch: Float, onDone: () -> Unit)
 
+    /**
+     * Select an already-installed, strictly offline voice. Returns false for missing,
+     * removed, or network-dependent voices. No silent fallback for saved IDs.
+     */
+    fun selectVoice(voiceId: String): Boolean
+
     /** Stops the current utterance immediately. */
     fun stop()
 
