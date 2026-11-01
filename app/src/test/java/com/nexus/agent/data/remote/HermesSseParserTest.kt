@@ -65,4 +65,48 @@ class HermesSseParserTest {
         assertNull(parser.feed("data: next"))
         assertEquals("message", parser.feed("")?.type)
     }
+    @Test
+    fun `rejects oversized wire line before buffering`() {
+        val parser = HermesSseParser()
+        try {
+            parser.feed("data: " + "x".repeat(HermesSseParser.MAX_LINE_CHARS))
+            org.junit.Assert.fail("oversized line must fail")
+        } catch (e: IllegalArgumentException) {
+            assertEquals("hermes_sse_line_too_large", e.message)
+        }
+    }
+
+    @Test
+    fun `rejects oversized multiline event before accumulation`() {
+        val parser = HermesSseParser()
+        val line = "data: " + "x".repeat(4096)
+        try {
+            repeat(100) { parser.feed(line) }
+            org.junit.Assert.fail("oversized SSE event must fail")
+        } catch (e: IllegalArgumentException) {
+            assertEquals("hermes_sse_event_too_large", e.message)
+        }
+    }
+
+    @Test
+    fun `many small events do not share the same memory budget`() {
+        val parser = HermesSseParser()
+        repeat(500) {
+            assertNull(parser.feed("event: message.delta"))
+            assertNull(parser.feed("data: ok"))
+            assertEquals("ok", parser.feed("")?.data)
+        }
+    }
+
+    @Test
+    fun `rejects oversized event names`() {
+        val parser = HermesSseParser()
+        try {
+            parser.feed("event: " + "x".repeat(200))
+            org.junit.Assert.fail("oversized event name must fail")
+        } catch (e: IllegalArgumentException) {
+            assertEquals("hermes_sse_event_type_too_large", e.message)
+        }
+    }
+
 }
