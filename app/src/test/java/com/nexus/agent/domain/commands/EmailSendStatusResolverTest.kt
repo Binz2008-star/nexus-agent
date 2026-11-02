@@ -28,13 +28,17 @@ class EmailSendStatusResolverTest {
         )
     }
 
-    @Test fun failedGmailSendIsNotAccepted() {
+    @Test fun ambiguousGmailFailureDoesNotClaimMessageWasNotSent() {
         assertEquals(
-            EmailSendStatus.FAILED,
+            EmailSendStatus.UNKNOWN,
             EmailSendStatusResolver.resolve(
                 listOf(ev("gmail_send", ActionEvidenceStatus.FAILED))
             )
         )
+        assertTrue(EmailSendResponsePolicy.response(
+            listOf(ev("gmail_send", ActionEvidenceStatus.FAILED)),
+            "Sent!"
+        ).contains("لا يمكن تأكيد"))
     }
 
     @Test fun blockedApprovalIsNotAccepted() {
