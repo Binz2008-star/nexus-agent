@@ -17,6 +17,17 @@ class GmailSendApiClient(
     private val tokenProvider: suspend () -> String?,
     private val client: OkHttpClient = OkHttpClient()
 ) {
+    // An approved send may be retried ONLY through another explicit user approval.
+    // OkHttp otherwise retries some recoverable connection failures by default; that
+    // can replay an ambiguous POST even if the agent's tool loop runs only once.
+    internal val commitHttpClient: OkHttpClient = client.newBuilder()
+        .retryOnConnectionFailure(false)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
+    internal fun executeOnce(request: Request) = commitHttpClient.newCall(request).execute()
+
     suspend fun send(to: String, subject: String, body: String): Result<String> =
         withContext(Dispatchers.IO) {
             val raw = GmailMessageComposer.compose(to, subject, body)
@@ -30,7 +41,7 @@ class GmailSendApiClient(
                     .header("Authorization", "Bearer $token")
                     .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
                     .build()
-                client.newCall(request).execute().use { response ->
+                executeOnce(request).use { response ->
                     if (!response.isSuccessful) {
                         return@withContext Result.failure(IOException("gmail_http_${response.code}"))
                     }
