@@ -1,6 +1,7 @@
 """Integration-test harness: runs against a disposable PostgreSQL (docker-compose.test.yml).
 
-Set NEON_READ_URL / NEON_WRITE_URL / NEXUS_BACKEND_KEY to enable; otherwise every test here skips
+Set NEON_READ_URL / NEON_WRITE_URL / NEON_MEMORY_READ_URL / NEXUS_BACKEND_KEY
+to enable; otherwise every test here skips
 so the plain `pytest` run (no DB) still passes.
 """
 import os
@@ -10,6 +11,7 @@ import pytest
 
 NEON_READ_URL = os.environ.get("NEON_READ_URL", "")
 NEON_WRITE_URL = os.environ.get("NEON_WRITE_URL", "")
+NEON_MEMORY_READ_URL = os.environ.get("NEON_MEMORY_READ_URL", "")
 BACKEND_KEY = os.environ.get("NEXUS_BACKEND_KEY", "")
 
 # Role/database parameters for the disposable env. Overridable so the same suite can run against a
@@ -24,7 +26,7 @@ ADMIN_ROLE = os.environ.get("NEXUS_TEST_ADMIN_ROLE", "postgres")
 ADMIN_PASSWORD = os.environ.get("NEXUS_TEST_ADMIN_PASSWORD", "test")
 ADMIN_DB = os.environ.get("NEXUS_TEST_ADMIN_DB", "personal_ai_core")
 
-AVAILABLE = bool(NEON_READ_URL and NEON_WRITE_URL and BACKEND_KEY)
+AVAILABLE = bool(NEON_READ_URL and NEON_WRITE_URL and NEON_MEMORY_READ_URL and BACKEND_KEY)
 
 # All tests in this directory require a live database; the per-file `pytestmark` marks them
 # `integration` (conftest's own pytestmark is not applied to test items).
@@ -41,7 +43,7 @@ def _swapped(url: str, user: str, password: str, db: str) -> str:
 @pytest.fixture(autouse=True)
 def _require_db():
     if not AVAILABLE:
-        pytest.skip("integration env not configured (NEON_READ_URL/NEON_WRITE_URL/NEXUS_BACKEND_KEY)")
+        pytest.skip("integration env not configured (NEON_READ_URL/NEON_WRITE_URL/NEON_MEMORY_READ_URL/NEXUS_BACKEND_KEY)")
 
 
 @pytest.fixture()
@@ -51,6 +53,7 @@ def client():
 
     main.READ_URL = NEON_READ_URL
     main.WRITE_URL = NEON_WRITE_URL
+    main.MEMORY_READ_URL = NEON_MEMORY_READ_URL
     main.IDENTITIES = {BACKEND_KEY: Identity(name="test", scopes=ALL_SCOPES)}
     main.RATE_LIMITER = RateLimiter(per_min=0)
 
@@ -72,6 +75,11 @@ def read_url():
 @pytest.fixture()
 def write_url():
     return NEON_WRITE_URL
+
+
+@pytest.fixture()
+def memory_read_url():
+    return NEON_MEMORY_READ_URL
 
 
 @pytest.fixture()
