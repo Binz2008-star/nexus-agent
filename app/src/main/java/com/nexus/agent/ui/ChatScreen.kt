@@ -769,11 +769,11 @@ private fun MessageBubble(message: ChatMessage, isStreaming: Boolean = false) {
                     MaterialTheme.colorScheme.surfaceVariant
             )
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp)) {
                 SelectionContainer {
                     Text(
                         text = ChatMarkdown.render(message.text),
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = if (isUser)
                             MaterialTheme.colorScheme.onPrimary
                         else
