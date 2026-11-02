@@ -124,6 +124,40 @@ class NeonHttpClientTest {
     }
 
     @Test
+    fun `saveMemory 307 redirect does not repeat write`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(307).setHeader("Location", server.url("/replay")))
+        val result = client().saveMemory("fact", "sensitive", emptyList())
+        assertTrue(result.isFailure)
+        assertEquals("http_307", result.exceptionOrNull()?.message)
+        assertEquals(1, server.requestCount)
+        assertEquals("/v1/memory/save", server.takeRequest().path)
+    }
+
+    @Test
+    fun `mirror 308 redirect does not repeat transcript write`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(308).setHeader("Location", server.url("/replay")))
+        val result = client().mirror("s", "user", "private")
+        assertTrue(result.isFailure)
+        assertEquals("http_308", result.exceptionOrNull()?.message)
+        assertEquals(1, server.requestCount)
+        assertEquals("/v1/transcript/mirror", server.takeRequest().path)
+    }
+
+    @Test
+    fun `injected unsafe HTTP client still cannot follow redirect`() = runTest {
+        val unsafe = okhttp3.OkHttpClient.Builder()
+            .retryOnConnectionFailure(true)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
+        server.enqueue(MockResponse().setResponseCode(307).setHeader("Location", server.url("/replay")))
+        val client = NeonHttpClient({ baseUrl }, { "test-key" }, unsafe)
+        assertTrue(client.saveMemory("fact", "example", emptyList()).isFailure)
+        assertEquals(1, server.requestCount)
+        assertEquals("/v1/memory/save", server.takeRequest().path)
+    }
+
+    @Test
     fun `loadMemory encodes limit and decodes items`() = runTest {
         server.enqueue(json("""{"items":[{"type":"fact","content":"c1"},{"type":"pref","content":"c2"}]}"""))
         val result = client().loadMemory(limit = 50)
