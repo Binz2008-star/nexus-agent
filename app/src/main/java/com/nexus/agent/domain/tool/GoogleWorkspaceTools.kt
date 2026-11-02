@@ -100,7 +100,7 @@ class GoogleDriveSearchTool(private val api: GoogleWorkspaceApiClient) : Tool {
             val escaped = term.replace("\\", "\\\\").replace("'", "\\'")
             val url = "https://www.googleapis.com/drive/v3/files".toHttpUrl().newBuilder()
                 .addQueryParameter("q", "trashed = false and name contains '$escaped'")
-                .addQueryParameter("fields", "nextPageToken,files(id,name,mimeType,webViewLink)")
+                .addQueryParameter("fields", "nextPageToken,files(id,name,mimeType,webViewLink,ownedByMe)")
                 .addQueryParameter("pageSize", "20").build()
             val result = api.get(url, requiredScopes)
             if (result.isSuccess) {
@@ -114,7 +114,8 @@ class GoogleDriveSearchTool(private val api: GoogleWorkspaceApiClient) : Tool {
                         id = id,
                         name = file.optString("name").take(150),
                         mimeType = file.optString("mimeType").take(100),
-                        url = file.optString("webViewLink").takeIf { it.startsWith("https://") }
+                        url = file.optString("webViewLink").takeIf { it.startsWith("https://") },
+                        ownedByMe = file.optBoolean("ownedByMe", false)
                     ))
                 }
             }
@@ -140,7 +141,7 @@ class GoogleDriveSearchTool(private val api: GoogleWorkspaceApiClient) : Tool {
             // Never assert ownership: only surface files whose name carries an identity term,
             // and always attach a "review it yourself" disclaimer.
             val strong = ranked.filter { file ->
-                intent.identityTerms.any { file.name.lowercase().contains(it) }
+                DriveFileRanker.hasIdentityTerm(file.name, intent.identityTerms)
             }
             if (strong.isEmpty()) {
                 return ToolResult.Success(

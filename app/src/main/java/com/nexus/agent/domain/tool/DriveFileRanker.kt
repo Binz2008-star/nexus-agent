@@ -5,8 +5,9 @@ package com.nexus.agent.domain.tool
  *
  * Fixes the reported failure where a query for "my ID card" returned programming files whose
  * name merely contained an `id-card` substring, and where a different person's identity
- * document could be presented as the user's. Code/asset files are heavily deprioritized and
- * genuine identity documents (PDF/image with an identity term in the name) are boosted.
+ * document could be presented as the user's. Code/asset files are heavily deprioritized,
+ * genuine identity documents (identity term + PDF/image) are boosted, and files the user owns
+ * are preferred over shared/other-owner files.
  */
 object DriveFileRanker {
     private val codeExtensions = listOf(
@@ -22,17 +23,32 @@ object DriveFileRanker {
             mime.contains("json") || mime.contains("x-python") || mime.contains("x-sh")
     }
 
-    /** Best-first. Code files sink; identity documents float up when an identity doc was requested. */
+    /**
+     * Token-safe identity-term match: a short term like "id" must be a whole token (so
+     * "holiday.jpg" is not mistaken for an ID), while longer Arabic terms match as substrings.
+     */
+    fun hasIdentityTerm(name: String, terms: List<String>): Boolean {
+        val lower = name.lowercase()
+        val tokens = lower.split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() }
+        return terms.any { term ->
+            val t = term.lowercase()
+            if (t.length <= 3) tokens.any { it == t } else lower.contains(t)
+        }
+    }
+
+    /** Best-first. Code files sink; owned identity documents float up. */
     fun rank(files: List<DriveFile>, intent: DriveSearchIntent): List<DriveFile> =
         files.sortedByDescending { score(it, intent) }
 
     private fun score(file: DriveFile, intent: DriveSearchIntent): Int {
-        val name = file.name.lowercase()
         var score = 0
         if (isCodeLike(file.name, file.mimeType)) score -= 100
         if (intent.wantsIdentityDocument) {
-            if (intent.identityTerms.any { name.contains(it) }) score += 50
-            if (file.mimeType.contains("pdf") || file.mimeType.startsWith("image/")) score += 20
+            val documentLike = file.mimeType.contains("pdf") || file.mimeType.startsWith("image/")
+            if (documentLike && hasIdentityTerm(file.name, intent.identityTerms)) score += 50
+            if (documentLike) score += 10
+            // Prefer the user's own files over shared/other-owner files (never a hard filter).
+            if (file.ownedByMe) score += 40
         }
         return score
     }

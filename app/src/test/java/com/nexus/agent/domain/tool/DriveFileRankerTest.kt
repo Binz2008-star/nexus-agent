@@ -39,4 +39,26 @@ class DriveFileRankerTest {
         assertEquals(2, ranked.size)
         assertTrue(ranked.any { it.name == "a.txt" })
     }
+
+    @Test fun substringLookalikesAreNotBoostedAsIdentity() {
+        val files = listOf(
+            DriveFile("1", "holiday.jpg", "image/jpeg"),
+            DriveFile("2", "Emirates invoice.pdf", "application/pdf"),
+            DriveFile("3", "My Emirates ID.pdf", "application/pdf", ownedByMe = true)
+        )
+        val ranked = DriveFileRanker.rank(files, identityIntent)
+        assertEquals("My Emirates ID.pdf", ranked.first().name)
+        assertFalse(DriveFileRanker.hasIdentityTerm("holiday.jpg", identityIntent.identityTerms))
+        assertFalse(DriveFileRanker.hasIdentityTerm("Emirates invoice.pdf", identityIntent.identityTerms))
+        assertTrue(DriveFileRanker.hasIdentityTerm("My Emirates ID.pdf", identityIntent.identityTerms))
+    }
+
+    @Test fun ownedFilesArePreferredOverSharedOnes() {
+        val files = listOf(
+            DriveFile("1", "ahmed-id-card.pdf", "application/pdf", ownedByMe = false),
+            DriveFile("2", "my-id-card.pdf", "application/pdf", ownedByMe = true)
+        )
+        val ranked = DriveFileRanker.rank(files, identityIntent)
+        assertEquals("my-id-card.pdf", ranked.first().name)
+    }
 }
