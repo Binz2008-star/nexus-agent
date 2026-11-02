@@ -375,4 +375,29 @@ class ToolLoopTest {
         assertEquals(ActionEvidenceStatus.EXECUTED, result.evidence.single().status)
     }
 
+    @Test
+    fun draftOnlyIntentCannotProposeGmailSendEvenWithModelToolCall() = runTest {
+        val gate = ApprovalGate()
+        val gmail = FakeTool("gmail_send", ToolResult.Success("id"), riskLevel = RiskLevel.COMMIT)
+        var approvals = 0
+        val loop = ToolLoop(
+            ToolOrchestrator(mapOf("gmail_send" to gmail), gate),
+            maxRounds = 1,
+            requestApproval = { approvals++; gate.approve(it) }
+        )
+        val outcome = loop.run(
+            history = emptyList(), model = "m", schemas = emptyList(),
+            propose = { _, _, _ -> Result.success(ToolProposal.Calls(listOf(
+                ToolCall("gmail_send", mapOf("to" to "a@example.com"))
+            ))) },
+            forbiddenTools = setOf("gmail_send")
+        )
+        assertTrue(outcome is ToolLoop.Outcome.Failed)
+        assertEquals(0, gmail.calls)
+        assertEquals(0, approvals)
+        assertTrue((outcome as ToolLoop.Outcome.Failed).evidence.any {
+            it.toolName == "gmail_send" && it.status == ActionEvidenceStatus.BLOCKED
+        })
+    }
+
 }
