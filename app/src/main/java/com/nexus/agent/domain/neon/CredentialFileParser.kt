@@ -7,14 +7,16 @@ package com.nexus.agent.domain.neon
 data class ImportedCredentials(
     val deepSeekKey: String? = null,
     val readUrl: String? = null,
-    val writeUrl: String? = null
+    val writeUrl: String? = null,
+    val openRouterKey: String? = null
 ) {
-    val isEmpty: Boolean get() = deepSeekKey == null && readUrl == null && writeUrl == null
+    val isEmpty: Boolean get() = deepSeekKey == null && readUrl == null && writeUrl == null && openRouterKey == null
 }
 
 /**
  * Pure parser for the credentials file the user places on their device. Extracts:
- *  - the DeepSeek key: a `sk-…` token anywhere on a line;
+ *  - the DeepSeek key: a `sk-…` token, excluding `sk-or-…` OpenRouter keys;
+ *  - the OpenRouter key: an `sk-or-…` token on a non-URL line;
  *  - the Neon read URL: a `jdbc:postgresql://`/`postgresql://` line whose `user=` is `nexus_reader`;
  *  - the Neon write URL: the same, with `user=` = `nexus`.
  *
@@ -22,11 +24,13 @@ data class ImportedCredentials(
  */
 object CredentialFileParser {
 
-    private val KEY = Regex("sk-[a-zA-Z0-9_-]+")
+    private val KEY = Regex("sk-(?!or-)[a-zA-Z0-9_-]+")
+    private val OPENROUTER_KEY = Regex("sk-or-[a-zA-Z0-9_-]+")
     private val USER = Regex("[?&]user=([^&#\\s]+)", RegexOption.IGNORE_CASE)
 
     fun parse(content: String): ImportedCredentials {
         var key: String? = null
+        var routerKey: String? = null
         var read: String? = null
         var write: String? = null
         for (raw in content.lineSequence()) {
@@ -40,18 +44,27 @@ object CredentialFileParser {
                     "nexus_reader" -> if (read == null) read = line
                     "nexus" -> if (write == null) write = line
                 }
-            } else if (key == null) {
-                // Scan only non-URL lines for the key, so a `sk-…` substring inside a URL
-                // (e.g. a password) can never be mis-imported as the DeepSeek key.
-                KEY.find(line)?.value?.let { if (it.length <= MAX_KEY_LENGTH) key = it }
+            } else {
+                // Restrict token extraction to non-URL lines. The two families are
+                // mutually exclusive so an OpenRouter key cannot replace DeepSeek.
+                if (routerKey == null) {
+                    OPENROUTER_KEY.find(line)?.value?.let {
+                        if (it.length <= MAX_KEY_LENGTH) routerKey = it
+                    }
+                }
+                if (key == null) {
+                    KEY.find(line)?.value?.let {
+                        if (it.length <= MAX_KEY_LENGTH) key = it
+                    }
+                }
             }
         }
-        return ImportedCredentials(key, read, write)
+        return ImportedCredentials(key, read, write, routerKey)
     }
 
     private fun isUrl(line: String): Boolean =
         line.startsWith("jdbc:postgresql://") || line.startsWith("postgresql://")
 
-    /** Upper bound for an accepted DeepSeek key token. */
+    /** Upper bound for either provider's API key token. */
     const val MAX_KEY_LENGTH = 256
 }
