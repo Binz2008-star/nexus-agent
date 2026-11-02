@@ -118,6 +118,28 @@ class FailoverChatCompletionClientTest {
         assertTrue(actual.getOrThrow() is CompletionResult.Answer)
     }
 
+    @Test fun primaryThrowingExceptionStillFallsOver() = runBlocking {
+        val primary = object : ChatCompletionClient {
+            override suspend fun complete(history: List<ChatMessage>, model: String): Result<String> {
+                throw IOException("network down")
+            }
+            override suspend fun completeWithTools(
+                history: List<ChatMessage>,
+                model: String,
+                tools: List<kotlinx.serialization.json.JsonObject>
+            ): Result<CompletionResult> = Result.failure(IOException("network down"))
+            override suspend fun completeStream(
+                history: List<ChatMessage>,
+                model: String,
+                onDelta: suspend (String) -> Unit
+            ): Result<String> = Result.failure(IOException("network down"))
+        }
+        val free = FakeClient(response = Result.success("free answer"))
+        val router = FailoverChatCompletionClient(primary, free) { true }
+        assertEquals("free answer", router.complete(emptyList(), "deepseek-flash").getOrThrow())
+        assertEquals(1, free.calls)
+    }
+
     @Test fun secondProviderFailureDoesNotCascadeIntoMoreRetries() = runBlocking {
         val primary = FakeClient(response = Result.failure(IOException("DeepSeek API error 402")))
         val free = FakeClient(response = Result.failure(IOException("OpenRouter API error 429")))

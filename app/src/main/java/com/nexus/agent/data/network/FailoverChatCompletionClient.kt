@@ -22,7 +22,9 @@ class FailoverChatCompletionClient(
         history: List<ChatMessage>,
         model: String
     ): Result<String> {
-        val first = primary.complete(history, model)
+        val first = try { primary.complete(history, model) } catch (e: Throwable) {
+            Result.failure(e)
+        }
         if (!canFailover(first.exceptionOrNull())) return first
         if (!enabled()) return first
         return freeFallback.complete(history, OpenRouterClient.FREE_MODEL)
@@ -33,7 +35,9 @@ class FailoverChatCompletionClient(
         model: String,
         tools: List<JsonObject>
     ): Result<CompletionResult> {
-        val first = primary.completeWithTools(history, model, tools)
+        val first = try { primary.completeWithTools(history, model, tools) } catch (e: Throwable) {
+            Result.failure(e)
+        }
         if (!canFailover(first.exceptionOrNull())) return first
         if (!enabled()) return first
         return freeFallback.completeWithTools(history, OpenRouterClient.FREE_MODEL, tools)
@@ -45,9 +49,13 @@ class FailoverChatCompletionClient(
         onDelta: suspend (String) -> Unit
     ): Result<String> {
         var emitted = false
-        val first = primary.completeStream(history, model) { delta ->
-            if (delta.isNotEmpty()) emitted = true
-            onDelta(delta)
+        val first = try {
+            primary.completeStream(history, model) { delta ->
+                if (delta.isNotEmpty()) emitted = true
+                onDelta(delta)
+            }
+        } catch (e: Throwable) {
+            Result.failure(e)
         }
         // A partially emitted completion must NEVER be replayed to another provider.
         if (emitted || !canFailover(first.exceptionOrNull())) return first
