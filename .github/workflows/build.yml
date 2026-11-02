@@ -180,6 +180,7 @@ jobs:
         env:
           NEON_READ_URL: postgresql://nexus_reader:readerpass@localhost:5432/second_brain
           NEON_WRITE_URL: postgresql://nexus_writer:writerpass@localhost:5432/personal_ai_core
+          NEON_MEMORY_READ_URL: postgresql://nexus_memory_reader:memoryreaderpass@localhost:5432/personal_ai_core
           NEXUS_BACKEND_KEY: test-integration-key
         run: |
           cd backend

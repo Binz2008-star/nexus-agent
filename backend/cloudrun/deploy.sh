@@ -58,6 +58,7 @@ case "$ENV" in
     ;;
 esac
 READ_SECRET="neon-read-url${SECRET_SUFFIX}"
+MEMORY_READ_SECRET="neon-memory-read-url${SECRET_SUFFIX}"
 WRITE_SECRET="neon-write-url${SECRET_SUFFIX}"
 KEYS_SECRET="nexus-backend-keys${SECRET_SUFFIX}"
 
@@ -89,6 +90,7 @@ for filename, suffix in (("service.yaml", ""), ("service-staging.yaml", "-stagin
                for i in container["env"] if "valueFrom" in i}
     expected = {
         "NEON_READ_URL": "neon-read-url" + suffix,
+        "NEON_MEMORY_READ_URL": "neon-memory-read-url" + suffix,
         "NEON_WRITE_URL": "neon-write-url" + suffix,
         "NEXUS_KEYS": "nexus-backend-keys" + suffix,
     }
@@ -128,7 +130,7 @@ deploy() {
     --timeout 30 --concurrency "${CONCURRENCY}" \
     --memory 512Mi --cpu 1 --port 8080 --cpu-throttling \
     --service-account "${SA}" \
-    --set-secrets="NEON_READ_URL=${READ_SECRET}:latest,NEON_WRITE_URL=${WRITE_SECRET}:latest,NEXUS_KEYS=${KEYS_SECRET}:latest"
+    --set-secrets="NEON_READ_URL=${READ_SECRET}:latest,NEON_MEMORY_READ_URL=${MEMORY_READ_SECRET}:latest,NEON_WRITE_URL=${WRITE_SECRET}:latest,NEXUS_KEYS=${KEYS_SECRET}:latest"
 }
 
 rollback() {
