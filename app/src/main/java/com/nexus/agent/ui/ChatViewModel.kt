@@ -168,6 +168,13 @@ class ChatViewModel(
     @Volatile
     private var taskGeneration = 0L
 
+    // Last user turn text + trusted email intent, so a retry never turns a send into an
+    // ungrounded completion that could claim "sent".
+    @Volatile
+    private var lastUserText: String = ""
+    @Volatile
+    private var lastSendIntent: SendIntent = SendIntent.NONE
+
     // Escalating safety guard: blocks the session after repeated policy violations.
     private val behaviorGuard = UserBehaviorGuard()
     private val intentEvaluator = IntentEvaluator(behaviorGuard)
@@ -389,6 +396,8 @@ class ChatViewModel(
     fun sendMessageWithAgent(text: String) {
         if (text.isBlank()) return
         if (!_agentBusy.compareAndSet(false, true)) return
+        lastUserText = text
+        lastSendIntent = SendIntentClassifier.classify(text)
         val generation = ++taskGeneration
         viewModelScope.launch {
             var handedOffToTask = false
@@ -550,9 +559,20 @@ class ChatViewModel(
 
                 val history = repository.conversationHistory(conversationId)
                 val memoryContext = recallMemoryContext(text)
+                val heldDraft = _pendingEmailDraft.value
                 val fullHistory = buildList {
                     if (!memoryContext.isNullOrBlank()) {
                         add(ChatMessage(ChatMessage.Role.SYSTEM, memoryContext))
+                    }
+                    // Re-inject a held draft so the user is not re-asked for details already given.
+                    if (sendIntent == SendIntent.SEND && heldDraft != null && heldDraft.isComplete) {
+                        add(ChatMessage(
+                            ChatMessage.Role.SYSTEM,
+                            "A previously prepared email draft exists (recipient: " +
+                                "${heldDraft.recipient}, subject: ${heldDraft.subject}, body: " +
+                                "${heldDraft.body}). Reuse it; do not re-ask the user for details " +
+                                "they already provided."
+                        ))
                     }
                     addAll(history)
                 }
@@ -584,8 +604,18 @@ class ChatViewModel(
                         update(TaskStatus.Completed(outcome.sources))
                     }
                     is ToolLoop.Outcome.Failed -> {
-                        if (sendIntent == SendIntent.SEND) settleDraft(EmailSendStatus.FAILED)
-                        runScriptedGrounding(conversationId, text, update, startedAt)
+                        if (sendIntent == SendIntent.SEND) {
+                            // Never fall back to an ungrounded completion for a send — it could
+                            // claim success. Emit the deterministic, evidence-honest failure line.
+                            settleDraft(EmailSendStatus.FAILED)
+                            repository.persistAssistantMessage(
+                                conversationId,
+                                EmailSendStatusResolver.statusLine(EmailSendStatus.FAILED)
+                            )
+                            update(TaskStatus.Completed(emptyList()))
+                        } else {
+                            runScriptedGrounding(conversationId, text, update, startedAt)
+                        }
                     }
                 }
             } finally {
@@ -625,13 +655,13 @@ class ChatViewModel(
         content: String
     ): String {
         if (intent != SendIntent.SEND) return content
-        return when (val status = EmailSendStatusResolver.resolve(evidence)) {
-            EmailSendStatus.GMAIL_ACCEPTED ->
-                EmailSendStatusResolver.statusLine(status) + "\n\n" + content
-            EmailSendStatus.FAILED ->
-                EmailSendStatusResolver.statusLine(status)
-            else ->
-                EmailSendStatusResolver.statusLine(status) + "\n\n" + content
+        val status = EmailSendStatusResolver.resolve(evidence)
+        // Only a Gmail-accepted send may keep the model's narrative. Every other outcome is
+        // replaced by the trusted status line, so an unverified "sent" claim can never stand.
+        return if (status == EmailSendStatus.GMAIL_ACCEPTED) {
+            EmailSendStatusResolver.statusLine(status) + "\n\n" + content
+        } else {
+            EmailSendStatusResolver.statusLine(status)
         }
     }
 
@@ -1025,6 +1055,17 @@ class ChatViewModel(
     fun retryLast() {
         val convId = _currentConversationId.value ?: return
         if (_isLoading.value || taskStatus.value is TaskStatus.Running) return
+        // A send must never be retried as a bare completion (it could claim "sent" with no
+        // evidence). Ask the user to re-issue the request so it goes through the gated path.
+        if (lastSendIntent == SendIntent.SEND) {
+            viewModelScope.launch {
+                repository.persistAssistantMessage(
+                    convId,
+                    "لإعادة المحاولة، أعد كتابة طلب الإرسال — سيُطلب تأكيدك من جديد."
+                )
+            }
+            return
+        }
         viewModelScope.launch {
             // Enforce the same safety policy: a blocked session cannot retry.
             if (behaviorGuard.isUserBlocked(SESSION_ID)) {

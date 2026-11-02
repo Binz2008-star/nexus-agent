@@ -56,13 +56,24 @@ class EmailSendStatusResolverTest {
         )
     }
 
-    @Test fun anyAcceptedSendWinsOverAPriorFailure() {
+    @Test fun lastSendAttemptDecides() {
+        // A later success after an earlier failure -> accepted.
         assertEquals(
             EmailSendStatus.GMAIL_ACCEPTED,
             EmailSendStatusResolver.resolve(
                 listOf(
                     ev("gmail_send", ActionEvidenceStatus.FAILED),
                     ev("gmail_send", ActionEvidenceStatus.EXECUTED)
+                )
+            )
+        )
+        // A later failure after an earlier success -> NOT accepted (do not mask the current state).
+        assertEquals(
+            EmailSendStatus.FAILED,
+            EmailSendStatusResolver.resolve(
+                listOf(
+                    ev("gmail_send", ActionEvidenceStatus.EXECUTED),
+                    ev("gmail_send", ActionEvidenceStatus.FAILED)
                 )
             )
         )

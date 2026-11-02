@@ -33,15 +33,13 @@ object EmailSendStatusResolver {
     const val GMAIL_SEND_TOOL = "gmail_send"
 
     fun resolve(evidence: List<ActionEvidence>): EmailSendStatus {
-        val send = evidence.filter { it.toolName == GMAIL_SEND_TOOL }
-        if (send.isEmpty()) return EmailSendStatus.UNKNOWN
-        return when {
-            send.any { it.status == ActionEvidenceStatus.VERIFIED || it.status == ActionEvidenceStatus.EXECUTED } ->
-                EmailSendStatus.GMAIL_ACCEPTED
-            // Failed (API error) or blocked (approval not granted) are both NOT sent.
-            send.any { it.status == ActionEvidenceStatus.FAILED || it.status == ActionEvidenceStatus.BLOCKED } ->
-                EmailSendStatus.FAILED
-            else -> EmailSendStatus.UNKNOWN
+        // The LAST gmail_send attempt decides: a later failure must not be masked by an earlier
+        // success (and vice versa), so the status reflects the current state of the send.
+        val last = evidence.lastOrNull { it.toolName == GMAIL_SEND_TOOL }
+            ?: return EmailSendStatus.UNKNOWN
+        return when (last.status) {
+            ActionEvidenceStatus.VERIFIED, ActionEvidenceStatus.EXECUTED -> EmailSendStatus.GMAIL_ACCEPTED
+            ActionEvidenceStatus.FAILED, ActionEvidenceStatus.BLOCKED -> EmailSendStatus.FAILED
         }
     }
 

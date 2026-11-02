@@ -212,6 +212,23 @@ class AgentTaskContractTest {
         assertEquals(0, tool.executions)
     }
 
+    @Test fun userRejectionOfARequiredActionEndsTheTaskImmediately() = runTest {
+        val tool = FakeTool("unsafe_tool", RiskLevel.COMMIT)
+        val loop = ToolLoop(ToolOrchestrator(mapOf(tool.name to tool), ApprovalGate()),
+            requestApproval = { null })
+        var proposals = 0
+        val outcome = loop.run(history, "model", emptyList(),
+            propose = { _, _, _ ->
+                proposals++
+                Result.success(ToolProposal.Calls(listOf(ToolCall(tool.name))))
+            },
+            taskContract = AgentTaskContract(actionRequired = true)
+        )
+        assertEquals("approval_rejected", (outcome as ToolLoop.Outcome.Failed).reason)
+        assertEquals(1, proposals)
+        assertEquals(0, tool.executions)
+    }
+
     @Test fun scopeDenialCannotSatisfyContract() = runTest {
         val tool = FakeTool(requiredScopes = listOf("gmail.readonly"))
         var round = 0
