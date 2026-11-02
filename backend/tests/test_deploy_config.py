@@ -64,6 +64,7 @@ def test_both_manifests_are_required_and_structurally_valid():
         }
         assert secrets == {
             "NEON_READ_URL": "neon-read-url" + suffix,
+            "NEON_MEMORY_READ_URL": "neon-memory-read-url" + suffix,
             "NEON_WRITE_URL": "neon-write-url" + suffix,
             "NEXUS_KEYS": "nexus-backend-keys" + suffix,
         }
