@@ -15,8 +15,10 @@ import java.util.Base64
 /** One explicit send per approval; no automatic retry after ambiguous network failures. */
 class GmailSendApiClient(
     private val tokenProvider: suspend () -> String?,
-    private val client: OkHttpClient = OkHttpClient()
+    client: OkHttpClient = OkHttpClient()
 ) {
+    private val hardenedClient = GmailSendHttpPolicy.harden(client)
+
     suspend fun send(to: String, subject: String, body: String): Result<String> =
         withContext(Dispatchers.IO) {
             val raw = GmailMessageComposer.compose(to, subject, body)
@@ -30,11 +32,11 @@ class GmailSendApiClient(
                     .header("Authorization", "Bearer $token")
                     .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
                     .build()
-                client.newCall(request).execute().use { response ->
+                hardenedClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         return@withContext Result.failure(IOException("gmail_http_${response.code}"))
                     }
-                    val id = JSONObject(response.body?.string().orEmpty()).optString("id")
+                    val id = JSONObject(response.peekBody(64L * 1024L).string()).optString("id")
                     if (id.isBlank()) Result.failure(IOException("gmail_missing_sent_id"))
                     else Result.success(id)
                 }
