@@ -29,6 +29,8 @@ gcloud builds submit \
 ```bash
 printf '%s' '<read-url>'  | gcloud secrets create neon-read-url  --data-file=- --replication-policy=automatic
 printf '%s' '<write-url>' | gcloud secrets create neon-write-url --data-file=- --replication-policy=automatic
+# Additional separate read-only personal memory URL (never reuse write URL):
+# printf '%s' '<personal-memory-read-url>' | gcloud secrets create neon-memory-read-url --data-file=- --replication-policy=automatic
 printf '%s' '<keys-json>'  | gcloud secrets create nexus-backend-keys --data-file=- --replication-policy=automatic
 ```
 
@@ -57,6 +59,33 @@ gcloud run deploy nexus-neon-backend \
   --timeout 30 --concurrency 10 \
   --allow-unauthenticated   # auth is the bearer key, not GCP IAM
 ```
+
+
+## Personal memory read-only credential (required before staging E2E)
+
+Unlike `NEON_READ_URL` (which reads from **Second Brain**), `NEON_MEMORY_READ_URL`
+must connect to the **personal-ai-core** database as `nexus_memory_reader` with
+SELECT on `public.nexus_memory` only. The current production writer credential
+is **not** an acceptable substitute.
+
+1. Use a disposable Neon staging branch. Provision `nexus_memory_reader` as
+   a new LOGIN role with unique credentials; do not reuse `nexus` (write role).
+2. After explicit approval for live staging changes, review the SQL in
+   `cloudrun/memory-reader-staging.sql`, apply its grants only on the staging branch,
+   and verify all negative privilege checks.
+3. Add `neon-memory-read-url-staging` as a **staging-only** Secret Manager secret.
+   Grant staging runtime service account access only to its own secret, alongside
+   staging read/write and key secrets. The corresponding prod secret is
+   `neon-memory-read-url`, to be provisioned only after owner authorization.
+4. Never commit a real connection string or insert it into the Android APK.
+   `GET /v1/memory/recent` returns 503 until the independent connection is
+   configured; it does **not** downgrade to write credentials.
+5. Build, deploy, IAM grants and secret creation can incur costs or affect
+   live resources; none are performed by this PR.
+
+The production and staging reference manifests contain separate secret names.
+`ENV=staging PROJECT_ID=... ./cloudrun/deploy.sh validate` is safe and local.
+The real deployment requires separate billing approval and HTTPS E2E acceptance.
 
 ## 4. Health checks
 
