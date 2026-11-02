@@ -6,12 +6,15 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class GmailSendTransportPolicyTest {
     private val server = MockWebServer()
+
+    @Before fun setup() { server.start() }
 
     @After fun cleanup() {
         server.shutdown()
@@ -33,7 +36,6 @@ class GmailSendTransportPolicyTest {
         server.enqueue(MockResponse().setResponseCode(307).addHeader(
             "Location", "/replay"
         ))
-        server.start()
         val send = GmailSendApiClient(tokenProvider = { "fixture-token" })
         val request = Request.Builder()
             .url(server.url("/send"))
