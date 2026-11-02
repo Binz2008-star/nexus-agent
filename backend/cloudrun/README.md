@@ -43,7 +43,7 @@ Grant the runtime service account access to read the secrets:
 gcloud secrets add-iam-policy-binding neon-read-url \
   --member="serviceAccount:nexus-neon-backend@$PROJECT_ID.iam.gserviceaccount.com" \
   --role=roles/secretmanager.secretAccessor
-# … repeat for neon-write-url and nexus-backend-keys
+# … repeat for neon-memory-read-url, neon-write-url and nexus-backend-keys
 ```
 
 ## 3. Deploy (us-east1)
@@ -54,7 +54,7 @@ gcloud run deploy nexus-neon-backend \
   --region us-east1 \
   --platform managed \
   --service-account "nexus-neon-backend@$PROJECT_ID.iam.gserviceaccount.com" \
-  --set-secrets=NEON_READ_URL=neon-read-url:latest,NEON_WRITE_URL=neon-write-url:latest,NEXUS_KEYS=nexus-backend-keys:latest \
+  --set-secrets=NEON_READ_URL=neon-read-url:latest,NEON_MEMORY_READ_URL=neon-memory-read-url:latest,NEON_WRITE_URL=neon-write-url:latest,NEXUS_KEYS=nexus-backend-keys:latest \
   --min-instances 0 --max-instances 2 \
   --timeout 30 --concurrency 10 \
   --allow-unauthenticated   # auth is the bearer key, not GCP IAM
