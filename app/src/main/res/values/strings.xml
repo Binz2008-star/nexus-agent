@@ -82,4 +82,11 @@
     <string name="hermes_runs_unsupported">Hermes server does not support the Runs API</string>
     <string name="hermes_unhealthy">Hermes server is unhealthy</string>
     <string name="hermes_unavailable">Hermes engine not available</string>
+    <string name="voice_input">إدخال صوتي</string>
+    <string name="voice_stop">إيقاف الاستماع</string>
+    <string name="voice_listening">أستمع…</string>
+    <string name="voice_processing">أفهم كلامك…</string>
+    <string name="voice_permission_denied">لم يُمنح إذن الميكروفون. فعّله من إعدادات التطبيق.</string>
+    <string name="voice_dismiss">إغلاق</string>
+    <string name="voice_unsupported">لا يوجد محرّك تعرّف على الكلام على هذا الجهاز.</string>
 </resources>

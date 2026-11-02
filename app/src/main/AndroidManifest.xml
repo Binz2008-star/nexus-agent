@@ -3,11 +3,18 @@
 
     <!-- Phase 2A: network access for DeepSeek API -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Voice input (dictation). Audio is transcribed locally when an offline model exists and is
+         never persisted; the transcript only fills the composer. Requested at runtime. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- Android 11+ package visibility: allow discovery of installed TTS engines. -->
+    <!-- Android 11+ package visibility: allow discovery of installed TTS engines and of the
+         on-device / platform speech-recognition service used for voice input. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
         </intent>
     </queries>
 
