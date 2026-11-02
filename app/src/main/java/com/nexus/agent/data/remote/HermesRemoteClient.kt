@@ -12,7 +12,9 @@ import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.EOFException
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -140,7 +142,7 @@ class HermesRemoteClientImpl(
             .build()
         return httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw HermesHttpException(response.code, response.body?.string().orEmpty())
+                throw HermesHttpException(response.code, boundedResponseBody(response))
             }
             val body = response.body ?: throw IOException("Empty body")
             val parser = HermesSseParser()
@@ -148,7 +150,14 @@ class HermesRemoteClientImpl(
             body.source().use { source ->
                 while (!source.exhausted()) {
                     currentCoroutineContext().ensureActive()
-                    val line = source.readUtf8Line() ?: break
+                    // Bound each wire line BEFORE allocating a String; an oversized or
+                    // unterminated SSE line must not exhaust the Android process heap.
+                    val line = try {
+                        source.readUtf8LineStrict(MAX_SSE_LINE_BYTES)
+                    } catch (e: EOFException) {
+                        if (source.exhausted()) break
+                        throw IOException("hermes_sse_line_too_large", e)
+                    }
                     val sse = parser.feed(line) ?: continue
                     val event = mapper.map(sse)
                     if (event.isTerminal) terminal = true
@@ -191,7 +200,7 @@ class HermesRemoteClientImpl(
         }
         return try {
             httpClient.newCall(builder.build()).execute().use { response ->
-                val body = response.body?.string().orEmpty()
+                val body = boundedResponseBody(response)
                 if (response.isSuccessful) Result.success(body)
                 else Result.failure(HermesHttpException(response.code, body))
             }
@@ -202,6 +211,13 @@ class HermesRemoteClientImpl(
         }
     }
 
+    /** Bounded response read: both success JSON and error messages come from a remote endpoint. */
+    private fun boundedResponseBody(response: Response): String {
+        val bytes = response.peekBody(MAX_JSON_RESPONSE_BYTES + 1).bytes()
+        if (bytes.size > MAX_JSON_RESPONSE_BYTES) throw IOException("hermes_response_too_large")
+        return String(bytes, Charsets.UTF_8)
+    }
+
     private inline fun <reified T> decode(result: Result<String>): Result<T> =
         result.mapCatching { json.decodeFromString<T>(it) }
 
@@ -209,6 +225,8 @@ class HermesRemoteClientImpl(
         private val mapper = HermesRunEventMapper
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
+        private const val MAX_SSE_LINE_BYTES = 65_536L
+        private const val MAX_JSON_RESPONSE_BYTES = 1_048_576L
         private const val MAX_RECONNECT_ATTEMPTS = 5
         private const val RECONNECT_BACKOFF_MS = 1_000L
 
