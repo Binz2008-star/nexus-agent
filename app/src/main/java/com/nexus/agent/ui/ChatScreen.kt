@@ -504,22 +504,10 @@ fun ChatScreen(
         Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding().navigationBarsPadding()) {
             AnimatedVisibility(visible = errorMessage != null, enter = fadeIn(), exit = fadeOut()) {
                 errorMessage?.let { code ->
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = mapErrorCode(code),
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            TextButton(onClick = { viewModel.retryLast() }) {
-                                Text(stringResource(R.string.retry))
-                            }
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                        SecurityWarningBanner(message = mapErrorCode(code))
+                        TextButton(onClick = { viewModel.retryLast() }) {
+                            Text(stringResource(R.string.retry))
                         }
                     }
                 }
@@ -798,37 +786,10 @@ private fun MessageBubble(message: ChatMessage, isStreaming: Boolean = false) {
 
 @Composable
 private fun BackgroundTasksBar() {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                stringResource(R.string.background_task_running),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.weight(1f))
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-            )
-        }
-    }
+    ExecutionProgressCard(
+        stage = stringResource(R.string.background_task_running),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+    )
 }
 
 @Composable
@@ -882,10 +843,9 @@ private fun Composer(
                 }
             }
             Spacer(Modifier.height(6.dp))
-            Text(
-                "الردود والمعلومات الحساسة قد تحتاج إلى مراجعتك.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelSmall
+            VerifiedSuccessBanner(
+                message = "الردود والمعلومات الحساسة تبقى تحت مراجعتك قبل أي إجراء.",
+                modifier = Modifier.padding(top = 2.dp)
             )
         }
     }
