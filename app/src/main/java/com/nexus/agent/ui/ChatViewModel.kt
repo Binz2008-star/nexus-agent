@@ -34,6 +34,7 @@ import com.nexus.agent.domain.commands.EmailSendResponsePolicy
 import com.nexus.agent.domain.commands.GmailQueryParser
 import com.nexus.agent.domain.commands.EmailTaskMessages
 import com.nexus.agent.domain.commands.PendingEmailDraft
+import com.nexus.agent.domain.commands.EmailDraftStore
 import com.nexus.agent.domain.commands.SendIntent
 import com.nexus.agent.domain.commands.SendIntentClassifier
 import com.nexus.agent.domain.connectors.GmailConnector
@@ -98,7 +99,8 @@ class ChatViewModel(
     private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() },
     private val approvalGate: ApprovalGate = ApprovalGate(),
     private val hermesRepository: HermesRepository? = null,
-    private val hermesAudit: HermesAuditLog? = null
+    private val hermesAudit: HermesAuditLog? = null,
+    private val emailDraftStore: EmailDraftStore? = null
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -261,6 +263,11 @@ class ChatViewModel(
                 _selectedModel.value = preferences.lastModel.first()
                 _selectedEngine.value = AiEngine.fromId(preferences.lastEngine.first())
                 restoreLastConversation(startupSnapshot)
+                val restoredDraft = emailDraftStore?.load()
+                if (_pendingEmailDraft.value == null &&
+                    restoredDraft?.conversationId == _currentConversationId.value) {
+                    _pendingEmailDraft.value = restoredDraft
+                }
             } finally {
                 initialRestoreComplete.complete(Unit)
             }
@@ -571,12 +578,18 @@ class ChatViewModel(
                     propose = { h, m, s ->
                         repository.completeWithTools(h, m, s).map { it.toProposal() }.also { result ->
                             result.getOrNull()?.let { proposal ->
-                                if (proposal is ToolProposal.Calls) captureDraftFrom(proposal)
+                                if (proposal is ToolProposal.Calls) captureDraftFrom(proposal, conversationId)
                             }
                         }
                     },
                     grantedScopes = gmailScopesProvider(),
-                    taskContract = taskContract
+                    taskContract = taskContract,
+                    onApprovedActionStart = { call ->
+                        if (sendIntent == SendIntent.SEND &&
+                            call.name == EmailSendStatusResolver.GMAIL_SEND_TOOL) {
+                            settleDraft(EmailSendStatus.SENDING)
+                        }
+                    }
                 )
                 when (outcome) {
                     is ToolLoop.Outcome.Answered -> {
@@ -622,24 +635,33 @@ class ChatViewModel(
         }
     }
 
-    /** Captures the recipient/subject/body a model proposed to send, as a held draft. */
-    private fun captureDraftFrom(proposal: ToolProposal.Calls) {
-        proposal.calls
-            .firstOrNull { it.name == EmailSendStatusResolver.GMAIL_SEND_TOOL }
+    /** Captures a draft durably before a Gmail approval is requested. */
+    private suspend fun captureDraftFrom(proposal: ToolProposal.Calls, conversationId: Long) {
+        proposal.calls.firstOrNull { it.name == EmailSendStatusResolver.GMAIL_SEND_TOOL }
             ?.let { call ->
-                _pendingEmailDraft.value = PendingEmailDraft(
+                val previous = _pendingEmailDraft.value?.takeIf {
+                    it.conversationId == conversationId
+                }
+                val draft = PendingEmailDraft(
                     recipient = call.arguments["to"],
                     subject = call.arguments["subject"],
                     body = call.arguments["body"],
-                    status = EmailSendStatus.AWAITING_APPROVAL
+                    status = EmailSendStatus.AWAITING_APPROVAL,
+                    conversationId = conversationId,
+                    revision = (previous?.revision ?: 0L) + 1
                 )
+                // Encryption failure must stop the send before the approval/POST stage.
+                emailDraftStore?.save(draft)
+                _pendingEmailDraft.value = draft
             }
     }
 
-    /** Updates the held draft's status from the tool evidence (accept/fail), preserving fields. */
-    private fun settleDraft(status: EmailSendStatus) {
-        val current = _pendingEmailDraft.value ?: return
-        _pendingEmailDraft.value = current.copy(status = status)
+    /** State and sensitive fields persist through process death; approvals never do. */
+    private suspend fun settleDraft(status: EmailSendStatus) {
+        val draft = _pendingEmailDraft.value ?: return
+        val next = draft.copy(status = status)
+        emailDraftStore?.save(next)
+        _pendingEmailDraft.value = next
     }
 
     /**
@@ -1125,14 +1147,15 @@ class ChatViewModel(
         private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() },
         private val approvalGate: ApprovalGate = ApprovalGate(),
         private val hermesRepository: HermesRepository? = null,
-        private val hermesAudit: HermesAuditLog? = null
+        private val hermesAudit: HermesAuditLog? = null,
+        private val emailDraftStore: EmailDraftStore? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return ChatViewModel(
                 repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
                 emotionAnalyzer, loadManager, cultureContext, neonRepository, gmailScopesProvider,
-                approvalGate, hermesRepository, hermesAudit
+                approvalGate, hermesRepository, hermesAudit, emailDraftStore
             ) as T
         }
     }
