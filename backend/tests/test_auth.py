@@ -66,10 +66,22 @@ def test_load_identities_empty_scopes_fails_closed(monkeypatch):
     assert ids["k1"].scopes == frozenset()
 
 
-def test_load_identities_null_scopes_defaults_full(monkeypatch):
-    _env(monkeypatch, keys=json.dumps({"k1": {"name": "phone", "scopes": None}}))
+def test_load_identities_null_or_missing_scopes_are_denied(monkeypatch):
+    _env(monkeypatch, keys=json.dumps({
+        "k1": {"name": "phone", "scopes": None},
+        "k2": {"name": "backup"},
+        "k3": {"name": "disabled", "scopes": "invalid"},
+    }))
     ids = load_identities()
-    assert ids["k1"].scopes == ALL_SCOPES
+    assert ids["k1"].scopes == frozenset()
+    assert ids["k2"].scopes == frozenset()
+    assert ids["k3"].scopes == frozenset()
+
+
+def test_plain_string_legacy_key_is_unchanged(monkeypatch):
+    _env(monkeypatch, keys=json.dumps({"legacy-config-key": "legacy"}))
+    ids = load_identities()
+    assert ids["legacy-config-key"].scopes == ALL_SCOPES
 
 
 def test_authenticate_returns_identity_or_none():
