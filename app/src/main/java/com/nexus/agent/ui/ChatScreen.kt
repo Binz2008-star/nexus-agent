@@ -521,7 +521,17 @@ fun ChatScreen(
                     creds.deepSeekKey?.let { keyInput = it }
                     creds.readUrl?.let { neonReadUrlInput = it; neonReadDirty = true }
                     creds.writeUrl?.let { neonWriteUrlInput = it; neonWriteDirty = true }
-                    context.showToast(context.getString(R.string.import_ok))
+                    // Import a user-provided OpenRouter key directly into encrypted storage;
+                    // never populate a plaintext Compose text state with the imported token.
+                    creds.openRouterKey?.let { token ->
+                        withContext(Dispatchers.IO) { secrets.saveOpenRouterApiKey(token) }
+                        openRouterConfigured = true
+                    }
+                    context.showToast(
+                        if (creds.openRouterKey != null)
+                            "OpenRouter key saved securely. Enable free fallback in AI settings."
+                        else context.getString(R.string.import_ok)
+                    )
                 }
             }
         }
