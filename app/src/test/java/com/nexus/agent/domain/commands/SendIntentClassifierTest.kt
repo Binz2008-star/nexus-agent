@@ -52,4 +52,25 @@ class SendIntentClassifierTest {
     @Test fun emailAddressAloneEstablishesEmailContext() {
         assertEquals(SendIntent.SEND, SendIntentClassifier.classify("send it to john@example.com"))
     }
+    @Test fun explicitFollowUpRequiresCurrentCompleteDraft() {
+        listOf("send it", "yes send", "أرسلها", "تمام ابعتها", "نعم أرسل")
+            .forEach { command ->
+                assertEquals(SendIntent.NONE, SendIntentClassifier.classify(command))
+                assertEquals(
+                    SendIntent.SEND,
+                    SendIntentClassifier.classify(command, hasPendingEmailDraft = true)
+                )
+            }
+    }
+
+    @Test fun bareAffirmationNeverBecomesPermissionToSend() {
+        listOf("yes", "ok", "تمام", "نعم", "send me the file")
+            .forEach { command ->
+                assertEquals(
+                    SendIntent.NONE,
+                    SendIntentClassifier.classify(command, hasPendingEmailDraft = true)
+                )
+            }
+    }
+
 }
