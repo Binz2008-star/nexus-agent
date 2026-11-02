@@ -114,6 +114,30 @@ class CredentialFileParserTest {
     }
 
     @Test
+    fun importsOpenRouterKeyFromUrlLine() {
+        val creds = CredentialFileParser.parse(
+            "jdbc:postgresql://read-host/neondb?sslmode=require&user=nexus_reader&password=dbpass sk-or-v1-router-key"
+        )
+        assertEquals("sk-or-v1-router-key", creds.openRouterKey)
+        assertEquals("jdbc:postgresql://read-host/neondb?sslmode=require&user=nexus_reader&password=dbpass", creds.readUrl)
+    }
+
+    @Test
+    fun ignoresOpenRouterTokenEmbeddedInPasswordParam() {
+        val creds = CredentialFileParser.parse(
+            "jdbc:postgresql://h/db?sslmode=require&user=nexus_reader&password=sk-or-v1-fake-password"
+        )
+        assertNull(creds.openRouterKey)
+        assertEquals("jdbc:postgresql://h/db?sslmode=require&user=nexus_reader&password=sk-or-v1-fake-password", creds.readUrl)
+    }
+
+    @Test
+    fun rejectsOversizedOpenRouterToken() {
+        val token = "sk-or-v1-" + "x".repeat(CredentialFileParser.MAX_KEY_LENGTH)
+        assertNull(CredentialFileParser.parse(token).openRouterKey)
+    }
+
+    @Test
     fun acceptsKeyAtMaxLength() {
         val key = "sk-" + "b".repeat(CredentialFileParser.MAX_KEY_LENGTH - 3)
         assertEquals(key, CredentialFileParser.parse(key).deepSeekKey)

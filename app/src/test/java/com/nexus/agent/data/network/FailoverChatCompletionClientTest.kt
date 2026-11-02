@@ -140,6 +140,20 @@ class FailoverChatCompletionClientTest {
         assertEquals(1, free.calls)
     }
 
+    @Test fun failoverMatchesErrorPrefixNotExactString() = runBlocking {
+        for (reason in listOf(
+            "DeepSeek API error 402: Insufficient credits",
+            "DeepSeek API error 429: Too many requests",
+            "DeepSeek API error 503: Service unavailable"
+        )) {
+            val primary = FakeClient(response = Result.failure(IOException(reason)))
+            val free = FakeClient(response = Result.success("free answer"))
+            val router = FailoverChatCompletionClient(primary, free) { true }
+            assertEquals("free answer", router.complete(emptyList(), "deepseek-flash").getOrThrow())
+            assertEquals(1, free.calls)
+        }
+    }
+
     @Test fun secondProviderFailureDoesNotCascadeIntoMoreRetries() = runBlocking {
         val primary = FakeClient(response = Result.failure(IOException("DeepSeek API error 402")))
         val free = FakeClient(response = Result.failure(IOException("OpenRouter API error 429")))

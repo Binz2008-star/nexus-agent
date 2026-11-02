@@ -68,13 +68,12 @@ class FailoverChatCompletionClient(
         if (error is IllegalStateException &&
             error.message == "No DeepSeek API key configured") return true
         if (error !is IOException) return false
-        return error.message in setOf(
-            "DeepSeek API error 402",
-            "DeepSeek API error 429",
-            "DeepSeek API error 500",
-            "DeepSeek API error 502",
-            "DeepSeek API error 503",
-            "DeepSeek API error 504"
-        )
+        val msg = error.message ?: return false
+        return msg.startsWith("DeepSeek API error 402")
+            || msg.startsWith("DeepSeek API error 429")
+            || msg.startsWith("DeepSeek API error 500")
+            || msg.startsWith("DeepSeek API error 502")
+            || msg.startsWith("DeepSeek API error 503")
+            || msg.startsWith("DeepSeek API error 504")
     }
 }
