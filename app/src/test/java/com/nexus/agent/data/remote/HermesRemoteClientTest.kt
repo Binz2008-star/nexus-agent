@@ -127,4 +127,29 @@ class HermesRemoteClientTest {
         assertTrue(e is HermesHttpException)
         assertEquals(401, (e as HermesHttpException).code)
     }
+    @Test
+    fun `rejects oversized JSON from a remote Hermes endpoint`() = runTest {
+        server.enqueue(json("{\"payload\":\"" + "x".repeat(1_100_000) + "\"}"))
+        val result = client().health()
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("hermes_response_too_large") == true)
+    }
+
+    @Test
+    fun `oversized SSE line cannot reach the event callback`() = runTest {
+        val huge = "event: run.completed\\ndata: " + "x".repeat(90_000) + "\\n\\n"
+        server.enqueue(MockResponse().setResponseCode(200)
+            .setHeader("Content-Type", "text/event-stream")
+            .setBody(huge))
+        // The first stream ends without terminal dispatch and the client will try
+        // status reconciliation. Respond with a terminal state to avoid further retries.
+        server.enqueue(json("{\"run_id\":\"r1\",\"status\":\"completed\",\"output\":\"safe\"}"))
+        var deliveredFromStream = false
+        val result = client().streamRunEvents("r1") {
+            if (it is HermesRunEvent.Completed && it.output != "safe") deliveredFromStream = true
+        }
+        assertTrue(result.isSuccess)
+        assertTrue(!deliveredFromStream)
+    }
+
 }

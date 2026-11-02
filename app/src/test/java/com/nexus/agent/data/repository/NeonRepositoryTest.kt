@@ -250,14 +250,15 @@ class NeonRepositoryTest {
     }
 
     @Test
-    fun backendFlagOnWithoutClientFallsBackToJdbc() = runTest {
-        val jdbc = FakeJdbc(
-            mapOf(
-                SecondBrainSql.SEARCH_CHUNKS_SQL to emptyList(),
-                SecondBrainSql.SEARCH_MEMORY_SQL to emptyList()
-            )
-        )
-        repoHttp(jdbc, backend = null, useBackend = { true }).search("hello", 8)
-        assertEquals(2, jdbc.queries.size)
+    fun backendFlagOnWithoutClientFailsClosedForEveryOperation() = runTest {
+        val jdbc = FakeJdbc()
+        val repo = repoHttp(jdbc, backend = null, useBackend = { true })
+        val searched = repo.search("hello", 8)
+        assertEquals("no_connection", (searched as KnowledgeSearchResult.Failure).errorCode)
+        assertTrue(repo.saveMemory("fact", "test").isFailure)
+        assertTrue(repo.saveConversationMessage("s", "user", "test").isFailure)
+        assertTrue(repo.loadMemory().isFailure)
+        assertTrue(jdbc.queries.isEmpty())
+        assertTrue(jdbc.executions.isEmpty())
     }
 }

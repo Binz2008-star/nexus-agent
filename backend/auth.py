@@ -42,10 +42,11 @@ def _safe_name(key: str, meta) -> str:
 def _scopes(meta) -> frozenset:
     """Resolve scopes. Fails closed: an explicit empty scope list grants nothing."""
     if not isinstance(meta, dict):
-        return ALL_SCOPES  # legacy plain string value -> all scopes
+        return ALL_SCOPES  # explicitly documented legacy string form only
     raw = meta.get("scopes")
     if raw is None:
-        return ALL_SCOPES
+        # Fail closed for scoped JSON identities: missing/null grants no permissions.
+        return frozenset()
     if isinstance(raw, str):
         return frozenset({raw}) if raw in (READ_SCOPE, WRITE_SCOPE) else frozenset()
     try:
