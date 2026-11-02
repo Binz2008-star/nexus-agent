@@ -28,13 +28,17 @@ class EmailSendStatusResolverTest {
         )
     }
 
-    @Test fun failedGmailSendIsNotAccepted() {
+    @Test fun ambiguousGmailFailureDoesNotClaimMessageWasNotSent() {
         assertEquals(
-            EmailSendStatus.FAILED,
+            EmailSendStatus.UNKNOWN,
             EmailSendStatusResolver.resolve(
                 listOf(ev("gmail_send", ActionEvidenceStatus.FAILED))
             )
         )
+        assertTrue(EmailSendResponsePolicy.response(
+            listOf(ev("gmail_send", ActionEvidenceStatus.FAILED)),
+            "Sent!"
+        ).contains("لا يمكن تأكيد"))
     }
 
     @Test fun blockedApprovalIsNotAccepted() {
@@ -56,24 +60,13 @@ class EmailSendStatusResolverTest {
         )
     }
 
-    @Test fun lastSendAttemptDecides() {
-        // A later success after an earlier failure -> accepted.
+    @Test fun anyAcceptedSendWinsOverAPriorFailure() {
         assertEquals(
             EmailSendStatus.GMAIL_ACCEPTED,
             EmailSendStatusResolver.resolve(
                 listOf(
                     ev("gmail_send", ActionEvidenceStatus.FAILED),
                     ev("gmail_send", ActionEvidenceStatus.EXECUTED)
-                )
-            )
-        )
-        // A later failure after an earlier success -> NOT accepted (do not mask the current state).
-        assertEquals(
-            EmailSendStatus.FAILED,
-            EmailSendStatusResolver.resolve(
-                listOf(
-                    ev("gmail_send", ActionEvidenceStatus.EXECUTED),
-                    ev("gmail_send", ActionEvidenceStatus.FAILED)
                 )
             )
         )
@@ -96,4 +89,52 @@ class EmailSendStatusResolverTest {
             PendingEmailDraft(recipient = "a@b.com", subject = "Hi", body = "Body").isComplete
         )
     }
+    @Test fun failedLoopNeverPersistsFabricatedSentClaim() {
+        val reply = EmailSendResponsePolicy.response(
+            emptyList(),
+            "The email was sent successfully to your customer"
+        )
+        assertTrue(reply.contains("لا يمكن تأكيد"))
+        assertFalse(reply.contains("The email was sent"))
+        assertEquals(EmailSendStatus.UNKNOWN, EmailSendResponsePolicy.status(emptyList()))
+    }
+
+    @Test fun modelCannotClaimDeliveryAfterSuccessfulGmailSend() {
+        val result = EmailSendResponsePolicy.response(
+            listOf(ev("gmail_send", ActionEvidenceStatus.EXECUTED)),
+            "The email was delivered and read"
+        )
+        assertTrue(result.contains("Gmail"))
+        assertFalse(result.contains("delivered"))
+    }
+
+    @Test fun restoredUnfinishedDraftNeverReplaysItsApproval() {
+        val draft = PendingEmailDraft(
+            "a@example.com", "Subject", "Body",
+            status = EmailSendStatus.SENDING, conversationId = 9L, revision = 3
+        )
+        val restored = EmailDraftCodec.decode(EmailDraftCodec.encode(draft))
+        assertEquals(EmailSendStatus.UNKNOWN, restored?.status)
+        assertEquals(3L, restored?.revision)
+        assertEquals(9L, restored?.conversationId)
+        assertEquals("Body", restored?.body)
+    }
+
+    @Test fun approvalMustBeRequestedAgainAfterProcessDeath() {
+        val draft = PendingEmailDraft(
+            "a@example.com", "Subject", "Body",
+            status = EmailSendStatus.AWAITING_APPROVAL, conversationId = 19L
+        )
+        assertEquals(
+            EmailSendStatus.DRAFT,
+            EmailDraftCodec.decode(EmailDraftCodec.encode(draft))?.status
+        )
+    }
+
+    @Test fun malformedOrStaleDraftCannotRestore() {
+        assertEquals(null, EmailDraftCodec.decode("malformed"))
+        assertEquals(null, EmailDraftCodec.decode("{\"version\":2}"))
+        assertEquals(null, EmailDraftCodec.decode("x".repeat(100_001)))
+    }
+
 }
