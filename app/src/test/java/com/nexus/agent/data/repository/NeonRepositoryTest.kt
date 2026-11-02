@@ -38,7 +38,7 @@ class NeonRepositoryTest {
         jdbc: NeonJdbc,
         read: suspend () -> String? = { readUrl },
         write: suspend () -> String? = { writeUrl }
-    ) = NeonRepository(read, write, jdbc, Dispatchers.Unconfined)
+    ) = NeonRepository(read, write, jdbc, Dispatchers.Unconfined, allowLegacyJdbc = true)
 
     private class FakeBackend : NeonBackendClient {
         var searchResult: KnowledgeSearchResult = KnowledgeSearchResult.Success("", emptyList())
@@ -75,7 +75,7 @@ class NeonRepositoryTest {
         useBackend: suspend () -> Boolean = { true },
         read: suspend () -> String? = { readUrl },
         write: suspend () -> String? = { writeUrl }
-    ) = NeonRepository(read, write, jdbc, Dispatchers.Unconfined, backend, useBackend)
+    ) = NeonRepository(read, write, jdbc, Dispatchers.Unconfined, backend, useBackend, allowLegacyJdbc = true)
 
     @Test
     fun emptyQueryFailsWithEmpty() = runTest {
@@ -261,4 +261,55 @@ class NeonRepositoryTest {
         assertTrue(jdbc.queries.isEmpty())
         assertTrue(jdbc.executions.isEmpty())
     }
+    @Test
+    fun releaseBuildNeverUsesDirectJdbcForAnyOperation() = runTest {
+        val jdbc = FakeJdbc()
+        var urlLookups = 0
+        val r = NeonRepository(
+            readUrlProvider = { urlLookups++; readUrl },
+            writeUrlProvider = { urlLookups++; writeUrl },
+            jdbc = jdbc,
+            ioDispatcher = Dispatchers.Unconfined,
+            useBackendProvider = { false },
+            allowLegacyJdbc = false
+        )
+        val search = r.search("hello", 8)
+        assertEquals(
+            NeonRepository.ERROR_DIRECT_JDBC_DISABLED,
+            (search as KnowledgeSearchResult.Failure).errorCode
+        )
+        assertTrue(r.saveMemory("fact", "sensitive").isFailure)
+        assertTrue(r.saveConversationMessage("s", "user", "sensitive").isFailure)
+        assertTrue(r.loadMemory(4).isFailure)
+        assertTrue(r.recallMemory("sensitive").isFailure)
+        assertEquals(0, urlLookups)
+        assertTrue(jdbc.queries.isEmpty())
+        assertTrue(jdbc.executions.isEmpty())
+    }
+
+    @Test
+    fun releaseBuildStillAllowsConfiguredHttpsBackend() = runTest {
+        val jdbc = FakeJdbc()
+        val backend = FakeBackend()
+        val r = NeonRepository(
+            readUrlProvider = { readUrl },
+            writeUrlProvider = { writeUrl },
+            jdbc = jdbc,
+            ioDispatcher = Dispatchers.Unconfined,
+            httpClient = backend,
+            useBackendProvider = { true },
+            allowLegacyJdbc = false
+        )
+        assertTrue(r.search("hello", 8) is KnowledgeSearchResult.Success)
+        assertTrue(r.saveMemory("fact", "a").isSuccess)
+        assertTrue(r.saveConversationMessage("s", "user", "test").isSuccess)
+        assertTrue(r.loadMemory().isSuccess)
+        assertEquals(1, backend.searchCalls)
+        assertEquals(1, backend.saveMemoryCalls)
+        assertEquals(1, backend.mirrorCalls)
+        assertEquals(1, backend.loadMemoryCalls)
+        assertTrue(jdbc.queries.isEmpty())
+        assertTrue(jdbc.executions.isEmpty())
+    }
+
 }
