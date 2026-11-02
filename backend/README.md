@@ -11,7 +11,7 @@ Neon credentials. See `docs/NEON-BACKEND-MIGRATION.md` for the full plan.
 | GET | `/health` | — | liveness |
 | POST | `/v1/brain/search` | `NEON_READ_URL` | Second Brain `chunks_v4` + `memory` search |
 | POST | `/v1/memory/save` | `NEON_WRITE_URL` | append a memory fact (`nexus_memory`) |
-| GET | `/v1/memory/recent?limit=N` | `NEON_WRITE_URL` | recent memories (client ranks locally) |
+| GET | `/v1/memory/recent?limit=N` | `NEON_MEMORY_READ_URL` | recent memories using dedicated SELECT-only credential |
 | POST | `/v1/transcript/mirror` | `NEON_WRITE_URL` | best-effort conversation mirror |
 
 ## Run locally
@@ -21,6 +21,7 @@ python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 export NEON_READ_URL='postgresql://nexus_reader:...@.../neondb?sslmode=require'
 export NEON_WRITE_URL='postgresql://nexus:...@.../neondb?sslmode=require'
+export NEON_MEMORY_READ_URL='postgresql://nexus_memory_reader:...@.../neondb?sslmode=require'
 export NEXUS_BACKEND_KEY='<random>'
 uvicorn main:app --host 0.0.0.0 --port 8080
 ```
@@ -30,12 +31,19 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 - `NEON_READ_URL` should use the **`nexus_reader`** role (SELECT only).
 - `NEON_WRITE_URL` should use a narrowly-scoped writer (INSERT on `nexus_memory` +
   `nexus_conversations` only — no `UPDATE`/`DELETE`/`DROP`).
+- `NEON_MEMORY_READ_URL` uses a **different credential on personal-ai-core**:
+  `nexus_memory_reader` must have schema USAGE and SELECT on `public.nexus_memory`
+  only, with no INSERT/UPDATE/DELETE or access to `nexus_conversations`. Create
+  and verify first on an isolated Neon staging branch. This PR does not modify any
+  production database roles or credentials.
+- Missing `NEON_MEMORY_READ_URL` returns HTTP 503 on recent-memory reads
+  instead of silently using the write credential. Queries run in READ ONLY transactions.
 
 ## Connection-string formats (important)
 
 The backend (psycopg) and the app (pgjdbc) use **different** URL formats for the same Neon instance:
 
-- **Backend** (`NEON_READ_URL`/`NEON_WRITE_URL`): psycopg/libpq URI —
+- **Backend** (`NEON_READ_URL`/`NEON_WRITE_URL`/`NEON_MEMORY_READ_URL`): psycopg/libpq URI —
   `postgresql://nexus_reader:password@host/db?sslmode=require`.
 - **App** (direct JDBC, being replaced): pgjdbc — `jdbc:postgresql://host/db?sslmode=require&user=nexus_reader&password=…`.
 
