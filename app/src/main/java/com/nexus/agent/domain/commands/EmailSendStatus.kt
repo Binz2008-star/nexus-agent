@@ -42,8 +42,12 @@ object EmailSendStatusResolver {
             send.any { it.status == ActionEvidenceStatus.VERIFIED || it.status == ActionEvidenceStatus.EXECUTED } ->
                 EmailSendStatus.GMAIL_ACCEPTED
             // Definitive tool failure or denied approval is NOT provider acceptance.
-            send.any { it.status == ActionEvidenceStatus.FAILED || it.status == ActionEvidenceStatus.BLOCKED } ->
+            send.any { it.status == ActionEvidenceStatus.BLOCKED } ->
                 EmailSendStatus.FAILED
+            // HTTP timeouts or an interrupted response cannot prove Gmail rejected a
+            // request. UNKNOWN requires checking Sent before any new approved POST.
+            send.any { it.status == ActionEvidenceStatus.FAILED } ->
+                EmailSendStatus.UNKNOWN
             else -> EmailSendStatus.UNKNOWN
         }
     }
