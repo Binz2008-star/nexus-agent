@@ -25,6 +25,7 @@ class AppPreferencesRepository(
 ) {
     private val systemPromptKey = stringPreferencesKey("system_prompt")
     private val lastModelKey = stringPreferencesKey("last_model")
+    private val openRouterFallbackEnabledKey = booleanPreferencesKey("openrouter_free_fallback_enabled")
     private val knowledgeBaseUrlKey = stringPreferencesKey("knowledge_base_url")
     private val mirrorEnabledKey = booleanPreferencesKey("mirror_enabled")
     private val analyticsEnabledKey = booleanPreferencesKey("analytics_enabled")
@@ -46,6 +47,9 @@ class AppPreferencesRepository(
 
     val systemPrompt: Flow<String> = dataStore.data.map { it[systemPromptKey] ?: "" }
     val lastModel: Flow<String> = dataStore.data.map { it[lastModelKey] ?: "deepseek-flash" }
+    // Default OFF: user must agree before moving conversations to a third-party provider.
+    val openRouterFallbackEnabled: Flow<Boolean> =
+        dataStore.data.map { it[openRouterFallbackEnabledKey] ?: false }
     val knowledgeBaseUrl: Flow<String> = dataStore.data.map { it[knowledgeBaseUrlKey] ?: "" }
     // Opt-in (default false): mirroring full transcripts to Neon is off unless the user enables it.
     val mirrorEnabled: Flow<Boolean> = dataStore.data.map { it[mirrorEnabledKey] ?: false }
@@ -88,6 +92,10 @@ class AppPreferencesRepository(
                 prefs[systemPromptKey] = prompt.trim()
             }
         }
+    }
+
+    suspend fun setOpenRouterFallbackEnabled(enabled: Boolean) {
+        dataStore.edit { it[openRouterFallbackEnabledKey] = enabled }
     }
 
     suspend fun setLastModel(model: String) {
