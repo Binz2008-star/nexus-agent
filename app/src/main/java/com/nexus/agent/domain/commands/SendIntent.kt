@@ -21,11 +21,22 @@ object SendIntentClassifier {
     private val writeEn = Regex("\\b(compose|draft|write|prepare|type|author|reply|respond|create)\\b", RegexOption.IGNORE_CASE)
     private val writeAr = Regex("(اكتب|أكتب|صغ|أصغ|جهّز|جهز|أعد|اعد|حضّر|حضر|ألّف|الف|دوّن|دون|رد)")
 
-    fun classify(message: String): SendIntent {
+    // Bare follow-ups require a complete saved draft in the active conversation.
+    // "yes" alone cannot authorize an action.
+    private val followupSend = Regex(
+        "^(?:yes\\s+)?send(?:\\s+(?:it|now|this|the\\s+draft))?$|" +
+            "^(?:نعم\\s+|تمام\\s+)?(?:أرسلها|ارسلها|أرسل|ارسل|ابعثها|ابعتها)(?:\\s+الآن)?$",
+        RegexOption.IGNORE_CASE
+    )
+
+    fun classify(message: String, hasPendingEmailDraft: Boolean = false): SendIntent {
         val normalized = message.trim().lowercase()
         val emailContext = emailNounEn.containsMatchIn(normalized) ||
             emailNounAr.containsMatchIn(normalized) || emailAddress.containsMatchIn(message)
-        if (!emailContext) return SendIntent.NONE
+        if (!emailContext) {
+            return if (hasPendingEmailDraft && followupSend.matches(normalized))
+                SendIntent.SEND else SendIntent.NONE
+        }
         // A send verb always wins over a write verb ("send the draft" / "forward this email").
         if (sendEn.containsMatchIn(normalized) || sendAr.containsMatchIn(normalized)) return SendIntent.SEND
         if (writeEn.containsMatchIn(normalized) || writeAr.containsMatchIn(normalized)) return SendIntent.WRITE
