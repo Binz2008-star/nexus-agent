@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,6 +44,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -498,7 +501,7 @@ fun ChatScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding().navigationBarsPadding()) {
             AnimatedVisibility(visible = errorMessage != null, enter = fadeIn(), exit = fadeOut()) {
                 errorMessage?.let { code ->
                     Surface(
@@ -755,6 +758,7 @@ private fun MessageBubble(message: ChatMessage, isStreaming: Boolean = false) {
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = if (isUser) 1.dp else 2.dp),
             modifier = Modifier.fillMaxWidth(0.82f),
             shape = RoundedCornerShape(
                 topStart = 18.dp,
@@ -1349,7 +1353,13 @@ private fun ApprovalCard(
 ) {
     AlertDialog(
         onDismissRequest = onReject,
-        title = { Text(stringResource(R.string.approval_title)) },
+        title = { 
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.approval_title))
+                }
+            },
         text = {
             Column {
                 Text(stringResource(R.string.approval_action, request.toolName))
