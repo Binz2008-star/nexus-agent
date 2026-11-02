@@ -15,9 +15,18 @@ import java.util.Base64
 /** One explicit send per approval; no automatic retry after ambiguous network failures. */
 class GmailSendApiClient(
     private val tokenProvider: suspend () -> String?,
-    client: OkHttpClient = OkHttpClient()
+    private val client: OkHttpClient = OkHttpClient()
 ) {
-    private val hardenedClient = GmailSendHttpPolicy.harden(client)
+    // An approved send may be retried ONLY through another explicit user approval.
+    // OkHttp otherwise retries some recoverable connection failures by default; that
+    // can replay an ambiguous POST even if the agent's tool loop runs only once.
+    internal val commitHttpClient: OkHttpClient = client.newBuilder()
+        .retryOnConnectionFailure(false)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
+    internal fun executeOnce(request: Request) = commitHttpClient.newCall(request).execute()
 
     suspend fun send(to: String, subject: String, body: String): Result<String> =
         withContext(Dispatchers.IO) {
@@ -32,11 +41,11 @@ class GmailSendApiClient(
                     .header("Authorization", "Bearer $token")
                     .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
                     .build()
-                hardenedClient.newCall(request).execute().use { response ->
+                executeOnce(request).use { response ->
                     if (!response.isSuccessful) {
                         return@withContext Result.failure(IOException("gmail_http_${response.code}"))
                     }
-                    val id = JSONObject(response.peekBody(64L * 1024L).string()).optString("id")
+                    val id = JSONObject(response.body?.string().orEmpty()).optString("id")
                     if (id.isBlank()) Result.failure(IOException("gmail_missing_sent_id"))
                     else Result.success(id)
                 }
