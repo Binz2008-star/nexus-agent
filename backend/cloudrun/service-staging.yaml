@@ -28,6 +28,9 @@ spec:
             - name: NEON_READ_URL
               valueFrom:
                 secretKeyRef: { name: neon-read-url-staging, key: latest }
+            - name: NEON_MEMORY_READ_URL
+              valueFrom:
+                secretKeyRef: { name: neon-memory-read-url-staging, key: latest }
             - name: NEON_WRITE_URL
               valueFrom:
                 secretKeyRef: { name: neon-write-url-staging, key: latest }
