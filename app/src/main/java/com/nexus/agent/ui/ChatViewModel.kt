@@ -30,6 +30,8 @@ import com.nexus.agent.domain.commands.EmailIntent
 import com.nexus.agent.domain.commands.EmailIntentRouter
 import com.nexus.agent.domain.commands.EmailSendStatus
 import com.nexus.agent.domain.commands.EmailSendStatusResolver
+import com.nexus.agent.domain.commands.EmailSendResponsePolicy
+import com.nexus.agent.domain.commands.EmailDraftStore
 import com.nexus.agent.domain.commands.GmailQueryParser
 import com.nexus.agent.domain.commands.EmailTaskMessages
 import com.nexus.agent.domain.commands.PendingEmailDraft
@@ -97,7 +99,8 @@ class ChatViewModel(
     private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() },
     private val approvalGate: ApprovalGate = ApprovalGate(),
     private val hermesRepository: HermesRepository? = null,
-    private val hermesAudit: HermesAuditLog? = null
+    private val hermesAudit: HermesAuditLog? = null,
+    private val emailDraftStore: EmailDraftStore? = null
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -267,6 +270,10 @@ class ChatViewModel(
                 _selectedModel.value = preferences.lastModel.first()
                 _selectedEngine.value = AiEngine.fromId(preferences.lastEngine.first())
                 restoreLastConversation(startupSnapshot)
+                val recovered = emailDraftStore?.load()
+                if (_pendingEmailDraft.value == null && recovered?.conversationId == _currentConversationId.value) {
+                    _pendingEmailDraft.value = recovered
+                }
             } finally {
                 initialRestoreComplete.complete(Unit)
             }
@@ -550,7 +557,11 @@ class ChatViewModel(
         // Trusted (model-independent) email intent: a real "send" must be backed by an executed
         // Gmail send before the model may answer, and the visible confirmation is bound to the
         // tool's evidence — never to a model's "sent" narrative.
-        val sendIntent = SendIntentClassifier.classify(text)
+        val heldForSend = _pendingEmailDraft.value?.takeIf {
+            it.conversationId == conversationId && it.isComplete &&
+                it.status != EmailSendStatus.GMAIL_ACCEPTED
+        }
+        val sendIntent = SendIntentClassifier.classify(text, heldForSend != null)
         taskRunner.run { update ->
             try {
                 val startedAt = System.currentTimeMillis()
@@ -565,7 +576,8 @@ class ChatViewModel(
                         add(ChatMessage(ChatMessage.Role.SYSTEM, memoryContext))
                     }
                     // Re-inject a held draft so the user is not re-asked for details already given.
-                    if (sendIntent == SendIntent.SEND && heldDraft != null && heldDraft.isComplete) {
+                    if (sendIntent == SendIntent.SEND && heldDraft != null && heldDraft.isComplete &&
+                        heldDraft.conversationId == conversationId) {
                         add(ChatMessage(
                             ChatMessage.Role.SYSTEM,
                             "A previously prepared email draft exists (recipient: " +
@@ -578,44 +590,62 @@ class ChatViewModel(
                 }
                 val schemas = toolOrchestrator.functionSchemas()
                 val taskContract = if (sendIntent == SendIntent.SEND) {
-                    AgentTaskContract(actionRequired = true)
+                    AgentTaskContract(
+                        actionRequired = true,
+                        maxFailedActions = 1,
+                        maxActions = 1,
+                        requiredToolName = EmailSendStatusResolver.GMAIL_SEND_TOOL
+                    )
                 } else AgentTaskContract()
                 val outcome = toolLoop.run(
                     fullHistory, _selectedModel.value, schemas,
                     propose = { h, m, s ->
                         repository.completeWithTools(h, m, s).map { it.toProposal() }.also { result ->
                             result.getOrNull()?.let { proposal ->
-                                if (proposal is ToolProposal.Calls) captureDraftFrom(proposal)
+                                if (proposal is ToolProposal.Calls) captureDraftFrom(proposal, conversationId)
                             }
                         }
                     },
                     grantedScopes = gmailScopesProvider(),
-                    taskContract = taskContract
+                    taskContract = taskContract,
+                    onApprovedActionStart = { call ->
+                        if (sendIntent == SendIntent.SEND &&
+                            call.name == EmailSendStatusResolver.GMAIL_SEND_TOOL) {
+                            settleDraft(EmailSendStatus.SENDING)
+                        }
+                    },
+                    forbiddenTools = if (sendIntent == SendIntent.SEND) emptySet()
+                        else setOf(EmailSendStatusResolver.GMAIL_SEND_TOOL)
                 )
                 when (outcome) {
                     is ToolLoop.Outcome.Answered -> {
                         if (sendIntent == SendIntent.SEND) {
-                            settleDraft(EmailSendStatusResolver.resolve(outcome.evidence))
+                            val status = EmailSendResponsePolicy.status(outcome.evidence)
+                            settleDraft(status)
+                            repository.persistAssistantMessage(
+                                conversationId,
+                                EmailSendResponsePolicy.response(outcome.evidence, outcome.content)
+                            )
+                            if (status == EmailSendStatus.GMAIL_ACCEPTED) {
+                                update(TaskStatus.Completed(outcome.sources))
+                            } else update(TaskStatus.Failed("gmail_acceptance_not_verified"))
+                        } else {
+                            repository.persistAssistantMessage(conversationId, outcome.content)
+                            update(TaskStatus.Completed(outcome.sources))
                         }
-                        repository.persistAssistantMessage(
-                            conversationId,
-                            bindSendStatus(sendIntent, outcome.evidence, outcome.content)
-                        )
-                        update(TaskStatus.Completed(outcome.sources))
                     }
                     is ToolLoop.Outcome.Failed -> {
                         if (sendIntent == SendIntent.SEND) {
-                            // Never fall back to an ungrounded completion for a send — it could
-                            // claim success. Emit the deterministic, evidence-honest failure line.
-                            settleDraft(EmailSendStatus.FAILED)
+                            // There is no generic model fallback for a send request.
+                            val status = EmailSendResponsePolicy.status(outcome.evidence)
+                            settleDraft(status)
                             repository.persistAssistantMessage(
-                                conversationId,
-                                EmailSendStatusResolver.statusLine(EmailSendStatus.FAILED)
+                                conversationId, EmailSendResponsePolicy.response(outcome.evidence)
                             )
-                            update(TaskStatus.Completed(emptyList()))
-                        } else {
-                            runScriptedGrounding(conversationId, text, update, startedAt)
-                        }
+                            if (status == EmailSendStatus.GMAIL_ACCEPTED)
+                                update(TaskStatus.Completed(emptyList()))
+                            else update(TaskStatus.Failed("gmail_acceptance_not_verified"))
+                        } else runScriptedGrounding(conversationId, text, update, startedAt)
                     }
                 }
             } finally {
@@ -624,45 +654,29 @@ class ChatViewModel(
         }
     }
 
-    /** Captures the recipient/subject/body a model proposed to send, as a held draft. */
-    private fun captureDraftFrom(proposal: ToolProposal.Calls) {
-        proposal.calls
-            .firstOrNull { it.name == EmailSendStatusResolver.GMAIL_SEND_TOOL }
+    /** Preserve a proposed Gmail draft before the approval stage. */
+    private suspend fun captureDraftFrom(proposal: ToolProposal.Calls, conversationId: Long) {
+        proposal.calls.firstOrNull { it.name == EmailSendStatusResolver.GMAIL_SEND_TOOL }
             ?.let { call ->
-                _pendingEmailDraft.value = PendingEmailDraft(
+                val old = _pendingEmailDraft.value?.takeIf { it.conversationId == conversationId }
+                val draft = PendingEmailDraft(
                     recipient = call.arguments["to"],
                     subject = call.arguments["subject"],
                     body = call.arguments["body"],
-                    status = EmailSendStatus.AWAITING_APPROVAL
+                    status = EmailSendStatus.AWAITING_APPROVAL,
+                    conversationId = conversationId,
+                    revision = (old?.revision ?: 0L) + 1
                 )
+                emailDraftStore?.save(draft)
+                _pendingEmailDraft.value = draft
             }
     }
 
-    /** Updates the held draft's status from the tool evidence (accept/fail), preserving fields. */
-    private fun settleDraft(status: EmailSendStatus) {
+    private suspend fun settleDraft(status: EmailSendStatus) {
         val current = _pendingEmailDraft.value ?: return
-        _pendingEmailDraft.value = current.copy(status = status)
-    }
-
-    /**
-     * For an email SEND, bind the visible confirmation to the actual `gmail_send` tool evidence:
-     * Gmail acceptance is prepended as a trusted status line; failure/unknown never lets the
-     * model's "sent" narrative masquerade as truth.
-     */
-    private fun bindSendStatus(
-        intent: SendIntent,
-        evidence: List<ActionEvidence>,
-        content: String
-    ): String {
-        if (intent != SendIntent.SEND) return content
-        val status = EmailSendStatusResolver.resolve(evidence)
-        // Only a Gmail-accepted send may keep the model's narrative. Every other outcome is
-        // replaced by the trusted status line, so an unverified "sent" claim can never stand.
-        return if (status == EmailSendStatus.GMAIL_ACCEPTED) {
-            EmailSendStatusResolver.statusLine(status) + "\n\n" + content
-        } else {
-            EmailSendStatusResolver.statusLine(status)
-        }
+        val next = current.copy(status = status)
+        emailDraftStore?.save(next)
+        _pendingEmailDraft.value = next
     }
 
     /**
@@ -1159,14 +1173,15 @@ class ChatViewModel(
         private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() },
         private val approvalGate: ApprovalGate = ApprovalGate(),
         private val hermesRepository: HermesRepository? = null,
-        private val hermesAudit: HermesAuditLog? = null
+        private val hermesAudit: HermesAuditLog? = null,
+        private val emailDraftStore: EmailDraftStore? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return ChatViewModel(
                 repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
                 emotionAnalyzer, loadManager, cultureContext, neonRepository, gmailScopesProvider,
-                approvalGate, hermesRepository, hermesAudit
+                approvalGate, hermesRepository, hermesAudit, emailDraftStore
             ) as T
         }
     }
