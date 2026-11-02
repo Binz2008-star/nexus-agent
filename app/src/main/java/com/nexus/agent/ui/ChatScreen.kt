@@ -1338,7 +1338,7 @@ private fun SettingsDialog(
                 }
             }
         }
-    )
+    }
 }
 
 @Composable
