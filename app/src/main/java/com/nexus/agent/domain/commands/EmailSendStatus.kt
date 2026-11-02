@@ -38,7 +38,7 @@ object EmailSendStatusResolver {
         return when {
             send.any { it.status == ActionEvidenceStatus.VERIFIED || it.status == ActionEvidenceStatus.EXECUTED } ->
                 EmailSendStatus.GMAIL_ACCEPTED
-            // Failed (API error) or blocked (approval not granted) are both NOT sent.
+            // Definitive tool failure or denied approval is NOT provider acceptance.
             send.any { it.status == ActionEvidenceStatus.FAILED || it.status == ActionEvidenceStatus.BLOCKED } ->
                 EmailSendStatus.FAILED
             else -> EmailSendStatus.UNKNOWN
@@ -53,5 +53,20 @@ object EmailSendStatusResolver {
         EmailSendStatus.SENDING -> "جارٍ الإرسال…"
         EmailSendStatus.DRAFT -> "مسودة محفوظة (لم تُرسل بعد)."
         EmailSendStatus.UNKNOWN -> "لا يمكن تأكيد الإرسال — لم تُسجَّل نتيجة إرسال موثوقة."
+    }
+}
+
+/**
+ * Final, model-independent response for a send intent. Never append a model answer
+ * that might falsely claim Gmail accepted or delivered a message. If a tool loop
+ * fails after Gmail accepted, preserve the explicit provider-side evidence.
+ */
+object EmailSendResponsePolicy {
+    fun status(evidence: List<ActionEvidence>): EmailSendStatus =
+        EmailSendStatusResolver.resolve(evidence)
+
+    fun response(evidence: List<ActionEvidence>, untrustedModelAnswer: String? = null): String {
+        // The untrusted answer is deliberately ignored for sensitive send completion.
+        return EmailSendStatusResolver.statusLine(status(evidence))
     }
 }
