@@ -44,6 +44,7 @@ class AppPreferencesRepository(
     private val ttsSpeechRateKey = floatPreferencesKey("tts_speech_rate")
     private val ttsPitchKey = floatPreferencesKey("tts_pitch")
     private val ttsAutoplayKey = booleanPreferencesKey("tts_autoplay")
+    private val voiceInputOfflineOnlyKey = booleanPreferencesKey("voice_input_offline_only")
 
     val systemPrompt: Flow<String> = dataStore.data.map { it[systemPromptKey] ?: "" }
     val lastModel: Flow<String> = dataStore.data.map { it[lastModelKey] ?: "deepseek-flash" }
@@ -83,6 +84,10 @@ class AppPreferencesRepository(
     val ttsSpeechRate: Flow<Float> = dataStore.data.map { it[ttsSpeechRateKey] ?: 1.0f }
     val ttsPitch: Flow<Float> = dataStore.data.map { it[ttsPitchKey] ?: 1.0f }
     val ttsAutoplay: Flow<Boolean> = dataStore.data.map { it[ttsAutoplayKey] ?: false }
+    // Dictation privacy: default true so audio can never leave the device by surprise. Only an
+    // explicit opt-out allows the platform (possibly network) recognizer.
+    val voiceInputOfflineOnly: Flow<Boolean> =
+        dataStore.data.map { it[voiceInputOfflineOnlyKey] ?: true }
 
     suspend fun setSystemPrompt(prompt: String) {
         dataStore.edit { prefs ->
@@ -193,6 +198,10 @@ class AppPreferencesRepository(
 
     suspend fun setTtsAutoplay(autoplay: Boolean) {
         dataStore.edit { it[ttsAutoplayKey] = autoplay }
+    }
+
+    suspend fun setVoiceInputOfflineOnly(offlineOnly: Boolean) {
+        dataStore.edit { it[voiceInputOfflineOnlyKey] = offlineOnly }
     }
 
     companion object {

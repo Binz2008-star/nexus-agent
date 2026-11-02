@@ -88,6 +88,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -233,6 +234,8 @@ fun ChatScreen(
     val openRouterFallbackEnabled by preferences.openRouterFallbackEnabled.collectAsState(initial = false)
     val ttsEnabled by preferences.ttsEnabled.collectAsState(initial = false)
     val ttsAutoplay by preferences.ttsAutoplay.collectAsState(initial = false)
+    // Dictation is offline-only unless the user explicitly opts out (privacy default).
+    val voiceOfflineOnly by preferences.voiceInputOfflineOnly.collectAsState(initial = true)
     val ttsRate by preferences.ttsSpeechRate.collectAsState(initial = 1.0f)
     val ttsPitch by preferences.ttsPitch.collectAsState(initial = 1.0f)
     val ttsVoiceId by preferences.ttsVoiceId.collectAsState(initial = "")
@@ -511,17 +514,33 @@ fun ChatScreen(
     var deepSeekConfigured by remember { mutableStateOf(false) }
     var neonReadConfigured by remember { mutableStateOf(false) }
     var neonWriteConfigured by remember { mutableStateOf(false) }
-    var input by remember { mutableStateOf("") }
+    var input by rememberSaveable { mutableStateOf("") }
 
     // ---- Voice input (dictation → composer) ----
-    // Prefers the on-device recognizer so audio can stay on the phone. Dictation only fills the
-    // composer: it never sends automatically and never bypasses an approval gate.
+    // Offline by default: dictation only starts when the device can transcribe on-device, so audio
+    // cannot be uploaded by surprise. Dictation only fills the composer: it never sends
+    // automatically and never bypasses an approval gate.
     val voiceInputEngine = remember { AndroidSpeechRecognizerEngine(context) }
     var voiceInputState by remember { mutableStateOf(VoiceInputState.IDLE) }
     var voicePartial by remember { mutableStateOf("") }
     var voiceError by remember { mutableStateOf<String?>(null) }
+    var voiceErrorAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var lastMicClickAt by remember { mutableStateOf(0L) }
     DisposableEffect(Unit) {
         onDispose { voiceInputEngine.destroy() }
+    }
+
+    fun openAppSettings() {
+        try {
+            context.startActivity(
+                android.content.Intent(
+                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.fromParts("package", context.packageName, null)
+                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (_: Exception) {
+            // No settings activity on this device; the message alone still explains the fix.
+        }
     }
 
     fun startDictation() {
@@ -531,12 +550,15 @@ fun ChatScreen(
             ttsSpeaking = false
         }
         voicePartial = ""
-        voiceInputState = VoiceInputState.LISTENING
+        voiceError = null
+        voiceErrorAction = null
         val locale = VoiceInputPolicy.localeForDialect(
             preferredDialect,
             java.util.Locale.getDefault().toLanguageTag()
         )
-        voiceInputEngine.start(locale, object : VoiceInputListener {
+        // State is driven by engine callbacks only, so the UI never claims to be listening when
+        // the recognizer refused to start (busy, unavailable, no offline model).
+        voiceInputEngine.start(locale, voiceOfflineOnly, object : VoiceInputListener {
             override fun onState(state: VoiceInputState) {
                 voiceInputState = state
             }
@@ -553,6 +575,7 @@ fun ChatScreen(
             override fun onError(error: VoiceInputError) {
                 voicePartial = ""
                 voiceError = error.message
+                voiceErrorAction = null
             }
         })
     }
@@ -561,25 +584,29 @@ fun ChatScreen(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            voiceError = null
             startDictation()
         } else {
             voiceError = context.getString(R.string.voice_permission_denied)
+            voiceErrorAction = { openAppSettings() }
         }
     }
 
     fun onMicClick() {
+        // Debounce: a fast double-tap must not start and immediately cancel a session.
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastMicClickAt < 600L) return
+        lastMicClickAt = now
         when (voiceInputState) {
             VoiceInputState.LISTENING, VoiceInputState.PROCESSING -> {
                 voiceInputEngine.cancel()
                 voicePartial = ""
+                voiceInputState = VoiceInputState.IDLE
             }
             else -> {
                 val granted = ContextCompat.checkSelfPermission(
                     context, Manifest.permission.RECORD_AUDIO
                 ) == PackageManager.PERMISSION_GRANTED
                 if (granted) {
-                    voiceError = null
                     startDictation()
                 } else {
                     voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -742,6 +769,11 @@ fun ChatScreen(
                 value = input,
                 onValueChange = { input = it },
                 enabled = !isLoading,
+                micEnabled = !isLoading && (
+                    taskStatus !is TaskStatus.Running ||
+                        voiceInputState == VoiceInputState.LISTENING ||
+                        voiceInputState == VoiceInputState.PROCESSING
+                    ),
                 sendEnabled = !isLoading && taskStatus !is TaskStatus.Running && input.isNotBlank(),
                 onSend = {
                     if (voiceInputState == VoiceInputState.LISTENING ||
@@ -749,16 +781,29 @@ fun ChatScreen(
                     ) {
                         voiceInputEngine.cancel()
                         voicePartial = ""
+                        voiceInputState = VoiceInputState.IDLE
                     }
-                    viewModel.sendMessageWithAgent(input)
-                    NexusAnalytics.track(NexusAnalytics.Event.CHAT_SUBMITTED)
-                    input = ""
+                    // Only clear the composer when the message was actually accepted, so a
+                    // dictated draft can never be silently discarded.
+                    if (viewModel.sendMessageWithAgent(input)) {
+                        NexusAnalytics.track(NexusAnalytics.Event.CHAT_SUBMITTED)
+                        input = ""
+                    }
                 },
                 voiceState = voiceInputState,
                 voicePartial = voicePartial,
                 voiceError = voiceError,
+                voiceErrorActionLabel = if (voiceErrorAction != null) {
+                    stringResource(R.string.voice_open_settings)
+                } else {
+                    null
+                },
                 onMicClick = { onMicClick() },
-                onDismissVoiceError = { voiceError = null }
+                onVoiceErrorAction = { voiceErrorAction?.invoke() },
+                onDismissVoiceError = {
+                    voiceError = null
+                    voiceErrorAction = null
+                }
             )
         }
     }
@@ -841,6 +886,8 @@ fun ChatScreen(
             onTtsPreview = { speakText("مرحبًا، هذا صوت NEXUS. أهلاً بك في الوضع الصوتي.") },
             preferredDialect = preferredDialect,
             onPreferredDialectChange = { scope.launch { preferences.setPreferredDialect(it) } },
+            voiceOfflineOnly = voiceOfflineOnly,
+            onVoiceOfflineOnlyChange = { scope.launch { preferences.setVoiceInputOfflineOnly(it) } },
             preferredTone = preferredTone,
             onPreferredToneChange = { scope.launch { preferences.setPreferredTone(it) } },
             onMirrorEnabledChange = { scope.launch { preferences.setMirrorEnabled(it) } },
@@ -1050,10 +1097,13 @@ private fun Composer(
     enabled: Boolean,
     sendEnabled: Boolean,
     onSend: () -> Unit,
+    micEnabled: Boolean = enabled,
     voiceState: VoiceInputState = VoiceInputState.IDLE,
     voicePartial: String = "",
     voiceError: String? = null,
+    voiceErrorActionLabel: String? = null,
     onMicClick: () -> Unit = {},
+    onVoiceErrorAction: () -> Unit = {},
     onDismissVoiceError: () -> Unit = {}
 ) {
     val listening = voiceState == VoiceInputState.LISTENING ||
@@ -1080,6 +1130,11 @@ private fun Composer(
                     )
                     TextButton(onClick = onDismissVoiceError) {
                         Text(stringResource(R.string.voice_dismiss))
+                    }
+                    if (voiceErrorActionLabel != null) {
+                        TextButton(onClick = onVoiceErrorAction) {
+                            Text(voiceErrorActionLabel)
+                        }
                     }
                 }
             }
@@ -1114,7 +1169,7 @@ private fun Composer(
                 Spacer(Modifier.width(8.dp))
                 IconButton(
                     onClick = onMicClick,
-                    enabled = enabled,
+                    enabled = micEnabled,
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
@@ -1329,6 +1384,8 @@ private fun SettingsDialog(
     onTtsPreview: () -> Unit = {},
     preferredDialect: String,
     onPreferredDialectChange: (String) -> Unit,
+    voiceOfflineOnly: Boolean = true,
+    onVoiceOfflineOnlyChange: (Boolean) -> Unit = {},
     preferredTone: String,
     onPreferredToneChange: (String) -> Unit,
     onImport: () -> Unit,
@@ -1675,6 +1732,24 @@ private fun SettingsDialog(
                             Text(if (preferredDialect == id) "✓ $label" else label)
                         }
                     }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.voice_offline_only_title),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            stringResource(R.string.voice_offline_only_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = voiceOfflineOnly,
+                        onCheckedChange = onVoiceOfflineOnlyChange
+                    )
                 }
                 Text("النبرة", style = MaterialTheme.typography.bodyMedium)
                 Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {

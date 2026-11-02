@@ -7,11 +7,14 @@ enum class VoiceInputState { IDLE, LISTENING, PROCESSING, ERROR, UNAVAILABLE }
 enum class VoiceInputErrorCode {
     PERMISSION_DENIED,
     NO_RECOGNIZER,
+    OFFLINE_UNAVAILABLE,
     BUSY,
     NO_MATCH,
     SPEECH_TIMEOUT,
     NETWORK,
     AUDIO,
+    TOO_MANY_REQUESTS,
+    LANGUAGE_UNAVAILABLE,
     CLIENT,
     SERVER,
     UNKNOWN
@@ -32,13 +35,23 @@ interface VoiceInputListener {
  *
  * Dictation only produces text for the composer: it never sends a message, never triggers a
  * tool and never bypasses an approval gate. Voice (sound) and persona stay separate concerns.
+ *
+ * [start] takes [offlineOnly] explicitly. When true the engine MUST refuse rather than fall
+ * back to a recognizer that may upload audio; the UI default is offline-only.
  */
 interface VoiceInputEngine {
     /** True when the device has a usable recognizer (offline or platform). */
     fun isAvailable(): Boolean
 
-    /** Start dictating in [locale] (BCP-47, e.g. "ar-AE"). No-op if already listening. */
-    fun start(locale: String, listener: VoiceInputListener)
+    /** True when a strictly on-device recognizer is present (Android 12+ with a model). */
+    fun hasOfflineRecognizer(): Boolean
+
+    /**
+     * Start dictating [locale] (BCP-47, e.g. "ar-AE"). No-op if already listening.
+     * With [offlineOnly] = true the engine reports [VoiceInputErrorCode.OFFLINE_UNAVAILABLE]
+     * instead of silently using a network-capable recognizer.
+     */
+    fun start(locale: String, offlineOnly: Boolean, listener: VoiceInputListener)
 
     /** Stop and let the engine deliver the final transcript. */
     fun stop()
