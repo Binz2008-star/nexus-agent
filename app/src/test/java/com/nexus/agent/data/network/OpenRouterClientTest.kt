@@ -91,7 +91,7 @@ class OpenRouterClientTest {
         }
     }
 
-    @Test fun 429DoesNotRetry() = runBlocking {
+    @Test fun rateLimit429DoesNotRetry() = runBlocking {
         val server = MockWebServer()
         server.start()
         try {
