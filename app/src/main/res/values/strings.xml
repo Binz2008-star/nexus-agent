@@ -89,4 +89,7 @@
     <string name="voice_permission_denied">لم يُمنح إذن الميكروفون. فعّله من إعدادات التطبيق.</string>
     <string name="voice_dismiss">إغلاق</string>
     <string name="voice_unsupported">لا يوجد محرّك تعرّف على الكلام على هذا الجهاز.</string>
+    <string name="voice_open_settings">الإعدادات</string>
+    <string name="voice_offline_only_title">تعرّف الكلام محلي فقط</string>
+    <string name="voice_offline_only_desc">يبقى الصوت على الجهاز ولا يُرفع. عند تعطيله قد يُرسَل الصوت إلى خدمة التعرّف على الكلام في جهازك.</string>
 </resources>

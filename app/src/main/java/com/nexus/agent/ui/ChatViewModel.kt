@@ -402,9 +402,9 @@ class ChatViewModel(
      * a "Working for Ns" timer + cancel. If the search fails or returns no results, it falls
      * back to a direct answer (existing chat behaviour preserved).
      */
-    fun sendMessageWithAgent(text: String) {
-        if (text.isBlank()) return
-        if (!_agentBusy.compareAndSet(false, true)) return
+    fun sendMessageWithAgent(text: String): Boolean {
+        if (text.isBlank()) return false
+        if (!_agentBusy.compareAndSet(false, true)) return false
         lastUserText = text
         lastSendIntent = SendIntentClassifier.classify(text)
         val generation = ++taskGeneration
@@ -538,6 +538,7 @@ class ChatViewModel(
                 if (!handedOffToTask && generation == taskGeneration) _agentBusy.value = false
             }
         }
+        return true
     }
 
     fun cancelTask() {
