@@ -20,7 +20,7 @@ class FakeCursor:
         self._rowsets = list(rowsets)
         self.executed = []
 
-    def execute(self, sql, params):
+    def execute(self, sql, params=None):
         self.executed.append((sql, params))
 
     def fetchall(self):
