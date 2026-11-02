@@ -40,13 +40,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.ui.window.Dialog
@@ -58,12 +62,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -123,6 +129,9 @@ import com.nexus.agent.domain.tool.WebFetchTool
 import com.nexus.agent.data.connectors.GoogleAuthManager
 import com.nexus.agent.data.connectors.GoogleScopePolicy
 import com.nexus.agent.data.remote.GmailSendApiClient
+import com.nexus.agent.data.voice.AndroidTextToSpeechEngine
+import com.nexus.agent.domain.voice.VoiceOption
+import com.nexus.agent.domain.voice.VoiceSelectionPolicy
 import com.nexus.agent.domain.tool.GmailSendTool
 import com.nexus.agent.domain.tool.GoogleWorkspaceApiClient
 import com.nexus.agent.domain.tool.GoogleDriveSearchTool
@@ -198,6 +207,60 @@ fun ChatScreen(
     val preferredTone by preferences.preferredTone.collectAsState(initial = "friendly")
     val mashaaerEmotionEnabled by preferences.mashaaerEmotionEnabled.collectAsState(initial = false)
     val softModeEnabled by preferences.softModeEnabled.collectAsState(initial = false)
+    val ttsEnabled by preferences.ttsEnabled.collectAsState(initial = false)
+    val ttsAutoplay by preferences.ttsAutoplay.collectAsState(initial = false)
+    val ttsRate by preferences.ttsSpeechRate.collectAsState(initial = 1.0f)
+    val ttsPitch by preferences.ttsPitch.collectAsState(initial = 1.0f)
+    val ttsVoiceId by preferences.ttsVoiceId.collectAsState(initial = "")
+
+    // Voice engine (Issue #24): zero-cost Android TTS; voice (sound) is separate from persona.
+    val speechEngine = remember { AndroidTextToSpeechEngine(context) }
+    var ttsReady by remember { mutableStateOf(false) }
+    var ttsSpeaking by remember { mutableStateOf(false) }
+    var ttsVoiceError by remember { mutableStateOf<String?>(null) }
+    var installedOfflineVoices by remember { mutableStateOf<List<VoiceOption>>(emptyList()) }
+    DisposableEffect(Unit) {
+        onDispose { speechEngine.shutdown() }
+    }
+    LaunchedEffect(ttsEnabled, ttsVoiceId) {
+        if (ttsEnabled) {
+            speechEngine.initialize { ready ->
+                ttsReady = ready
+                installedOfflineVoices = if (ready) VoiceSelectionPolicy.available(speechEngine.voices())
+                    else emptyList()
+                ttsVoiceError = when {
+                    !ready -> "تعذّر بدء محرك الصوت على الهاتف"
+                    installedOfflineVoices.isEmpty() -> "لا تتوفر أصوات محلية. ثبّت صوتاً عربياً من إعدادات تحويل النص إلى كلام."
+                    ttsVoiceId.isNotBlank() && !speechEngine.selectVoice(ttsVoiceId) ->
+                        "الصوت السابق غير موجود على هذا الهاتف. اختر صوتاً متاحاً."
+                    else -> null
+                }
+                // When no voice was chosen yet, a local Arabic voice is preferred.
+                if (ready && ttsVoiceId.isBlank()) {
+                    VoiceSelectionPolicy.resolveOffline(installedOfflineVoices, "")?.let {
+                        speechEngine.selectVoice(it.id)
+                    }
+                }
+            }
+        } else {
+            speechEngine.shutdown()
+            ttsReady = false
+            ttsSpeaking = false
+            installedOfflineVoices = emptyList()
+            ttsVoiceError = null
+        }
+    }
+    fun speakText(text: String) {
+        if (!ttsEnabled || text.isBlank()) return
+        if (ttsSpeaking) { speechEngine.stop(); ttsSpeaking = false; return }
+        if (ttsVoiceError != null || !ttsReady) return
+        if (ttsVoiceId.isNotBlank() && !speechEngine.selectVoice(ttsVoiceId)) {
+            ttsVoiceError = "الصوت المحدد لم يعد متاحاً. اختر صوتاً جديداً."
+            return
+        }
+        ttsSpeaking = true
+        speechEngine.speak(text, ttsRate, ttsPitch) { ttsSpeaking = false }
+    }
     val neonRepository = remember {
         val httpClient = NeonHttpClient(
             baseUrlProvider = { preferences.neonBackendUrl.first().takeIf { it.isNotBlank() } },
@@ -368,6 +431,8 @@ fun ChatScreen(
     )
 
     val messages by viewModel.messages.collectAsState()
+    // Autoplay is deliberately suspended until replies can be classified as safe to speak.
+    // A restored chat, Google content, tool output or secrets must never be read aloud on launch.
     val conversations by viewModel.conversations.collectAsState()
     val currentConversationId by viewModel.currentConversationId.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -542,7 +607,22 @@ fun ChatScreen(
                     }
                 }
                 items(messages, key = { it.id }) { message ->
-                    MessageBubble(message)
+                    if (message.role == ChatMessage.Role.ASSISTANT && ttsEnabled) {
+                        Column {
+                            MessageBubble(message)
+                            TextButton(onClick = { speakText(message.text) }) {
+                                Icon(
+                                    if (ttsSpeaking) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                    contentDescription = if (ttsSpeaking) "Stop" else "Speak",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (ttsSpeaking) "إيقاف" else "استماع")
+                            }
+                        }
+                    } else {
+                        MessageBubble(message)
+                    }
                 }
                 if (streamingText.isNotEmpty()) {
                     item(key = "streaming") {
@@ -605,6 +685,30 @@ fun ChatScreen(
             onMashaaerEmotionEnabledChange = { scope.launch { preferences.setMashaaerEmotionEnabled(it) } },
             softModeEnabled = softModeEnabled,
             onSoftModeEnabledChange = { scope.launch { preferences.setSoftModeEnabled(it) } },
+            ttsEnabled = ttsEnabled,
+            onTtsEnabledChange = { scope.launch { preferences.setTtsEnabled(it) } },
+            ttsAutoplay = ttsAutoplay,
+            onTtsAutoplayChange = { scope.launch { preferences.setTtsAutoplay(it) } },
+            ttsRate = ttsRate,
+            onTtsRateChange = { scope.launch { preferences.setTtsSpeechRate(it) } },
+            ttsPitch = ttsPitch,
+            onTtsPitchChange = { scope.launch { preferences.setTtsPitch(it) } },
+            ttsVoices = installedOfflineVoices,
+            ttsVoiceId = ttsVoiceId,
+            ttsVoiceError = ttsVoiceError,
+            ttsReady = ttsReady,
+            onTtsVoiceChange = { voice ->
+                if (speechEngine.selectVoice(voice.id)) {
+                    ttsVoiceError = null
+                    scope.launch {
+                        preferences.setTtsVoiceId(voice.id)
+                        preferences.setTtsEnginePackage(voice.enginePackage.orEmpty())
+                    }
+                } else {
+                    ttsVoiceError = "تعذّر تحديد هذا الصوت. جرّب صوتاً آخر."
+                }
+            },
+            onTtsPreview = { speakText("مرحبًا، هذا صوت NEXUS. أهلاً بك في الوضع الصوتي.") },
             preferredDialect = preferredDialect,
             onPreferredDialectChange = { scope.launch { preferences.setPreferredDialect(it) } },
             preferredTone = preferredTone,
@@ -1035,6 +1139,20 @@ private fun SettingsDialog(
     onMashaaerEmotionEnabledChange: (Boolean) -> Unit,
     softModeEnabled: Boolean = false,
     onSoftModeEnabledChange: (Boolean) -> Unit = {},
+    ttsEnabled: Boolean = false,
+    onTtsEnabledChange: (Boolean) -> Unit = {},
+    ttsAutoplay: Boolean = false,
+    onTtsAutoplayChange: (Boolean) -> Unit = {},
+    ttsRate: Float = 1.0f,
+    onTtsRateChange: (Float) -> Unit = {},
+    ttsPitch: Float = 1.0f,
+    onTtsPitchChange: (Float) -> Unit = {},
+    ttsVoices: List<VoiceOption> = emptyList(),
+    ttsVoiceId: String = "",
+    ttsVoiceError: String? = null,
+    ttsReady: Boolean = false,
+    onTtsVoiceChange: (VoiceOption) -> Unit = {},
+    onTtsPreview: () -> Unit = {},
     preferredDialect: String,
     onPreferredDialectChange: (String) -> Unit,
     preferredTone: String,
@@ -1288,6 +1406,55 @@ private fun SettingsDialog(
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("الوضع الحنون · Soft mode (أسلوب هادئ ودود)", modifier = Modifier.weight(1f))
                     Switch(checked = softModeEnabled, onCheckedChange = onSoftModeEnabledChange)
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("الصوت · Voice (قراءة الردود بصوت)", modifier = Modifier.weight(1f))
+                    Switch(checked = ttsEnabled, onCheckedChange = onTtsEnabledChange)
+                }
+                if (ttsEnabled) {
+                    Text("القراءة التلقائية متوقفة مؤقتاً لحماية الرسائل والمعلومات الحساسة.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    var voiceMenuExpanded by remember { mutableStateOf(false) }
+                    Box {
+                        TextButton(
+                            enabled = ttsReady && ttsVoices.isNotEmpty(),
+                            onClick = { voiceMenuExpanded = true }
+                        ) {
+                            val current = ttsVoices.firstOrNull { it.id == ttsVoiceId }
+                            Text("الصوت: " + (current?.let { "${it.name} (${it.locale})" }
+                                ?: if (ttsVoices.isEmpty()) "لا توجد أصوات محلية"
+                                else "اختر صوتاً عربياً"))
+                        }
+                        DropdownMenu(
+                            expanded = voiceMenuExpanded,
+                            onDismissRequest = { voiceMenuExpanded = false }
+                        ) {
+                            ttsVoices.forEach { voice ->
+                                DropdownMenuItem(
+                                    text = { Text("${voice.name} · ${voice.locale} · بدون إنترنت") },
+                                    onClick = {
+                                        voiceMenuExpanded = false
+                                        onTtsVoiceChange(voice)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    if (ttsVoiceError != null) {
+                        Text(ttsVoiceError, color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text("السرعة · Speed (${"%.2f".format(ttsRate)})", style = MaterialTheme.typography.bodySmall)
+                    Slider(value = ttsRate, onValueChange = onTtsRateChange, valueRange = 0.85f..1.05f)
+                    Text("النبرة · Pitch (${"%.2f".format(ttsPitch)})", style = MaterialTheme.typography.bodySmall)
+                    Slider(value = ttsPitch, onValueChange = onTtsPitchChange, valueRange = 0.95f..1.08f)
+                    TextButton(onClick = onTtsPreview,
+                        enabled = ttsReady && ttsVoiceError == null,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("معاينة الصوت · Preview")
+                    }
                 }
                 Text("اللهجة", style = MaterialTheme.typography.bodyMedium)
                 Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
