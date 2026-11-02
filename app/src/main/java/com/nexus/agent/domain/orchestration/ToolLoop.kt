@@ -38,7 +38,11 @@ class ToolLoop(
             val sources: List<ToolSource>,
             val evidence: List<ActionEvidence> = emptyList()
         ) : Outcome
-        data class Failed(val reason: String) : Outcome
+        data class Failed(
+            val reason: String,
+            /** Even if model completion later fails, retain executed-tool evidence. */
+            val evidence: List<ActionEvidence> = emptyList()
+        ) : Outcome
     }
 
     suspend fun run(
@@ -48,7 +52,11 @@ class ToolLoop(
         propose: suspend (List<ChatMessage>, String, List<JsonObject>) -> Result<ToolProposal>,
         grantedScopes: Set<String> = emptySet(),
         taskContract: AgentTaskContract = AgentTaskContract(),
-        independentlyVerify: suspend (ToolCall, ToolResult.Success) -> Boolean = { _, _ -> false }
+        independentlyVerify: suspend (ToolCall, ToolResult.Success) -> Boolean = { _, _ -> false },
+        /** Persists SENDING before any COMMIT tool may invoke its external API. */
+        onApprovedActionStart: suspend (ToolCall) -> Unit = { },
+        /** Caller-owned denylist; model results cannot authorize prohibited actions. */
+        forbiddenTools: Set<String> = emptySet()
     ): Outcome {
         val current = history.toMutableList()
         val sources = mutableListOf<ToolSource>()
@@ -62,14 +70,14 @@ class ToolLoop(
 
         repeat(maxRounds) {
             val proposal = propose(current, model, schemas).getOrNull()
-                ?: return Outcome.Failed("completion_failed")
+                ?: return Outcome.Failed("completion_failed", evidence.toList())
 
             when (proposal) {
                 is ToolProposal.Answer -> {
                     if (taskContract.actionRequired && successfulActions == 0) {
                         failedActions++
                         if (failedActions >= taskContract.maxFailedActions) {
-                            return Outcome.Failed("failure_budget_exceeded")
+                            return Outcome.Failed("failure_budget_exceeded", evidence.toList())
                         }
                         current += ChatMessage(
                             ChatMessage.Role.SYSTEM,
@@ -81,7 +89,7 @@ class ToolLoop(
                     if (taskContract.independentVerificationRequired && !postconditionVerified) {
                         failedActions++
                         if (failedActions >= taskContract.maxFailedActions) {
-                            return Outcome.Failed("failure_budget_exceeded")
+                            return Outcome.Failed("failure_budget_exceeded", evidence.toList())
                         }
                         current += ChatMessage(
                             ChatMessage.Role.SYSTEM,
@@ -100,9 +108,21 @@ class ToolLoop(
                     }
                     for (call in proposal.calls) {
                         if (taskContract.actionRequired && attemptedActions >= taskContract.maxActions) {
-                            return Outcome.Failed("action_budget_exceeded")
+                            return Outcome.Failed("action_budget_exceeded", evidence.toList())
                         }
                         attemptedActions++
+                        if (call.name in forbiddenTools) {
+                            evidence += ActionEvidence(call.name, ActionEvidenceStatus.BLOCKED)
+                            notes += "Tool ${call.name} cannot run for this user intent"
+                            continue
+                        }
+                        if (taskContract.requiredToolName != null &&
+                            call.name != taskContract.requiredToolName) {
+                            evidence += ActionEvidence(call.name, ActionEvidenceStatus.BLOCKED)
+                            // Never run an unrelated successful tool to satisfy a Gmail-send
+                            // contract. The model cannot choose a substitute action.
+                            return Outcome.Failed("required_tool_not_proposed", evidence.toList())
+                        }
                         if (taskContract.independentVerificationRequired) {
                             // Clear stale success *before* approval/policy checks: a denied,
                             // failed or unverified later operation cannot inherit it.
@@ -122,12 +142,15 @@ class ToolLoop(
                                 evidence += ActionEvidence(call.name, ActionEvidenceStatus.BLOCKED)
                                 notes += "Tool ${call.name} requires approval (not granted)"
                                 if (taskContract.actionRequired) {
-                                    // A user rejection of a REQUIRED action ends the task: do not
-                                    // re-prompt the same approval by continuing the loop.
-                                    return Outcome.Failed("approval_rejected")
+                                    // A rejected required COMMIT terminates immediately.
+                                    return Outcome.Failed("approval_rejected", evidence.toList())
                                 }
                                 continue
                             }
+                        }
+                        if (orchestrator.riskLevelOf(call.name) == RiskLevel.COMMIT) {
+                            // If durable recording fails, fail before reaching the external API.
+                            onApprovedActionStart(call)
                         }
                         val result = orchestrator.execute(
                             call.name, input,
@@ -135,7 +158,11 @@ class ToolLoop(
                         )
                         when (result) {
                             is ToolResult.Success -> {
-                                successfulActions++
+                                // A required action is counted only when the exact trusted
+                                // tool succeeds, not when some unrelated tool succeeded.
+                                if (taskContract.requiredToolName == null ||
+                                    call.name == taskContract.requiredToolName
+                                ) successfulActions++
                                 sources += result.sources
                                 var verified = false
                                 if (taskContract.independentVerificationRequired) {
@@ -172,7 +199,7 @@ class ToolLoop(
                         }
                         if (taskContract.actionRequired &&
                             failedActions >= taskContract.maxFailedActions) {
-                            return Outcome.Failed("failure_budget_exceeded")
+                            return Outcome.Failed("failure_budget_exceeded", evidence.toList())
                         }
                     }
                     if (notes.isNotEmpty()) {
@@ -180,12 +207,12 @@ class ToolLoop(
                     }
                     if (taskContract.actionRequired &&
                         failedActions >= taskContract.maxFailedActions) {
-                        return Outcome.Failed("failure_budget_exceeded")
+                        return Outcome.Failed("failure_budget_exceeded", evidence.toList())
                     }
                 }
             }
         }
-        return Outcome.Failed("max_rounds_exceeded")
+        return Outcome.Failed("max_rounds_exceeded", evidence.toList())
     }
 
     /** Fences tool output as untrusted data (prompt-injection defense). */
