@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,6 +46,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -593,25 +596,13 @@ fun ChatScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding().navigationBarsPadding()) {
             AnimatedVisibility(visible = errorMessage != null, enter = fadeIn(), exit = fadeOut()) {
                 errorMessage?.let { code ->
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = mapErrorCode(code),
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            TextButton(onClick = { viewModel.retryLast() }) {
-                                Text(stringResource(R.string.retry))
-                            }
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                        SecurityWarningBanner(message = mapErrorCode(code))
+                        TextButton(onClick = { viewModel.retryLast() }) {
+                            Text(stringResource(R.string.retry))
                         }
                     }
                 }
@@ -910,6 +901,7 @@ private fun MessageBubble(message: ChatMessage, isStreaming: Boolean = false) {
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = if (isUser) 1.dp else 2.dp),
             modifier = Modifier.fillMaxWidth(0.82f),
             shape = RoundedCornerShape(
                 topStart = 18.dp,
@@ -949,37 +941,10 @@ private fun MessageBubble(message: ChatMessage, isStreaming: Boolean = false) {
 
 @Composable
 private fun BackgroundTasksBar() {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                stringResource(R.string.background_task_running),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.weight(1f))
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-            )
-        }
-    }
+    ExecutionProgressCard(
+        stage = stringResource(R.string.background_task_running),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+    )
 }
 
 @Composable
@@ -1033,10 +998,9 @@ private fun Composer(
                 }
             }
             Spacer(Modifier.height(6.dp))
-            Text(
-                "الردود والمعلومات الحساسة قد تحتاج إلى مراجعتك.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelSmall
+            VerifiedSuccessBanner(
+                message = "الردود والمعلومات الحساسة تبقى تحت مراجعتك قبل أي إجراء.",
+                modifier = Modifier.padding(top = 2.dp)
             )
         }
     }
@@ -1610,7 +1574,13 @@ private fun ApprovalCard(
 ) {
     AlertDialog(
         onDismissRequest = onReject,
-        title = { Text(stringResource(R.string.approval_title)) },
+        title = { 
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.approval_title))
+                }
+            },
         text = {
             Column {
                 Text(stringResource(R.string.approval_action, request.toolName))
