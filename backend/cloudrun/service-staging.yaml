@@ -1,0 +1,55 @@
+# Cloud Run STAGING manifest — isolated from production. Single instance (scale-to-zero,
+# max 1), staging-only secrets, no production credentials or traffic. Deploy with:
+#   ENV=staging ./cloudrun/deploy.sh deploy <tag>
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: nexus-neon-backend-staging
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"   # scale to zero when idle
+        autoscaling.knative.dev/maxScale: "1"   # staging: no horizontal scaling
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 5
+      timeoutSeconds: 30
+      serviceAccountName: nexus-neon-backend-staging@PROJECT.iam.gserviceaccount.com
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT/nexus/nexus-neon-backend:STAGING_TAG
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            # Staging-only connection strings + keys (Secret Manager), never production values.
+            - name: NEON_READ_URL
+              valueFrom:
+                secretKeyRef: { name: neon-read-url-staging, key: latest }
+            - name: NEON_MEMORY_READ_URL
+              valueFrom:
+                secretKeyRef: { name: neon-memory-read-url-staging, key: latest }
+            - name: NEON_WRITE_URL
+              valueFrom:
+                secretKeyRef: { name: neon-write-url-staging, key: latest }
+            - name: NEXUS_KEYS
+              valueFrom:
+                secretKeyRef: { name: nexus-backend-keys-staging, key: latest }
+            - name: NEXUS_RATE_LIMIT_PER_MIN
+              value: "120"
+          startupProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"
