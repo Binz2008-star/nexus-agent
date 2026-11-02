@@ -91,6 +91,8 @@ import com.nexus.agent.R
 import com.nexus.agent.data.local.NexusDatabase
 import com.nexus.agent.data.local.ConversationEntity
 import com.nexus.agent.data.network.DeepSeekClient
+import com.nexus.agent.data.network.OpenRouterClient
+import com.nexus.agent.data.network.FailoverChatCompletionClient
 import com.nexus.agent.data.remote.NeonJdbcClient
 import com.nexus.agent.data.remote.NeonHttpClient
 import com.nexus.agent.data.remote.WebFetchClient
@@ -171,13 +173,21 @@ fun ChatScreen(
 
     val preferences = remember { AppPreferencesRepository.create(context) }
     val db = remember { NexusDatabase.getInstance(context) }
-    val client = remember {
-        DeepSeekClient(apiKeyProvider = {
-            when (val r = secrets.readApiKey()) {
-                is ApiKeyReadResult.Present -> r.value
-                else -> null
-            }
+    val client = remember(secrets, preferences) {
+        val deepSeek = DeepSeekClient(apiKeyProvider = {
+            (secrets.readApiKey() as? ApiKeyReadResult.Present)?.value
         })
+        val openRouter = OpenRouterClient(apiKeyProvider = {
+            (secrets.readOpenRouterApiKey() as? ApiKeyReadResult.Present)?.value
+        })
+        FailoverChatCompletionClient(
+            primary = deepSeek,
+            freeFallback = openRouter,
+            enabled = {
+                preferences.openRouterFallbackEnabled.first() &&
+                    secrets.readOpenRouterApiKey() is ApiKeyReadResult.Present
+            }
+        )
     }
     val router = remember(client) {
         val deepSeek = object : ModelClient {
@@ -207,6 +217,7 @@ fun ChatScreen(
     val preferredTone by preferences.preferredTone.collectAsState(initial = "friendly")
     val mashaaerEmotionEnabled by preferences.mashaaerEmotionEnabled.collectAsState(initial = false)
     val softModeEnabled by preferences.softModeEnabled.collectAsState(initial = false)
+    val openRouterFallbackEnabled by preferences.openRouterFallbackEnabled.collectAsState(initial = false)
     val ttsEnabled by preferences.ttsEnabled.collectAsState(initial = false)
     val ttsAutoplay by preferences.ttsAutoplay.collectAsState(initial = false)
     val ttsRate by preferences.ttsSpeechRate.collectAsState(initial = 1.0f)
@@ -314,11 +325,13 @@ fun ChatScreen(
             messageDao = db.messageDao(),
             conversationDao = db.conversationDao(),
             client = client,
+            // The repository only checks presence; the providers independently decrypt
+            // their own keys. OpenRouter-only use is allowed when explicitly enabled.
             apiKeyProvider = {
-                when (val r = secrets.readApiKey()) {
-                    is ApiKeyReadResult.Present -> r.value
-                    else -> null
-                }
+                (secrets.readApiKey() as? ApiKeyReadResult.Present)?.value
+                    ?: if (preferences.openRouterFallbackEnabled.first()) {
+                        (secrets.readOpenRouterApiKey() as? ApiKeyReadResult.Present)?.value
+                    } else null
             },
             systemPromptProvider = { preferences.systemPrompt.first() },
             router = router,
@@ -466,6 +479,8 @@ fun ChatScreen(
     var showSettings by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var keyInput by remember { mutableStateOf("") }
+    var openRouterKeyInput by remember { mutableStateOf("") }
+    var openRouterConfigured by remember { mutableStateOf(false) }
     var systemPromptInput by remember { mutableStateOf("") }
     var knowledgeBaseUrlInput by remember { mutableStateOf("") }
     // Neon fields show only a MASKED value (password hidden). The dirty flags track whether the
@@ -506,7 +521,17 @@ fun ChatScreen(
                     creds.deepSeekKey?.let { keyInput = it }
                     creds.readUrl?.let { neonReadUrlInput = it; neonReadDirty = true }
                     creds.writeUrl?.let { neonWriteUrlInput = it; neonWriteDirty = true }
-                    context.showToast(context.getString(R.string.import_ok))
+                    // Import a user-provided OpenRouter key directly into encrypted storage;
+                    // never populate a plaintext Compose text state with the imported token.
+                    creds.openRouterKey?.let { token ->
+                        withContext(Dispatchers.IO) { secrets.saveOpenRouterApiKey(token) }
+                        openRouterConfigured = true
+                    }
+                    context.showToast(
+                        if (creds.openRouterKey != null)
+                            "OpenRouter key saved securely. Enable free fallback in AI settings."
+                        else context.getString(R.string.import_ok)
+                    )
                 }
             }
         }
@@ -536,6 +561,9 @@ fun ChatScreen(
             // Configured status (presence of encrypted secrets only — never the values).
             deepSeekConfigured = withContext(Dispatchers.IO) {
                 secrets.readApiKey() is ApiKeyReadResult.Present
+            }
+            openRouterConfigured = withContext(Dispatchers.IO) {
+                secrets.readOpenRouterApiKey() is ApiKeyReadResult.Present
             }
             neonReadConfigured = withContext(Dispatchers.IO) {
                 secrets.readSecret(SecretStorageRepository.NEON_READ_URL_PREF) is ApiKeyReadResult.Present
@@ -652,6 +680,21 @@ fun ChatScreen(
         SettingsDialog(
             keyInput = keyInput,
             deepSeekConfigured = deepSeekConfigured,
+            openRouterKeyInput = openRouterKeyInput,
+            openRouterConfigured = openRouterConfigured,
+            onOpenRouterKeyChange = { openRouterKeyInput = it },
+            openRouterFallbackEnabled = openRouterFallbackEnabled,
+            onOpenRouterFallbackEnabledChange = { enabled ->
+                scope.launch { preferences.setOpenRouterFallbackEnabled(enabled) }
+            },
+            onClearOpenRouterKey = {
+                scope.launch {
+                    withContext(Dispatchers.IO) { secrets.clearOpenRouterApiKey() }
+                    openRouterConfigured = false
+                    openRouterKeyInput = ""
+                    preferences.setOpenRouterFallbackEnabled(false)
+                }
+            },
             neonReadConfigured = neonReadConfigured,
             neonWriteConfigured = neonWriteConfigured,
             onKeyChange = { keyInput = it },
@@ -747,6 +790,11 @@ fun ChatScreen(
                         if (key.isNotEmpty()) {
                             withContext(Dispatchers.IO) { secrets.saveApiKey(key) }
                         }
+                        val routerKey = openRouterKeyInput.trim()
+                        if (routerKey.isNotEmpty()) {
+                            withContext(Dispatchers.IO) { secrets.saveOpenRouterApiKey(routerKey) }
+                            openRouterConfigured = true
+                        }
                         withContext(Dispatchers.IO) { preferences.setSystemPrompt(systemPromptInput) }
                         withContext(Dispatchers.IO) { preferences.setKnowledgeBaseUrl(knowledgeBaseUrlInput) }
                         withContext(Dispatchers.IO) {
@@ -777,6 +825,7 @@ fun ChatScreen(
                             withContext(Dispatchers.IO) { secrets.saveNeonBackendKey(backendKey) }
                         }
                         keyInput = ""
+                        openRouterKeyInput = ""
                         showSettings = false
                         context.showToast(context.getString(R.string.saved))
                     } catch (e: Exception) {
@@ -1113,6 +1162,12 @@ private fun formatTimestamp(ts: Long): String =
 private fun SettingsDialog(
     keyInput: String,
     deepSeekConfigured: Boolean,
+    openRouterKeyInput: String,
+    openRouterConfigured: Boolean,
+    onOpenRouterKeyChange: (String) -> Unit,
+    openRouterFallbackEnabled: Boolean,
+    onOpenRouterFallbackEnabledChange: (Boolean) -> Unit,
+    onClearOpenRouterKey: () -> Unit,
     neonReadConfigured: Boolean,
     neonWriteConfigured: Boolean,
     onKeyChange: (String) -> Unit,
@@ -1286,6 +1341,43 @@ private fun SettingsDialog(
                     color = if (deepSeekConfigured) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(12.dp))
+                Text("OpenRouter · free models", style = MaterialTheme.typography.titleSmall)
+                OutlinedTextField(
+                    value = openRouterKeyInput,
+                    onValueChange = onOpenRouterKeyChange,
+                    label = { Text("OpenRouter API key (sk-or-...)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Text(
+                    if (openRouterConfigured) "✓ Encrypted key saved" else "No OpenRouter key saved",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Use free OpenRouter fallback when DeepSeek fails",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall)
+                    Switch(
+                        checked = openRouterFallbackEnabled,
+                        onCheckedChange = onOpenRouterFallbackEnabledChange
+                    )
+                }
+                Text(
+                    "Opt-in: your request and its context may be sent to OpenRouter and its " +
+                        "selected third-party model provider. Only openrouter/free is used; " +
+                        "never automatically select a paid model. Free quota is limited. " +
+                        "Gmail sending and other sensitive actions still require approval.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (openRouterConfigured) {
+                    TextButton(onClick = onClearOpenRouterKey) {
+                        Text("Remove saved OpenRouter key")
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
                 }
                 if (selectedSection == NexusXSettingsSection.KNOWLEDGE) {
