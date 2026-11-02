@@ -9,7 +9,7 @@
 #   - Rollback targets the latest READY (healthy) revision, not merely the second-newest.
 #
 # BILLING: `deploy` is billable + traffic-affecting. Only run after explicit owner authorization.
-# `validate` and `dry-run` create no billable resources.
+# `validate` is local-only. `dry-run` calls gcloud but must not create a Cloud Run service.
 #
 # Usage:
 #   ENV=staging PROJECT_ID=<gcp> ./deploy.sh validate
@@ -46,36 +46,61 @@ case "$ENV" in
     SERVICE="nexus-neon-backend-staging"
     SA="nexus-neon-backend-staging@${PROJECT_ID}.iam.gserviceaccount.com"
     SECRET_SUFFIX="-staging"
+    MAX_INSTANCES=1
+    CONCURRENCY=5
     ;;
   prod)
     SERVICE="nexus-neon-backend"
     SA="nexus-neon-backend@${PROJECT_ID}.iam.gserviceaccount.com"
     SECRET_SUFFIX=""
+    MAX_INSTANCES=2
+    CONCURRENCY=10
     ;;
 esac
 READ_SECRET="neon-read-url${SECRET_SUFFIX}"
+MEMORY_READ_SECRET="neon-memory-read-url${SECRET_SUFFIX}"
 WRITE_SECRET="neon-write-url${SECRET_SUFFIX}"
 KEYS_SECRET="nexus-backend-keys${SECRET_SUFFIX}"
 
 validate() {
-  echo "== env =="
-  echo "  ENV=$ENV SERVICE=$SERVICE SA=$SA"
-  echo "  secrets: $READ_SECRET / $WRITE_SECRET / $KEYS_SECRET"
-  echo "== validate YAML configs =="
-  for f in service.yaml service-staging.yaml; do
-    python3 - "$f" <<'PY'
-import sys, yaml
-yaml.safe_load(open(f"cloudrun/{sys.argv[1]}"))
-print(f"  ok cloudrun/{sys.argv[1]}")
+  echo "== env == ENV=$ENV SERVICE=$SERVICE SA=$SA"
+  echo "== validating both service manifests and staging isolation =="
+  # Prefer structural validation over grep of deploy.sh, which contains secret
+  # reference expressions but never literal connection strings.
+  python3 - "$ENV" "$SERVICE" "$SA" <<'PY'
+import pathlib, re, sys
+try:
+    import yaml
+except ImportError:
+    sys.exit("Install PyYAML before validation: python3 -m pip install PyYAML==6.0.2")
+root = pathlib.Path("cloudrun")
+env, service, sa = sys.argv[1:]
+for filename, suffix in (("service.yaml", ""), ("service-staging.yaml", "-staging")):
+    path = root / filename
+    data = yaml.safe_load(path.read_text())
+    assert data["metadata"]["name"] == "nexus-neon-backend" + suffix
+    spec = data["spec"]["template"]["spec"]
+    assert spec["serviceAccountName"] == "nexus-neon-backend" + suffix + "@PROJECT.iam.gserviceaccount.com"
+    assert spec["containerConcurrency"] == (5 if suffix else 10)
+    assert int(data["spec"]["template"]["metadata"]["annotations"]["autoscaling.knative.dev/minScale"]) == 0
+    assert int(data["spec"]["template"]["metadata"]["annotations"]["autoscaling.knative.dev/maxScale"]) == (1 if suffix else 2)
+    container = spec["containers"][0]
+    assert container["resources"]["limits"]["memory"] == "512Mi"
+    secrets = {i["name"]: i["valueFrom"]["secretKeyRef"]["name"]
+               for i in container["env"] if "valueFrom" in i}
+    expected = {
+        "NEON_READ_URL": "neon-read-url" + suffix,
+        "NEON_MEMORY_READ_URL": "neon-memory-read-url" + suffix,
+        "NEON_WRITE_URL": "neon-write-url" + suffix,
+        "NEXUS_KEYS": "nexus-backend-keys" + suffix,
+    }
+    assert secrets == expected, f"{filename}: unexpected secret refs"
+    assert "postgresql://" not in path.read_text()
+    print(f"  ok {filename}")
+assert service == "nexus-neon-backend" + ("-staging" if env == "staging" else "")
+assert sa.startswith("nexus-neon-backend" + ("-staging" if env == "staging" else "") + "@")
 PY
-  done
-  echo "== validate no credential literals committed =="
-  if grep -RniE 'NEON_(READ|WRITE)_URL=|NEXUS_BACKEND_KEY=|NEXUS_KEYS=|postgresql://[^ ]+@|jdbc:postgresql://[^ ]+@' \
-      cloudrun/ service*.yaml 2>/dev/null; then
-    echo "  FAIL: a credential literal is present" >&2
-    exit 1
-  fi
-  echo "  ok no credentials committed"
+  echo "ok both Cloud Run manifests; no credential literals"
 }
 
 build() {
@@ -101,11 +126,11 @@ deploy() {
   gcloud run deploy "${SERVICE}" \
     --image "${IMAGE}:${tag}" \
     --region "${REGION}" --platform managed \
-    --min-instances 0 --max-instances 2 \
-    --timeout 30 --concurrency 10 \
+    --min-instances 0 --max-instances "${MAX_INSTANCES}" \
+    --timeout 30 --concurrency "${CONCURRENCY}" \
+    --memory 512Mi --cpu 1 --port 8080 --cpu-throttling \
     --service-account "${SA}" \
-    --set-secrets="NEON_READ_URL=${READ_SECRET}:latest,NEON_WRITE_URL=${WRITE_SECRET}:latest,NEXUS_KEYS=${KEYS_SECRET}:latest" \
-    --no-cpu-throttling
+    --set-secrets="NEON_READ_URL=${READ_SECRET}:latest,NEON_MEMORY_READ_URL=${MEMORY_READ_SECRET}:latest,NEON_WRITE_URL=${WRITE_SECRET}:latest,NEXUS_KEYS=${KEYS_SECRET}:latest"
 }
 
 rollback() {
