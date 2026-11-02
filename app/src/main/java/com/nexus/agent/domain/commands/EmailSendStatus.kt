@@ -18,7 +18,10 @@ data class PendingEmailDraft(
     val recipient: String? = null,
     val subject: String? = null,
     val body: String? = null,
-    val status: EmailSendStatus = EmailSendStatus.DRAFT
+    val status: EmailSendStatus = EmailSendStatus.DRAFT,
+    /** Drafts remain bound to their source conversation across process restarts. */
+    val conversationId: Long? = null,
+    val revision: Long = 0L
 ) {
     val isComplete: Boolean
         get() = !recipient.isNullOrBlank() && !subject.isNullOrBlank() && !body.isNullOrBlank()
