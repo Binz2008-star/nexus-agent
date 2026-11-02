@@ -276,4 +276,128 @@ class ToolLoopTest {
         })
     }
 
+    @Test
+    fun sendContractNeverExecutesUnrelatedTool() = runTest {
+        val unrelated = FakeTool("gmail_search", ToolResult.Success("found"))
+        val loop = ToolLoop(ToolOrchestrator(mapOf("gmail_search" to unrelated)))
+        val result = loop.run(
+            history = emptyList(), model = "m", schemas = emptyList(),
+            propose = { _, _, _ -> Result.success(ToolProposal.Calls(
+                listOf(ToolCall("gmail_search", mapOf("query" to "inbox")))
+            )) },
+            taskContract = AgentTaskContract(
+                actionRequired = true, maxFailedActions = 1,
+                maxActions = 1, requiredToolName = "gmail_send"
+            )
+        )
+        assertTrue(result is ToolLoop.Outcome.Failed)
+        assertEquals(0, unrelated.calls)
+        assertEquals("required_tool_not_proposed", (result as ToolLoop.Outcome.Failed).reason)
+    }
+
+    @Test
+    fun deniedGmailApprovalIsNeverSent() = runTest {
+        val gate = ApprovalGate()
+        val gmail = FakeTool("gmail_send", ToolResult.Success("id"), riskLevel = RiskLevel.COMMIT)
+        val loop = ToolLoop(ToolOrchestrator(mapOf("gmail_send" to gmail), gate),
+            requestApproval = { null })
+        val result = loop.run(
+            history = emptyList(), model = "m", schemas = emptyList(),
+            propose = { _, _, _ -> Result.success(ToolProposal.Calls(
+                listOf(ToolCall("gmail_send", mapOf(
+                    "to" to "a@example.com", "subject" to "Hi", "body" to "Hello"
+                )))
+            )) },
+            taskContract = AgentTaskContract(
+                actionRequired = true, maxFailedActions = 1,
+                maxActions = 1, requiredToolName = "gmail_send"
+            )
+        )
+        assertTrue(result is ToolLoop.Outcome.Failed)
+        assertEquals(0, gmail.calls)
+        assertTrue((result as ToolLoop.Outcome.Failed).evidence.any {
+            it.toolName == "gmail_send" && it.status == ActionEvidenceStatus.BLOCKED
+        })
+    }
+
+    @Test
+    fun postSucceededButModelFailedPreservesGmailEvidenceWithoutRetry() = runTest {
+        val gate = ApprovalGate()
+        val gmail = FakeTool("gmail_send", ToolResult.Success("Gmail accepted; id=123"),
+            riskLevel = RiskLevel.COMMIT)
+        var rounds = 0
+        var approvedStarts = 0
+        val loop = ToolLoop(
+            ToolOrchestrator(mapOf("gmail_send" to gmail), gate),
+            requestApproval = { gate.approve(it) }
+        )
+        val result = loop.run(
+            history = emptyList(), model = "m", schemas = emptyList(),
+            propose = { _, _, _ ->
+                if (++rounds == 1) Result.success(ToolProposal.Calls(
+                    listOf(ToolCall("gmail_send", mapOf(
+                        "to" to "a@example.com", "subject" to "Hi", "body" to "Hello"
+                    )))
+                )) else Result.failure(Exception("model failed after Gmail accepted"))
+            },
+            taskContract = AgentTaskContract(
+                actionRequired = true, maxFailedActions = 1,
+                maxActions = 1, requiredToolName = "gmail_send"
+            ),
+            onApprovedActionStart = { approvedStarts++ }
+        )
+        assertEquals(1, gmail.calls)
+        assertEquals(1, approvedStarts)
+        assertTrue(result is ToolLoop.Outcome.Failed)
+        assertTrue((result as ToolLoop.Outcome.Failed).evidence.any {
+            it.toolName == "gmail_send" && it.status == ActionEvidenceStatus.EXECUTED
+        })
+    }
+
+    @Test
+    fun proposedSecondGmailSendIsNotAutomaticallyRetried() = runTest {
+        val gate = ApprovalGate()
+        val gmail = FakeTool("gmail_send", ToolResult.Success("id=xyz"), riskLevel = RiskLevel.COMMIT)
+        val loop = ToolLoop(ToolOrchestrator(mapOf("gmail_send" to gmail), gate),
+            requestApproval = { gate.approve(it) })
+        val result = loop.run(
+            history = emptyList(), model = "m", schemas = emptyList(),
+            propose = { _, _, _ -> Result.success(ToolProposal.Calls(
+                listOf(ToolCall("gmail_send", mapOf("to" to "a@example.com")))
+            )) },
+            taskContract = AgentTaskContract(
+                actionRequired = true, maxFailedActions = 1,
+                maxActions = 1, requiredToolName = "gmail_send"
+            )
+        )
+        assertEquals(1, gmail.calls)
+        assertEquals("action_budget_exceeded", (result as ToolLoop.Outcome.Failed).reason)
+        assertEquals(ActionEvidenceStatus.EXECUTED, result.evidence.single().status)
+    }
+
+    @Test
+    fun draftOnlyIntentCannotProposeGmailSendEvenWithModelToolCall() = runTest {
+        val gate = ApprovalGate()
+        val gmail = FakeTool("gmail_send", ToolResult.Success("id"), riskLevel = RiskLevel.COMMIT)
+        var approvals = 0
+        val loop = ToolLoop(
+            ToolOrchestrator(mapOf("gmail_send" to gmail), gate),
+            maxRounds = 1,
+            requestApproval = { approvals++; gate.approve(it) }
+        )
+        val outcome = loop.run(
+            history = emptyList(), model = "m", schemas = emptyList(),
+            propose = { _, _, _ -> Result.success(ToolProposal.Calls(listOf(
+                ToolCall("gmail_send", mapOf("to" to "a@example.com"))
+            ))) },
+            forbiddenTools = setOf("gmail_send")
+        )
+        assertTrue(outcome is ToolLoop.Outcome.Failed)
+        assertEquals(0, gmail.calls)
+        assertEquals(0, approvals)
+        assertTrue((outcome as ToolLoop.Outcome.Failed).evidence.any {
+            it.toolName == "gmail_send" && it.status == ActionEvidenceStatus.BLOCKED
+        })
+    }
+
 }
