@@ -66,9 +66,11 @@ data class ErrorResponse(val detail: String = "")
 class NeonHttpClient(
     private val baseUrlProvider: suspend () -> String?,
     private val apiKeyProvider: suspend () -> String?,
-    private val httpClient: OkHttpClient = defaultClient(),
+    httpClient: OkHttpClient = defaultClient(),
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) : NeonBackendClient {
+
+    private val safeHttpClient = NeonHttpPolicy.harden(httpClient)
 
     override suspend fun search(query: String, topK: Int): KnowledgeSearchResult {
         val base = base() ?: return KnowledgeSearchResult.Failure(ERROR_NO_CONNECTION)
@@ -76,7 +78,7 @@ class NeonHttpClient(
         val body = json.encodeToString(BrainSearchRequest(query, topK))
         val request = requestBuilder("$base/v1/brain/search", key).post(body.toRequestBody(JSON)).build()
         return try {
-            httpClient.newCall(request).execute().use { resp ->
+            safeHttpClient.newCall(request).execute().use { resp ->
                 if (!resp.isSuccessful) return KnowledgeSearchResult.Failure(errorCodeFrom(resp))
                 val parsed = json.decodeFromString<BrainSearchResponse>(resp.body?.string().orEmpty())
                 KnowledgeSearchResult.Success(query, parsed.results.map { it.toDomain() })
@@ -94,7 +96,7 @@ class NeonHttpClient(
         val body = json.encodeToString(MemorySaveRequest(type, content, tags))
         val request = requestBuilder("$base/v1/memory/save", key).post(body.toRequestBody(JSON)).build()
         return try {
-            httpClient.newCall(request).execute().use { resp ->
+            safeHttpClient.newCall(request).execute().use { resp ->
                 if (resp.isSuccessful) Result.success(Unit)
                 else Result.failure(IOException(errorCodeFrom(resp)))
             }
@@ -110,7 +112,7 @@ class NeonHttpClient(
         val key = key() ?: return Result.failure(IOException(ERROR_NO_CONNECTION))
         val request = requestBuilder("$base/v1/memory/recent?limit=$limit", key).get().build()
         return try {
-            httpClient.newCall(request).execute().use { resp ->
+            safeHttpClient.newCall(request).execute().use { resp ->
                 if (!resp.isSuccessful) return Result.failure(IOException(errorCodeFrom(resp)))
                 val parsed = json.decodeFromString<MemoryListResponse>(resp.body?.string().orEmpty())
                 Result.success(parsed.items.map { NeonMemoryItem(it.type, it.content) })
@@ -128,7 +130,7 @@ class NeonHttpClient(
         val body = json.encodeToString(MirrorRequest(sessionId, role, content))
         val request = requestBuilder("$base/v1/transcript/mirror", key).post(body.toRequestBody(JSON)).build()
         return try {
-            httpClient.newCall(request).execute().use { resp ->
+            safeHttpClient.newCall(request).execute().use { resp ->
                 if (resp.isSuccessful) Result.success(Unit)
                 else Result.failure(IOException(errorCodeFrom(resp)))
             }
