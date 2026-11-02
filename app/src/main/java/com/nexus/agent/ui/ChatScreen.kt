@@ -2,6 +2,15 @@ package com.nexus.agent.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.compose.material.icons.filled.Mic
+import androidx.core.content.ContextCompat
+import com.nexus.agent.data.voice.AndroidSpeechRecognizerEngine
+import com.nexus.agent.domain.voice.VoiceInputError
+import com.nexus.agent.domain.voice.VoiceInputListener
+import com.nexus.agent.domain.voice.VoiceInputPolicy
+import com.nexus.agent.domain.voice.VoiceInputState
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.nexus.agent.data.work.ConversationIntegrityScheduler
@@ -18,6 +27,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -503,6 +513,81 @@ fun ChatScreen(
     var neonWriteConfigured by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
 
+    // ---- Voice input (dictation → composer) ----
+    // Prefers the on-device recognizer so audio can stay on the phone. Dictation only fills the
+    // composer: it never sends automatically and never bypasses an approval gate.
+    val voiceInputEngine = remember { AndroidSpeechRecognizerEngine(context) }
+    var voiceInputState by remember { mutableStateOf(VoiceInputState.IDLE) }
+    var voicePartial by remember { mutableStateOf("") }
+    var voiceError by remember { mutableStateOf<String?>(null) }
+    DisposableEffect(Unit) {
+        onDispose { voiceInputEngine.destroy() }
+    }
+
+    fun startDictation() {
+        // Stop any spoken reply first so the recognizer does not hear the app's own voice.
+        if (ttsSpeaking) {
+            speechEngine.stop()
+            ttsSpeaking = false
+        }
+        voicePartial = ""
+        voiceInputState = VoiceInputState.LISTENING
+        val locale = VoiceInputPolicy.localeForDialect(
+            preferredDialect,
+            java.util.Locale.getDefault().toLanguageTag()
+        )
+        voiceInputEngine.start(locale, object : VoiceInputListener {
+            override fun onState(state: VoiceInputState) {
+                voiceInputState = state
+            }
+
+            override fun onPartial(text: String) {
+                voicePartial = text
+            }
+
+            override fun onFinal(text: String) {
+                voicePartial = ""
+                input = VoiceInputPolicy.appendTranscript(input, text)
+            }
+
+            override fun onError(error: VoiceInputError) {
+                voicePartial = ""
+                voiceError = error.message
+            }
+        })
+    }
+
+    val voicePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            voiceError = null
+            startDictation()
+        } else {
+            voiceError = context.getString(R.string.voice_permission_denied)
+        }
+    }
+
+    fun onMicClick() {
+        when (voiceInputState) {
+            VoiceInputState.LISTENING, VoiceInputState.PROCESSING -> {
+                voiceInputEngine.cancel()
+                voicePartial = ""
+            }
+            else -> {
+                val granted = ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+                if (granted) {
+                    voiceError = null
+                    startDictation()
+                } else {
+                    voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            }
+        }
+    }
+
     // Import credentials from a user-placed file (nexus-neon-rotation.txt) so they don't need
     // to be retyped. Values pre-fill the fields and are stored encrypted on Save.
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -659,10 +744,21 @@ fun ChatScreen(
                 enabled = !isLoading,
                 sendEnabled = !isLoading && taskStatus !is TaskStatus.Running && input.isNotBlank(),
                 onSend = {
+                    if (voiceInputState == VoiceInputState.LISTENING ||
+                        voiceInputState == VoiceInputState.PROCESSING
+                    ) {
+                        voiceInputEngine.cancel()
+                        voicePartial = ""
+                    }
                     viewModel.sendMessageWithAgent(input)
                     NexusAnalytics.track(NexusAnalytics.Event.CHAT_SUBMITTED)
                     input = ""
-                }
+                },
+                voiceState = voiceInputState,
+                voicePartial = voicePartial,
+                voiceError = voiceError,
+                onMicClick = { onMicClick() },
+                onDismissVoiceError = { voiceError = null }
             )
         }
     }
@@ -953,8 +1049,15 @@ private fun Composer(
     onValueChange: (String) -> Unit,
     enabled: Boolean,
     sendEnabled: Boolean,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    voiceState: VoiceInputState = VoiceInputState.IDLE,
+    voicePartial: String = "",
+    voiceError: String? = null,
+    onMicClick: () -> Unit = {},
+    onDismissVoiceError: () -> Unit = {}
 ) {
+    val listening = voiceState == VoiceInputState.LISTENING ||
+        voiceState == VoiceInputState.PROCESSING
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
@@ -964,6 +1067,37 @@ private fun Composer(
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
+            if (voiceError != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = voiceError,
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    TextButton(onClick = onDismissVoiceError) {
+                        Text(stringResource(R.string.voice_dismiss))
+                    }
+                }
+            }
+            if (listening) {
+                Text(
+                    text = when {
+                        voicePartial.isNotBlank() -> voicePartial
+                        voiceState == VoiceInputState.PROCESSING ->
+                            stringResource(R.string.voice_processing)
+                        else -> stringResource(R.string.voice_listening)
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -977,6 +1111,27 @@ private fun Composer(
                     maxLines = 5,
                     shape = RoundedCornerShape(22.dp)
                 )
+                Spacer(Modifier.width(8.dp))
+                IconButton(
+                    onClick = onMicClick,
+                    enabled = enabled,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (listening) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                ) {
+                    Icon(
+                        imageVector = if (listening) Icons.Default.Stop else Icons.Default.Mic,
+                        contentDescription = stringResource(
+                            if (listening) R.string.voice_stop else R.string.voice_input
+                        ),
+                        tint = if (listening) MaterialTheme.colorScheme.onError
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Spacer(Modifier.width(8.dp))
                 IconButton(
                     onClick = onSend,
