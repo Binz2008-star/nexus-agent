@@ -3,6 +3,7 @@
 #   docker compose -f docker-compose.test.yml up -d --wait
 #   export NEON_READ_URL='postgresql://nexus_reader:readerpass@localhost:5432/second_brain'
 #   export NEON_WRITE_URL='postgresql://nexus_writer:writerpass@localhost:5432/personal_ai_core'
+#   export NEON_MEMORY_READ_URL='postgresql://nexus_memory_reader:memoryreaderpass@localhost:5432/personal_ai_core'
 #   export NEXUS_BACKEND_KEY='test-integration-key'
 #   pytest -m integration
 #
