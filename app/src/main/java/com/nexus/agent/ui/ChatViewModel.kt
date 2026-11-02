@@ -549,7 +549,13 @@ class ChatViewModel(
         // Trusted (model-independent) email intent: a real "send" must be backed by an executed
         // Gmail send before the model may answer, and the visible confirmation is bound to the
         // tool's evidence — never to a model's "sent" narrative.
-        val sendIntent = SendIntentClassifier.classify(text)
+        val draftForConversation = _pendingEmailDraft.value?.takeIf {
+            it.conversationId == conversationId && it.isComplete &&
+                it.status != EmailSendStatus.GMAIL_ACCEPTED
+        }
+        val sendIntent = SendIntentClassifier.classify(
+            text, hasPendingEmailDraft = draftForConversation != null
+        )
         taskRunner.run { update ->
             try {
                 val startedAt = System.currentTimeMillis()
