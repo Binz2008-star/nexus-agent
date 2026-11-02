@@ -90,31 +90,93 @@ class GoogleDriveSearchTool(private val api: GoogleWorkspaceApiClient) : Tool {
     override suspend fun execute(input: JsonObject): ToolResult {
         val query = input.stringArg("query").take(120)
         if (query.isBlank()) return ToolResult.Failure("empty_query")
-        // Drive supports literal single quotes escaped by a backslash in q expressions.
-        val escaped = query.replace("\\", "\\\\").replace("'", "\\'")
-        val url = "https://www.googleapis.com/drive/v3/files".toHttpUrl().newBuilder()
-            .addQueryParameter("q", "trashed = false and name contains '$escaped'")
-            .addQueryParameter("fields", "nextPageToken,files(id,name,mimeType,webViewLink)")
-            .addQueryParameter("pageSize", "20").build()
-        return api.get(url, requiredScopes).fold(
-            onSuccess = { data ->
-                val files = data.optJSONArray("files")
-                val rows = (0 until (files?.length() ?: 0)).mapNotNull { i ->
-                    files?.optJSONObject(i)
+        val intent = DriveSearchIntentParser.parse(query)
+
+        // Bounded, escaped, read-only searches (at most MAX_QUERIES). A filename cannot inject
+        // query syntax: each literal is escaped and wrapped in a fixed `name contains` clause.
+        val found = LinkedHashMap<String, DriveFile>()
+        var anySuccess = false
+        for (term in intent.queries.take(MAX_QUERIES)) {
+            val escaped = term.replace("\\", "\\\\").replace("'", "\\'")
+            val url = "https://www.googleapis.com/drive/v3/files".toHttpUrl().newBuilder()
+                .addQueryParameter("q", "trashed = false and name contains '$escaped'")
+                .addQueryParameter("fields", "nextPageToken,files(id,name,mimeType,webViewLink,ownedByMe)")
+                .addQueryParameter("pageSize", "20").build()
+            val result = api.get(url, requiredScopes)
+            if (result.isSuccess) {
+                anySuccess = true
+                val files = result.getOrNull()?.optJSONArray("files")
+                for (i in 0 until (files?.length() ?: 0)) {
+                    val file = files?.optJSONObject(i) ?: continue
+                    val id = file.optString("id").take(100)
+                    if (id.isBlank()) continue
+                    found.putIfAbsent(id, DriveFile(
+                        id = id,
+                        name = file.optString("name").take(150),
+                        mimeType = file.optString("mimeType").take(100),
+                        url = file.optString("webViewLink").takeIf { it.startsWith("https://") },
+                        ownedByMe = file.optBoolean("ownedByMe", false)
+                    ))
                 }
-                val sources = rows.map { file ->
-                    ToolSource(title = file.optString("name").take(150),
-                        project = "Google Drive", file = file.optString("id").take(100),
-                        url = file.optString("webViewLink").takeIf { it.startsWith("https://") })
-                }
-                ToolResult.Success(
-                    if (sources.isEmpty()) "No matching Drive files" else
-                        sources.joinToString("\n") { "${it.title} [${it.file}]" },
-                    sources
+            }
+        }
+        if (!anySuccess) return ToolResult.Failure("drive_search_failed")
+
+        // For an identity request, drop code/asset files entirely (the reported `.js`/`.map`
+        // false positives); for other requests keep everything, ranked.
+        val ranked = DriveFileRanker.rank(found.values.toList(), intent)
+            .let { list ->
+                if (intent.wantsIdentityDocument) {
+                    list.filterNot { DriveFileRanker.isCodeLike(it.name, it.mimeType) }
+                } else list
+            }
+            .take(MAX_RESULTS)
+        if (ranked.isEmpty()) {
+            return ToolResult.Success(
+                if (intent.wantsIdentityDocument) IDENTITY_NOT_FOUND else "No matching Drive files"
+            )
+        }
+
+        if (intent.wantsIdentityDocument) {
+            // Never assert ownership: only surface files whose name carries an identity term,
+            // and always attach a "review it yourself" disclaimer.
+            val strong = ranked.filter { file ->
+                DriveFileRanker.hasIdentityTerm(file.name, intent.identityTerms)
+            }
+            if (strong.isEmpty()) {
+                return ToolResult.Success(
+                    IDENTITY_UNCLEAR + "\n" + ranked.joinToString("\n") { "${it.name} [${it.id}]" },
+                    ranked.map(::toSource)
                 )
-            },
-            onFailure = { ToolResult.Failure("drive_search_failed") }
+            }
+            return ToolResult.Success(
+                OWNERSHIP_DISCLAIMER + "\n" + strong.joinToString("\n") { "${it.name} [${it.id}]" },
+                strong.map(::toSource)
+            )
+        }
+
+        return ToolResult.Success(
+            ranked.joinToString("\n") { "${it.name} [${it.id}]" },
+            ranked.map(::toSource)
         )
+    }
+
+    private fun toSource(file: DriveFile) = ToolSource(
+        title = file.name,
+        project = "Google Drive",
+        file = file.id,
+        url = file.url
+    )
+
+    private companion object {
+        const val MAX_QUERIES = 3
+        const val MAX_RESULTS = 10
+        const val OWNERSHIP_DISCLAIMER =
+            "لم أستطع التحقق من أن هذه البطاقة/الهوية تخصّك؛ هذه ملفات مرشّحة للمراجعة (وليست تأكيدًا للملكية)."
+        const val IDENTITY_UNCLEAR =
+            "لم أجد ملف هوية واضحًا يطابق طلبك، ولم أخمّن ملفًا لتجنّب نسبة بطاقة شخص آخر إليك. هذه أقرب النتائج للمراجعة:"
+        const val IDENTITY_NOT_FOUND =
+            "لم أجد أي ملف بطاقة هوية مطابق. حدّد اسم الملف أو نوعه (PDF/صورة) لأبحث بدقة، ولن أفترض ملفًا لك."
     }
 }
 
