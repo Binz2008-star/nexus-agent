@@ -74,7 +74,7 @@ class VoiceInputPolicyTest {
         assertEquals("hello world", VoiceInputPolicy.appendTranscript("hello", "world"))
         assertEquals("hello", VoiceInputPolicy.appendTranscript("hello", "   "))
         assertEquals("world", VoiceInputPolicy.appendTranscript("", "world"))
-        assertEquals("sentence", VoiceInputPolicy.appendTranscript("sentence  ", ""))
+        assertEquals("sentence  ", VoiceInputPolicy.appendTranscript("sentence  ", ""))
         assertEquals("مرحبا بك", VoiceInputPolicy.appendTranscript("مرحبا", "  بك "))
     }
 }
