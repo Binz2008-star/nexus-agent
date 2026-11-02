@@ -39,6 +39,7 @@ import com.nexus.agent.domain.commands.SendIntent
 import com.nexus.agent.domain.commands.SendIntentClassifier
 import com.nexus.agent.domain.connectors.GmailConnector
 import com.nexus.agent.domain.commands.GreetingDetector
+import com.nexus.agent.domain.commands.KnowledgeSearchIntent
 import com.nexus.agent.domain.memory.RememberCommandDetector
 import com.nexus.agent.domain.memory.ConversationResumeGuard
 import com.nexus.agent.domain.memory.ConversationResumePolicy
@@ -59,6 +60,7 @@ import com.nexus.agent.domain.safety.SafetyPolicy
 import com.nexus.agent.domain.safety.UserBehaviorGuard
 import com.nexus.agent.domain.tool.KnowledgeSearchResult
 import com.nexus.agent.domain.tool.KnowledgeTool
+import com.nexus.agent.domain.tool.ProviderFallbackText
 import com.nexus.agent.domain.tool.TaskStatus
 import com.nexus.agent.domain.tool.ToolCallParser
 import com.nexus.agent.domain.tool.ToolOrchestrator
@@ -464,6 +466,21 @@ class ChatViewModel(
                 // 3) Greeting/small talk → direct concise answer; commands → dedicated flow;
                 //    otherwise the agentic (grounded) flow.
                 val convId = requireActiveConversation()
+                // Explicit knowledge searches work even when every LLM provider is unavailable.
+                // This is a READ-only tool, never a model-generated tool proposal.
+                val knowledgeTopic = KnowledgeSearchIntent.topicOrNull(text)
+                if (knowledgeTopic != null) {
+                    if (knowledgeTopic.isBlank()) {
+                        repository.persistUserMessage(convId, text.trim())
+                        repository.persistAssistantMessage(
+                            convId, ProviderFallbackText.MISSING_KNOWLEDGE_TOPIC
+                        )
+                    } else {
+                        launchKnowledgeTask(convId, text, knowledgeTopic, generation)
+                        handedOffToTask = true
+                    }
+                    return@launch
+                }
                 // Hermes is an autonomous engine: after the local safety + memory gates, hand the
                 // whole message to the remote agent (no DeepSeek-specific command shortcuts).
                 if (_selectedEngine.value == AiEngine.HERMES) {
@@ -542,6 +559,55 @@ class ChatViewModel(
                 } catch (_: Exception) {
                     // best-effort — the server also settles the run if the client disconnects.
                 }
+            }
+        }
+    }
+
+    /**
+     * READ-only Second Brain search that does not create any DeepSeek request.
+     * Errors remain errors; raw retrieved excerpts are never treated as instructions.
+     */
+    private fun launchKnowledgeTask(
+        conversationId: Long, text: String, topic: String, generation: Long
+    ) {
+        _streamingText.value = ""
+        _errorMessage.value = null
+        taskRunner.run { update ->
+            try {
+                update(TaskStatus.Running(System.currentTimeMillis(), "searching"))
+                repository.persistUserMessage(conversationId, text.trim())
+                val result = toolOrchestrator.execute(TOOL_SECOND_BRAIN, buildJsonObject {
+                    put("query", JsonPrimitive(topic))
+                    put("top_k", JsonPrimitive("8"))
+                })
+                when (result) {
+                    is ToolResult.Success -> {
+                        val reply = if (result.sources.isEmpty()) {
+                            ProviderFallbackText.KNOWLEDGE_EMPTY
+                        } else {
+                            ProviderFallbackText.renderSources(
+                                result.sources,
+                                "هذه نتائج البحث الفعلية من قاعدة المعرفة (دون DeepSeek):"
+                            )
+                        }
+                        repository.persistAssistantMessage(conversationId, reply)
+                        update(TaskStatus.Completed(result.sources))
+                    }
+                    is ToolResult.Failure -> {
+                        repository.persistAssistantMessage(
+                            conversationId, ProviderFallbackText.KNOWLEDGE_FAILURE
+                        )
+                        update(TaskStatus.Failed(result.errorCode))
+                    }
+                    is ToolResult.Blocked -> {
+                        repository.persistAssistantMessage(
+                            conversationId, "تعذر الوصول إلى قاعدة المعرفة بسبب قيود الصلاحيات."
+                        )
+                        update(TaskStatus.Failed("blocked"))
+                    }
+                }
+            } finally {
+                if (generation == taskGeneration) _agentBusy.value = false
             }
         }
     }
@@ -835,7 +901,10 @@ class ChatViewModel(
         update(TaskStatus.Failed(code))
     }
 
-    /** Fallback: the pre-loop scripted web + Second Brain grounding. */
+    /**
+     * Model-independent degraded mode after a failed tool-aware completion.
+     * Critically, never invoke DeepSeek a second time after its first failure.
+     */
     private suspend fun runScriptedGrounding(
         conversationId: Long,
         text: String,
@@ -851,39 +920,35 @@ class ChatViewModel(
             put("query", JsonPrimitive(text.trim()))
             put("top_k", JsonPrimitive("8"))
         })
-        if (webResult is ToolResult.Blocked || brainResult is ToolResult.Blocked) {
-            _errorMessage.value = (webResult as? ToolResult.Blocked)?.reason
-                ?: (brainResult as? ToolResult.Blocked)?.reason
-            update(TaskStatus.Failed("blocked"))
+        val sources = (webResult as? ToolResult.Success)?.sources.orEmpty() +
+            (brainResult as? ToolResult.Success)?.sources.orEmpty()
+        if (sources.isNotEmpty()) {
+            // No LLM synthesis: display bounded, provider-independent evidence only.
+            repository.persistAssistantMessage(
+                conversationId,
+                ProviderFallbackText.renderSources(
+                    sources,
+                    "تعذر توليد ملخص بالذكاء الاصطناعي. هذه نتائج البحث الأصلية:"
+                )
+            )
+            update(TaskStatus.Completed(sources))
             return
         }
 
-        // Merge web + Second Brain grounding. The Second Brain search is best-effort
-        // (a missing Neon config simply contributes no sources). Personal memory recall is
-        // injected first, fenced as untrusted data.
-        val sources = (webResult as? ToolResult.Success)?.sources.orEmpty() +
-            (brainResult as? ToolResult.Success)?.sources.orEmpty()
-        val memoryContext = recallMemoryContext(text)
-        val context = buildList {
-            if (!memoryContext.isNullOrBlank()) add(memoryContext)
-            if (sources.isNotEmpty()) add(buildContextPrompt(sources))
-            empatheticNote(text)?.let { add(it) }
-        }.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
-        lastContext = context
-
-        update(TaskStatus.Running(startedAt, "thinking"))
-        val result = repository.completeWithContext(
-            conversationId, _selectedModel.value, context
-        ) { delta -> _streamingText.value += delta }
-        _streamingText.value = ""
-
-        when (result) {
-            is SendResult.Success -> update(TaskStatus.Completed(sources))
-            is SendResult.Failure -> {
-                _errorMessage.value = result.errorCode
-                update(TaskStatus.Failed(result.errorCode))
-            }
+        val blocked = (webResult as? ToolResult.Blocked)?.reason
+            ?: (brainResult as? ToolResult.Blocked)?.reason
+        if (blocked != null) {
+            repository.persistAssistantMessage(
+                conversationId,
+                "تعذر استخدام أدوات البحث بسبب قيود الصلاحيات. لم تُنفذ أي إجراءات إضافية."
+            )
+            update(TaskStatus.Failed("blocked"))
+            return
         }
+        repository.persistAssistantMessage(
+            conversationId, ProviderFallbackText.GENERIC_UNAVAILABLE
+        )
+        update(TaskStatus.Failed("provider_unavailable"))
     }
 
     /** Maps a data-layer completion result to the domain tool proposal. */
@@ -916,7 +981,9 @@ class ChatViewModel(
                 when (result) {
                     is SendResult.Success -> update(TaskStatus.Completed(emptyList()))
                     is SendResult.Failure -> {
-                        _errorMessage.value = result.errorCode
+                        repository.persistAssistantMessage(
+                            conversationId, ProviderFallbackText.unavailable(result.errorCode)
+                        )
                         update(TaskStatus.Failed(result.errorCode))
                     }
                 }
@@ -945,7 +1012,9 @@ class ChatViewModel(
                 when (result) {
                     is SendResult.Success -> update(TaskStatus.Completed(emptyList()))
                     is SendResult.Failure -> {
-                        _errorMessage.value = result.errorCode
+                        repository.persistAssistantMessage(
+                            conversationId, ProviderFallbackText.unavailable(result.errorCode)
+                        )
                         update(TaskStatus.Failed(result.errorCode))
                     }
                 }
@@ -1022,8 +1091,16 @@ class ChatViewModel(
                         when (result) {
                             is SendResult.Success -> update(TaskStatus.Completed(sources))
                             is SendResult.Failure -> {
-                                _errorMessage.value = result.errorCode
-                                update(TaskStatus.Failed(result.errorCode))
+                                // Gmail search succeeded: do not hide real messages merely because
+                                // DeepSeek cannot summarize them. Never retry the model here.
+                                repository.persistAssistantMessage(
+                                    conversationId,
+                                    ProviderFallbackText.renderSources(
+                                        sources,
+                                        "تمت قراءة نتائج Gmail، لكن تعذر تلخيصها بالذكاء الاصطناعي. هذه النتائج الفعلية:"
+                                    )
+                                )
+                                update(TaskStatus.Completed(sources))
                             }
                         }
                     }
