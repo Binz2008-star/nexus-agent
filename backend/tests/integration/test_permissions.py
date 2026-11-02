@@ -29,3 +29,25 @@ def test_writer_role_cannot_read_chunks(client, auth, writer_read_url):
         assert r.json()["detail"] == "permission"
     finally:
         main.READ_URL = original
+
+
+def test_personal_memory_reader_can_only_select_memory(memory_read_url):
+    """Exercise database grants, not just HTTP scopes, against disposable Postgres."""
+    import psycopg
+    with psycopg.connect(memory_read_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT type, content FROM nexus_memory LIMIT 1")
+            cur.fetchall()
+
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with psycopg.connect(memory_read_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO nexus_memory (type, content) VALUES (%s, %s)",
+                    ("fact", "should-not-write"),
+                )
+
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with psycopg.connect(memory_read_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT session_id FROM nexus_conversations LIMIT 1")
