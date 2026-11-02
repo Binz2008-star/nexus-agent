@@ -52,13 +52,13 @@ val NexusTypography = Typography(
     titleLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Bold,
-        fontSize = 20.sp,
-        lineHeight = 26.sp
+        fontSize = 22.sp,
+        lineHeight = 28.sp
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 17.sp,
+        fontSize = 18.sp,
         lineHeight = 24.sp
     ),
     titleSmall = TextStyle(
@@ -83,7 +83,7 @@ val NexusTypography = Typography(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,
         fontSize = 13.sp,
-        lineHeight = 18.sp
+        lineHeight = 19.sp
     ),
     labelLarge = TextStyle(
         fontFamily = FontFamily.Default,
@@ -103,7 +103,7 @@ val NexusTypography = Typography(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Medium,
         fontSize = 11.sp,
-        lineHeight = 14.sp,
+        lineHeight = 15.sp,
         letterSpacing = 0.2.sp
     )
 )
