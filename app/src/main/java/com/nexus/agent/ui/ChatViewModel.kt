@@ -595,7 +595,9 @@ class ChatViewModel(
                             call.name == EmailSendStatusResolver.GMAIL_SEND_TOOL) {
                             settleDraft(EmailSendStatus.SENDING)
                         }
-                    }
+                    },
+                    forbiddenTools = if (sendIntent == SendIntent.SEND) emptySet()
+                        else setOf(EmailSendStatusResolver.GMAIL_SEND_TOOL)
                 )
                 when (outcome) {
                     is ToolLoop.Outcome.Answered -> {
