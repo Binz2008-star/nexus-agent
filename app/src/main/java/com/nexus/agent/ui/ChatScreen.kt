@@ -92,6 +92,7 @@ import com.nexus.agent.data.repository.ChatRepository
 import com.nexus.agent.data.repository.ConversationMirror
 import com.nexus.agent.data.repository.NeonRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
+import com.nexus.agent.data.repository.EncryptedEmailDraftStore
 import com.nexus.agent.data.repository.WebSearchRepository
 import com.nexus.agent.domain.cognitive.CognitiveLoadManager
 import com.nexus.agent.domain.culture.CultureContext
@@ -358,7 +359,8 @@ fun ChatScreen(
             },
             approvalGate = approvalGate,
             hermesRepository = hermesRepository,
-            hermesAudit = hermesAudit
+            hermesAudit = hermesAudit,
+            emailDraftStore = EncryptedEmailDraftStore(secrets)
         )
     )
 
