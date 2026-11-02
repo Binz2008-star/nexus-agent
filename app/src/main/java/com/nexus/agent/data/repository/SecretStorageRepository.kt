@@ -52,6 +52,16 @@ class SecretStorageRepository(
         clearSecret(API_KEY_PREF_NAME)
     }
 
+    // ---- User-supplied OpenRouter free API key (encrypted with Android Keystore) ----
+
+    suspend fun saveOpenRouterApiKey(plaintext: String) =
+        saveSecret(OPENROUTER_API_KEY_PREF, plaintext)
+
+    suspend fun readOpenRouterApiKey(): ApiKeyReadResult =
+        readSecret(OPENROUTER_API_KEY_PREF)
+
+    suspend fun clearOpenRouterApiKey() = clearSecret(OPENROUTER_API_KEY_PREF)
+
     // ---- Hermes API server bearer key (encrypted, like the DeepSeek key) ----
 
     suspend fun saveHermesApiKey(plaintext: String) = saveSecret(HERMES_API_KEY_PREF, plaintext)
@@ -157,6 +167,7 @@ class SecretStorageRepository(
 
     companion object {
         const val API_KEY_PREF_NAME = "encrypted_deepseek_api_key"
+        const val OPENROUTER_API_KEY_PREF = "encrypted_openrouter_api_key"
         const val HERMES_API_KEY_PREF = "encrypted_hermes_api_key"
         const val NEON_READ_URL_PREF = "encrypted_neon_read_url"
         const val NEON_WRITE_URL_PREF = "encrypted_neon_write_url"

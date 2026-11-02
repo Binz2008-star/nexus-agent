@@ -35,6 +35,44 @@ class CredentialFileParserTest {
     }
 
     @Test
+    fun importsBothKeysWithoutMisclassification() {
+        // Distinct fake values: test a combined credential file without leaking live keys.
+        val content = """
+            deepseek api sk-deepseek-fake-123
+            OpenRouter key sk-or-v1-router-fake-456
+            jdbc:postgresql://h/db?sslmode=require&user=nexus_reader&password=x
+        """.trimIndent()
+        val creds = CredentialFileParser.parse(content)
+        assertEquals("sk-deepseek-fake-123", creds.deepSeekKey)
+        assertEquals("sk-or-v1-router-fake-456", creds.openRouterKey)
+        assertEquals("jdbc:postgresql://h/db?sslmode=require&user=nexus_reader&password=x", creds.readUrl)
+    }
+
+    @Test
+    fun importingOnlyOpenRouterDoesNotOverwriteDeepSeek() {
+        val creds = CredentialFileParser.parse("sk-or-v1-example-fake-key")
+        assertEquals("sk-or-v1-example-fake-key", creds.openRouterKey)
+        assertNull(creds.deepSeekKey)
+        assertNull(creds.readUrl)
+        assertNull(creds.writeUrl)
+        assertTrue(!creds.isEmpty)
+    }
+
+    @Test
+    fun rejectsOpenRouterTokenInsideJdbcPassword() {
+        val creds = CredentialFileParser.parse(
+            "jdbc:postgresql://h/db?sslmode=require&user=nexus_reader&password=sk-or-v1-fake"
+        )
+        assertNull(creds.openRouterKey)
+    }
+
+    @Test
+    fun overlyLongOpenRouterTokenIsIgnored() {
+        val token = "sk-or-v1-" + "x".repeat(CredentialFileParser.MAX_KEY_LENGTH)
+        assertNull(CredentialFileParser.parse(token).openRouterKey)
+    }
+
+    @Test
     fun distinguishesReaderFromWriterByRole() {
         val content = """
             jdbc:postgresql://h/db?sslmode=require&user=nexus&password=x
