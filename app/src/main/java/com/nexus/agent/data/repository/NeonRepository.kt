@@ -1,5 +1,7 @@
 package com.nexus.agent.data.repository
 
+import com.nexus.agent.BuildConfig
+
 import com.nexus.agent.data.remote.NeonJdbc
 import com.nexus.agent.domain.neon.MemoryRecall
 import com.nexus.agent.domain.neon.NeonBackendClient
@@ -23,7 +25,8 @@ import kotlinx.coroutines.withContext
  *
  * When [useBackendProvider] returns true, HTTPS is the ONLY allowed transport.
  * A missing [httpClient] fails closed instead of silently falling back to direct JDBC.
- * The flag defaults to false for existing installations until backend parity is verified.
+ * The HTTPS flag defaults to false for old installations while backend parity is verified.
+ * Direct JDBC is a DEBUG-ONLY diagnostic path; release builds fail closed until HTTPS is configured.
  */
 class NeonRepository(
     private val readUrlProvider: suspend () -> String?,
@@ -31,7 +34,8 @@ class NeonRepository(
     private val jdbc: NeonJdbc,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val httpClient: NeonBackendClient? = null,
-    private val useBackendProvider: suspend () -> Boolean = { false }
+    private val useBackendProvider: suspend () -> Boolean = { false },
+    private val allowLegacyJdbc: Boolean = BuildConfig.DEBUG
 ) : KnowledgeTool, ConversationMirror {
 
     override suspend fun search(query: String, topK: Int): KnowledgeSearchResult {
@@ -44,6 +48,7 @@ class NeonRepository(
                     ?: return@withContext KnowledgeSearchResult.Failure(ERROR_NO_CONNECTION)
                 return@withContext backend.search(trimmed, clamped)
             }
+            if (!allowLegacyJdbc) return@withContext KnowledgeSearchResult.Failure(ERROR_DIRECT_JDBC_DISABLED)
             val url = readUrl() ?: return@withContext KnowledgeSearchResult.Failure(ERROR_NO_CONNECTION)
             try {
                 val pattern = SecondBrainSql.ilikePattern(trimmed)
@@ -76,6 +81,7 @@ class NeonRepository(
                     ?: return@withContext Result.failure(notConfigured())
                 return@withContext backend.mirror(sessionId, role, content)
             }
+            if (!allowLegacyJdbc) return@withContext Result.failure(jdbcDisabled())
             try {
                 val url = writeUrl() ?: return@withContext Result.failure(notConfigured())
                 jdbc.execute(url, SecondBrainSql.INSERT_CONVERSATION_SQL, listOf(sessionId, role, content))
@@ -96,6 +102,7 @@ class NeonRepository(
                     ?: return@withContext Result.failure(notConfigured())
                 return@withContext backend.saveMemory(type, content, tags)
             }
+            if (!allowLegacyJdbc) return@withContext Result.failure(jdbcDisabled())
             try {
                 val url = writeUrl() ?: return@withContext Result.failure(notConfigured())
                 jdbc.execute(
@@ -119,6 +126,7 @@ class NeonRepository(
                     ?: return@withContext Result.failure(notConfigured())
                 return@withContext backend.loadMemory(limit.coerceIn(1, 200))
             }
+            if (!allowLegacyJdbc) return@withContext Result.failure(jdbcDisabled())
             try {
                 val url = writeUrl() ?: return@withContext Result.failure(notConfigured())
                 val clamped = limit.coerceIn(1, 200)
@@ -154,9 +162,11 @@ class NeonRepository(
     private suspend fun readUrl(): String? = readUrlProvider()?.trim()?.takeIf { it.isNotEmpty() }
     private suspend fun writeUrl(): String? = writeUrlProvider()?.trim()?.takeIf { it.isNotEmpty() }
     private fun notConfigured(): Exception = IllegalStateException(ERROR_NO_CONNECTION)
+    private fun jdbcDisabled(): Exception = SecurityException(ERROR_DIRECT_JDBC_DISABLED)
 
     companion object {
         const val ERROR_NO_CONNECTION = "no_connection"
+        const val ERROR_DIRECT_JDBC_DISABLED = "direct_jdbc_disabled_in_release"
 
         /** Default number of memories surfaced to a conversation. */
         const val DEFAULT_RECALL_LIMIT = 8
