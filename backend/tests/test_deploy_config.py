@@ -1,75 +1,104 @@
-"""Deployment-isolation regression tests for backend/cloudrun/deploy.sh (P0 hardening).
+"""Static and local-only Cloud Run deployment parity and isolation checks.
 
-These verify the fail-closed environment validation, env-scoped secrets/service-account, unified
-image path, healthy-revision rollback, and absence of credential literals in the deployment configs.
+Tests never run cloud builds, gcloud deploy or mutate project configuration.
 """
 import os
 import re
 import subprocess
 from pathlib import Path
 
-import pytest
+import yaml
 
-ROOT = Path(__file__).resolve().parents[1]  # backend/
+ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "cloudrun" / "deploy.sh"
 
 
 def _script() -> str:
-    if not DEPLOY.exists():
-        pytest.skip("deploy.sh not present (backend-only checkout)")
+    assert DEPLOY.is_file(), "deploy.sh must be tracked"
     return DEPLOY.read_text()
 
 
 def _run(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
-    return subprocess.run(["bash", str(DEPLOY), *args], capture_output=True, text=True, env=env)
+    return subprocess.run(
+        ["bash", str(DEPLOY), *args],
+        capture_output=True, text=True,
+        env=env, cwd=ROOT, check=False,
+    )
 
 
-def test_env_validation_fails_closed():
-    s = _script()
-    assert 'case "$ENV" in' in s
-    assert "staging|prod)" in s
-    assert "invalid ENV=" in s
-    # Missing ENV -> non-zero (before any cloud call).
-    assert _run(["validate"], dict(os.environ)).returncode != 0
-    # Unrecognized ENV -> non-zero.
-    assert _run(["validate"], {**os.environ, "ENV": "dev"}).returncode != 0
+def _env(**overrides: str) -> dict[str, str]:
+    base = {k: v for k, v in os.environ.items() if k not in ("ENV", "PROJECT_ID")}
+    return {**base, **overrides}
 
 
-def test_missing_project_id_fails_closed():
-    assert _run(["validate"], {**os.environ, "ENV": "staging"}).returncode != 0
+def test_validation_requires_explicit_valid_environment_and_project():
+    assert _run(["validate"], _env()).returncode != 0
+    assert _run(["validate"], _env(ENV="dev", PROJECT_ID="example")).returncode != 0
+    assert _run(["validate"], _env(ENV="staging")).returncode != 0
+    assert _run(["validate"], _env(ENV="prod", PROJECT_ID="example")).returncode == 0
+    assert _run(["validate"], _env(ENV="staging", PROJECT_ID="example")).returncode == 0
 
 
-def test_staging_uses_staging_secrets_and_service_account():
-    s = _script()
-    assert "nexus-neon-backend-staging" in s
-    assert "nexus-neon-backend-staging@" in s
-    assert 'SECRET_SUFFIX="-staging"' in s
+def test_both_manifests_are_required_and_structurally_valid():
+    for filename, suffix, replicas, concurrency in (
+        ("service.yaml", "", 2, 10),
+        ("service-staging.yaml", "-staging", 1, 5),
+    ):
+        path = ROOT / "cloudrun" / filename
+        assert path.is_file(), f"missing required {filename}"
+        document = yaml.safe_load(path.read_text())
+        assert document["metadata"]["name"] == "nexus-neon-backend" + suffix
+        spec = document["spec"]["template"]["spec"]
+        assert spec["serviceAccountName"] == (
+            "nexus-neon-backend" + suffix + "@PROJECT.iam.gserviceaccount.com"
+        )
+        assert spec["containerConcurrency"] == concurrency
+        annotations = document["spec"]["template"]["metadata"]["annotations"]
+        assert int(annotations["autoscaling.knative.dev/minScale"]) == 0
+        assert int(annotations["autoscaling.knative.dev/maxScale"]) == replicas
+        container = spec["containers"][0]
+        assert container["resources"]["limits"]["memory"] == "512Mi"
+        secrets = {
+            e["name"]: e["valueFrom"]["secretKeyRef"]["name"]
+            for e in container["env"] if "valueFrom" in e
+        }
+        assert secrets == {
+            "NEON_READ_URL": "neon-read-url" + suffix,
+            "NEON_MEMORY_READ_URL": "neon-memory-read-url" + suffix,
+            "NEON_WRITE_URL": "neon-write-url" + suffix,
+            "NEXUS_KEYS": "nexus-backend-keys" + suffix,
+        }
+        assert "postgresql://" not in path.read_text()
+        assert "jdbc:postgresql://" not in path.read_text()
 
 
-def test_prod_uses_prod_service_account_without_staging_suffix():
-    s = _script()
-    assert 'nexus-neon-backend@${PROJECT_ID}' in s
-    assert 'SECRET_SUFFIX=""' in s
+def test_deploy_command_uses_environment_specific_values():
+    script = _script()
+    assert 'case "$ENV" in' in script
+    assert 'SECRET_SUFFIX="-staging"' in script
+    assert 'MAX_INSTANCES=1' in script
+    assert 'CONCURRENCY=5' in script
+    assert 'MAX_INSTANCES=2' in script
+    assert 'CONCURRENCY=10' in script
+    assert '--max-instances "${MAX_INSTANCES}"' in script
+    assert '--concurrency "${CONCURRENCY}"' in script
+    assert "--cpu-throttling" in script
+    assert "--no-cpu-throttling" not in script
+    assert "docker.pkg.dev" in script
+    assert "gcr.io" not in script
+    assert "--service-account \"${SA}\"" in script
 
 
-def test_unified_image_path_on_artifact_registry():
-    s = _script()
-    assert "docker.pkg.dev" in s
-    assert "gcr.io" not in s  # legacy registry path removed
+def test_rollback_only_targets_ready_revision_and_requires_confirmation():
+    script = _script()
+    assert "status.conditions.type=Ready" in script
+    assert "no healthy READY revision" in script
+    assert 'Confirm rollback' in script
 
 
-def test_rollback_targets_ready_revision():
-    s = _script()
-    assert "status.conditions.type=Ready" in s  # filter to healthy revisions only
-    assert "no healthy READY revision" in s
-
-
-def test_no_credential_literals_in_deployment_configs():
+def test_no_inline_credential_values_in_manifest():
     for name in ("service.yaml", "service-staging.yaml"):
-        path = ROOT / "cloudrun" / name
-        if not path.exists():
-            continue
-        text = path.read_text()
-        assert not re.search(r"postgresql://[^ ]+@", text), f"{name} contains a connection string"
-        assert not re.search(r"jdbc:postgresql://[^ ]+@", text), f"{name} contains a JDBC URL"
-        assert "secretKeyRef" in text, f"{name} should use Secret Manager refs, not literals"
+        data = (ROOT / "cloudrun" / name).read_text()
+        assert not re.search(r"postgresql://[^ ]+@", data), name
+        assert not re.search(r"jdbc:postgresql://[^ ]+@", data), name
+        assert "secretKeyRef" in data, name
