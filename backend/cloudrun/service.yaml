@@ -37,6 +37,11 @@ spec:
                 secretKeyRef:
                   name: neon-read-url
                   key: latest
+            - name: NEON_MEMORY_READ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: neon-memory-read-url
+                  key: latest
             - name: NEON_WRITE_URL
               valueFrom:
                 secretKeyRef:
