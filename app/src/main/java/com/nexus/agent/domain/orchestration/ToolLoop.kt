@@ -121,10 +121,10 @@ class ToolLoop(
                             if (receipt == null) {
                                 evidence += ActionEvidence(call.name, ActionEvidenceStatus.BLOCKED)
                                 notes += "Tool ${call.name} requires approval (not granted)"
-                                if (taskContract.actionRequired) failedActions++
-                                if (taskContract.actionRequired &&
-                                    failedActions >= taskContract.maxFailedActions) {
-                                    return Outcome.Failed("failure_budget_exceeded")
+                                if (taskContract.actionRequired) {
+                                    // A user rejection of a REQUIRED action ends the task: do not
+                                    // re-prompt the same approval by continuing the loop.
+                                    return Outcome.Failed("approval_rejected")
                                 }
                                 continue
                             }
