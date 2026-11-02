@@ -9,6 +9,7 @@ main.IDENTITIES = {"test-secret": Identity(name="test", scopes=ALL_SCOPES)}
 main.RATE_LIMITER = RateLimiter(per_min=0)
 main.READ_URL = "postgresql://reader@host/neondb"
 main.WRITE_URL = "postgresql://writer@host/neondb"
+main.MEMORY_READ_URL = "postgresql://memory_reader@host/neondb"
 
 client = TestClient(main.app)
 AUTH = {"Authorization": "Bearer test-secret"}
@@ -19,7 +20,7 @@ class FakeCursor:
         self._rowsets = list(rowsets)
         self.executed = []
 
-    def execute(self, sql, params):
+    def execute(self, sql, params=None):
         self.executed.append((sql, params))
 
     def fetchall(self):
@@ -101,10 +102,41 @@ def test_memory_save_rejects_empty_content(monkeypatch):
 
 def test_memory_recent_returns_items(monkeypatch):
     conn = FakeConn(rowsets=[[("fact", "content 1"), ("pref", "content 2")]])
-    monkeypatch.setattr(main, "_connect", lambda url: conn)
+    urls = []
+    def connect(url):
+        urls.append(url)
+        return conn
+    monkeypatch.setattr(main, "_connect", connect)
     r = client.get("/v1/memory/recent", params={"limit": 10}, headers=AUTH)
     assert r.status_code == 200
+    assert urls == [main.MEMORY_READ_URL]
+    assert urls[0] != main.WRITE_URL
+    assert conn.cursor_obj.executed[0] == ("SET TRANSACTION READ ONLY", None)
     assert r.json()["items"] == [{"type": "fact", "content": "content 1"}, {"type": "pref", "content": "content 2"}]
+
+
+def test_memory_recent_missing_reader_fails_closed_without_any_connection(monkeypatch):
+    monkeypatch.setattr(main, "MEMORY_READ_URL", "")
+    attempts = []
+    monkeypatch.setattr(main, "_connect", lambda url: attempts.append(url))
+    r = client.get("/v1/memory/recent", headers=AUTH)
+    assert r.status_code == 503
+    assert r.json()["detail"] == "memory_reader_unconfigured"
+    assert attempts == []
+
+
+def test_memory_recent_never_downgrades_to_writer_on_reader_failure(monkeypatch):
+    import psycopg
+
+    attempts = []
+    def fail(url):
+        attempts.append(url)
+        raise psycopg.OperationalError("reader unavailable")
+    monkeypatch.setattr(main, "_connect", fail)
+    r = client.get("/v1/memory/recent", headers=AUTH)
+    assert r.status_code == 502
+    assert attempts == [main.MEMORY_READ_URL]
+    assert main.WRITE_URL not in attempts
 
 
 def test_transcript_mirror_inserts(monkeypatch):
