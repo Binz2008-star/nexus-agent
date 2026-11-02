@@ -1063,6 +1063,19 @@ class ChatViewModel(
         val convId = _currentConversationId.value ?: return
         if (_isLoading.value || taskStatus.value is TaskStatus.Running) return
         viewModelScope.launch {
+            // A generic completion retry must NEVER create a model-generated "sent" claim.
+            // Check persisted Room history so this rule survives process death.
+            val lastUserText = repository.conversationHistory(convId)
+                .lastOrNull { it.role == ChatMessage.Role.USER }?.text.orEmpty()
+            if (SendIntentClassifier.classify(lastUserText, hasPendingEmailDraft = true)
+                == SendIntent.SEND) {
+                repository.persistAssistantMessage(
+                    convId,
+                    "لا يمكن إعادة تنفيذ طلب إرسال البريد تلقائياً. " +
+                        "تحقق من مجلد المرسلة ثم اطلب الإرسال مجدداً للحصول على موافقة جديدة."
+                )
+                return@launch
+            }
             // Enforce the same safety policy: a blocked session cannot retry.
             if (behaviorGuard.isUserBlocked(SESSION_ID)) {
                 repository.persistAssistantMessage(convId, BLOCKED_MESSAGE)
