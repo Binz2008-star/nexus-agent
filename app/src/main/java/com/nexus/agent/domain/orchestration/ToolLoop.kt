@@ -52,7 +52,9 @@ class ToolLoop(
         propose: suspend (List<ChatMessage>, String, List<JsonObject>) -> Result<ToolProposal>,
         grantedScopes: Set<String> = emptySet(),
         taskContract: AgentTaskContract = AgentTaskContract(),
-        independentlyVerify: suspend (ToolCall, ToolResult.Success) -> Boolean = { _, _ -> false }
+        independentlyVerify: suspend (ToolCall, ToolResult.Success) -> Boolean = { _, _ -> false },
+        /** Persists SENDING before any COMMIT tool may invoke its external API. */
+        onApprovedActionStart: suspend (ToolCall) -> Unit = { }
     ): Outcome {
         val current = history.toMutableList()
         val sources = mutableListOf<ToolSource>()
@@ -139,6 +141,10 @@ class ToolLoop(
                                 }
                                 continue
                             }
+                        }
+                        if (orchestrator.riskLevelOf(call.name) == RiskLevel.COMMIT) {
+                            // If durable recording fails, fail before reaching the external API.
+                            onApprovedActionStart(call)
                         }
                         val result = orchestrator.execute(
                             call.name, input,
