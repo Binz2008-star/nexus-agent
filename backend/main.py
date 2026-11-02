@@ -10,6 +10,7 @@ scopes; a per-identity rate limiter and a JSON-lines audit log (stdout) are alwa
 Deploy anywhere (Cloud Run / VPS). Configure via environment:
   NEON_READ_URL           — read connection URL (Second Brain `chunks_v4` + `memory`)
   NEON_WRITE_URL          — write connection URL (`personal-ai-core.nexus_memory` / `nexus_conversations`)
+  NEON_MEMORY_READ_URL    — independent SELECT-only connection to `personal-ai-core.nexus_memory`
   NEXUS_BACKEND_KEY       — legacy single bearer token (all scopes)
   NEXUS_KEYS              — JSON map {"<key>": {"name": ..., "scopes": ["read","write"]}}
   NEXUS_CONNECT_TIMEOUT   — DB connect timeout (default 10)
@@ -64,6 +65,8 @@ _bearer = HTTPBearer(auto_error=False)
 
 READ_URL = os.environ.get("NEON_READ_URL", "")
 WRITE_URL = os.environ.get("NEON_WRITE_URL", "")
+# Never fall back to the write credential for a read-only HTTP request.
+MEMORY_READ_URL = os.environ.get("NEON_MEMORY_READ_URL", "")
 
 
 def _int_env(name: str, default: int) -> int:
@@ -201,12 +204,16 @@ def memory_save(req: MemorySaveRequest) -> dict:
 
 @app.get("/v1/memory/recent", dependencies=[Depends(require_scope(READ_SCOPE))])
 def memory_recent(limit: int = Query(default=100, ge=1, le=RECALL_CAP)) -> dict:
-    # NOTE: `nexus_memory` lives in the write DB (personal_ai_core), so this READ endpoint connects
-    # via WRITE_URL. Only SELECT runs, but the connection holds write credentials until Phase E
-    # introduces a dedicated read-only role for this table.
+    # A separately provisioned SELECT-only role is mandatory. Missing configuration
+    # returns a stable unavailable status rather than downgrading to NEON_WRITE_URL.
+    if not MEMORY_READ_URL:
+        raise HTTPException(status_code=503, detail="memory_reader_unconfigured")
     try:
-        with _connect(WRITE_URL) as conn:
+        with _connect(MEMORY_READ_URL) as conn:
             with conn.cursor() as cur:
+                # Defense in depth: mark this transaction read-only even if a
+                # credential is accidentally overprivileged.
+                cur.execute("SET TRANSACTION READ ONLY")
                 cur.execute(SELECT_MEMORY_SQL, (limit,))
                 items = [{"type": r[0], "content": r[1]} for r in cur.fetchall()]
         return {"items": items}
