@@ -55,6 +55,7 @@ fun NexusAgentTheme(
 ) {
     MaterialTheme(
         colorScheme = if (darkTheme) DarkColors else LightColors,
+        typography = NexusTypography,
         content = content
     )
 }

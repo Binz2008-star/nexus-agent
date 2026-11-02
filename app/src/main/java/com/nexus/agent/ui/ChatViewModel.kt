@@ -28,8 +28,15 @@ import com.nexus.agent.domain.commands.Command
 import com.nexus.agent.domain.commands.CommandDetector
 import com.nexus.agent.domain.commands.EmailIntent
 import com.nexus.agent.domain.commands.EmailIntentRouter
+import com.nexus.agent.domain.commands.EmailSendStatus
+import com.nexus.agent.domain.commands.EmailSendStatusResolver
+import com.nexus.agent.domain.commands.EmailSendResponsePolicy
+import com.nexus.agent.domain.commands.EmailDraftStore
 import com.nexus.agent.domain.commands.GmailQueryParser
 import com.nexus.agent.domain.commands.EmailTaskMessages
+import com.nexus.agent.domain.commands.PendingEmailDraft
+import com.nexus.agent.domain.commands.SendIntent
+import com.nexus.agent.domain.commands.SendIntentClassifier
 import com.nexus.agent.domain.connectors.GmailConnector
 import com.nexus.agent.domain.commands.GreetingDetector
 import com.nexus.agent.domain.memory.RememberCommandDetector
@@ -38,6 +45,8 @@ import com.nexus.agent.domain.memory.ConversationResumePolicy
 import com.nexus.agent.domain.neon.MemoryRecall
 import com.nexus.agent.domain.orchestration.ToolLoop
 import com.nexus.agent.domain.orchestration.ToolProposal
+import com.nexus.agent.domain.orchestration.ActionEvidence
+import com.nexus.agent.domain.orchestration.AgentTaskContract
 import com.nexus.agent.domain.persona.EmotionPoetry
 import com.nexus.agent.domain.persona.SoftPersonaPolicy
 import com.nexus.agent.domain.policy.ApprovalGate
@@ -90,7 +99,8 @@ class ChatViewModel(
     private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() },
     private val approvalGate: ApprovalGate = ApprovalGate(),
     private val hermesRepository: HermesRepository? = null,
-    private val hermesAudit: HermesAuditLog? = null
+    private val hermesAudit: HermesAuditLog? = null,
+    private val emailDraftStore: EmailDraftStore? = null
 ) : ViewModel() {
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.observeConversations()
@@ -161,6 +171,13 @@ class ChatViewModel(
     @Volatile
     private var taskGeneration = 0L
 
+    // Last user turn text + trusted email intent, so a retry never turns a send into an
+    // ungrounded completion that could claim "sent".
+    @Volatile
+    private var lastUserText: String = ""
+    @Volatile
+    private var lastSendIntent: SendIntent = SendIntent.NONE
+
     // Escalating safety guard: blocks the session after repeated policy violations.
     private val behaviorGuard = UserBehaviorGuard()
     private val intentEvaluator = IntentEvaluator(behaviorGuard)
@@ -177,6 +194,10 @@ class ChatViewModel(
 
     private val _pendingApproval = MutableStateFlow<ApprovalRequest?>(null)
     val pendingApproval: StateFlow<ApprovalRequest?> = _pendingApproval.asStateFlow()
+
+    // Held across turns so NEXUS does not re-ask recipient/subject/body the user already gave.
+    private val _pendingEmailDraft = MutableStateFlow<PendingEmailDraft?>(null)
+    val pendingEmailDraft: StateFlow<PendingEmailDraft?> = _pendingEmailDraft.asStateFlow()
 
     @Volatile
     private var pendingDeferred: CompletableDeferred<ApprovalReceipt?>? = null
@@ -249,6 +270,10 @@ class ChatViewModel(
                 _selectedModel.value = preferences.lastModel.first()
                 _selectedEngine.value = AiEngine.fromId(preferences.lastEngine.first())
                 restoreLastConversation(startupSnapshot)
+                val recovered = emailDraftStore?.load()
+                if (_pendingEmailDraft.value == null && recovered?.conversationId == _currentConversationId.value) {
+                    _pendingEmailDraft.value = recovered
+                }
             } finally {
                 initialRestoreComplete.complete(Unit)
             }
@@ -378,6 +403,8 @@ class ChatViewModel(
     fun sendMessageWithAgent(text: String) {
         if (text.isBlank()) return
         if (!_agentBusy.compareAndSet(false, true)) return
+        lastUserText = text
+        lastSendIntent = SendIntentClassifier.classify(text)
         val generation = ++taskGeneration
         viewModelScope.launch {
             var handedOffToTask = false
@@ -527,6 +554,14 @@ class ChatViewModel(
     private fun launchModelDrivenTask(conversationId: Long, text: String, generation: Long) {
         _streamingText.value = ""
         _errorMessage.value = null
+        // Trusted (model-independent) email intent: a real "send" must be backed by an executed
+        // Gmail send before the model may answer, and the visible confirmation is bound to the
+        // tool's evidence — never to a model's "sent" narrative.
+        val heldForSend = _pendingEmailDraft.value?.takeIf {
+            it.conversationId == conversationId && it.isComplete &&
+                it.status != EmailSendStatus.GMAIL_ACCEPTED
+        }
+        val sendIntent = SendIntentClassifier.classify(text, heldForSend != null)
         taskRunner.run { update ->
             try {
                 val startedAt = System.currentTimeMillis()
@@ -535,31 +570,113 @@ class ChatViewModel(
 
                 val history = repository.conversationHistory(conversationId)
                 val memoryContext = recallMemoryContext(text)
+                val heldDraft = _pendingEmailDraft.value
                 val fullHistory = buildList {
                     if (!memoryContext.isNullOrBlank()) {
                         add(ChatMessage(ChatMessage.Role.SYSTEM, memoryContext))
                     }
+                    // Re-inject a held draft so the user is not re-asked for details already given.
+                    if (sendIntent == SendIntent.SEND && heldDraft != null && heldDraft.isComplete &&
+                        heldDraft.conversationId == conversationId) {
+                        add(ChatMessage(
+                            ChatMessage.Role.SYSTEM,
+                            "A previously prepared email draft exists (recipient: " +
+                                "${heldDraft.recipient}, subject: ${heldDraft.subject}, body: " +
+                                "${heldDraft.body}). Reuse it; do not re-ask the user for details " +
+                                "they already provided."
+                        ))
+                    }
                     addAll(history)
                 }
                 val schemas = toolOrchestrator.functionSchemas()
+                val taskContract = if (sendIntent == SendIntent.SEND) {
+                    AgentTaskContract(
+                        actionRequired = true,
+                        maxFailedActions = 1,
+                        maxActions = 1,
+                        requiredToolName = EmailSendStatusResolver.GMAIL_SEND_TOOL
+                    )
+                } else AgentTaskContract()
                 val outcome = toolLoop.run(
                     fullHistory, _selectedModel.value, schemas,
-                    propose = { h, m, s -> repository.completeWithTools(h, m, s).map { it.toProposal() } },
-                    grantedScopes = gmailScopesProvider()
+                    propose = { h, m, s ->
+                        repository.completeWithTools(h, m, s).map { it.toProposal() }.also { result ->
+                            result.getOrNull()?.let { proposal ->
+                                if (proposal is ToolProposal.Calls) captureDraftFrom(proposal, conversationId)
+                            }
+                        }
+                    },
+                    grantedScopes = gmailScopesProvider(),
+                    taskContract = taskContract,
+                    onApprovedActionStart = { call ->
+                        if (sendIntent == SendIntent.SEND &&
+                            call.name == EmailSendStatusResolver.GMAIL_SEND_TOOL) {
+                            settleDraft(EmailSendStatus.SENDING)
+                        }
+                    },
+                    forbiddenTools = if (sendIntent == SendIntent.SEND) emptySet()
+                        else setOf(EmailSendStatusResolver.GMAIL_SEND_TOOL)
                 )
                 when (outcome) {
                     is ToolLoop.Outcome.Answered -> {
-                        repository.persistAssistantMessage(conversationId, outcome.content)
-                        update(TaskStatus.Completed(outcome.sources))
+                        if (sendIntent == SendIntent.SEND) {
+                            val status = EmailSendResponsePolicy.status(outcome.evidence)
+                            settleDraft(status)
+                            repository.persistAssistantMessage(
+                                conversationId,
+                                EmailSendResponsePolicy.response(outcome.evidence, outcome.content)
+                            )
+                            if (status == EmailSendStatus.GMAIL_ACCEPTED) {
+                                update(TaskStatus.Completed(outcome.sources))
+                            } else update(TaskStatus.Failed("gmail_acceptance_not_verified"))
+                        } else {
+                            repository.persistAssistantMessage(conversationId, outcome.content)
+                            update(TaskStatus.Completed(outcome.sources))
+                        }
                     }
                     is ToolLoop.Outcome.Failed -> {
-                        runScriptedGrounding(conversationId, text, update, startedAt)
+                        if (sendIntent == SendIntent.SEND) {
+                            // There is no generic model fallback for a send request.
+                            val status = EmailSendResponsePolicy.status(outcome.evidence)
+                            settleDraft(status)
+                            repository.persistAssistantMessage(
+                                conversationId, EmailSendResponsePolicy.response(outcome.evidence)
+                            )
+                            if (status == EmailSendStatus.GMAIL_ACCEPTED)
+                                update(TaskStatus.Completed(emptyList()))
+                            else update(TaskStatus.Failed("gmail_acceptance_not_verified"))
+                        } else runScriptedGrounding(conversationId, text, update, startedAt)
                     }
                 }
             } finally {
                 if (generation == taskGeneration) _agentBusy.value = false
             }
         }
+    }
+
+    /** Preserve a proposed Gmail draft before the approval stage. */
+    private suspend fun captureDraftFrom(proposal: ToolProposal.Calls, conversationId: Long) {
+        proposal.calls.firstOrNull { it.name == EmailSendStatusResolver.GMAIL_SEND_TOOL }
+            ?.let { call ->
+                val old = _pendingEmailDraft.value?.takeIf { it.conversationId == conversationId }
+                val draft = PendingEmailDraft(
+                    recipient = call.arguments["to"],
+                    subject = call.arguments["subject"],
+                    body = call.arguments["body"],
+                    status = EmailSendStatus.AWAITING_APPROVAL,
+                    conversationId = conversationId,
+                    revision = (old?.revision ?: 0L) + 1
+                )
+                emailDraftStore?.save(draft)
+                _pendingEmailDraft.value = draft
+            }
+    }
+
+    private suspend fun settleDraft(status: EmailSendStatus) {
+        val current = _pendingEmailDraft.value ?: return
+        val next = current.copy(status = status)
+        emailDraftStore?.save(next)
+        _pendingEmailDraft.value = next
     }
 
     /**
@@ -952,6 +1069,17 @@ class ChatViewModel(
     fun retryLast() {
         val convId = _currentConversationId.value ?: return
         if (_isLoading.value || taskStatus.value is TaskStatus.Running) return
+        // A send must never be retried as a bare completion (it could claim "sent" with no
+        // evidence). Ask the user to re-issue the request so it goes through the gated path.
+        if (lastSendIntent == SendIntent.SEND) {
+            viewModelScope.launch {
+                repository.persistAssistantMessage(
+                    convId,
+                    "لإعادة المحاولة، أعد كتابة طلب الإرسال — سيُطلب تأكيدك من جديد."
+                )
+            }
+            return
+        }
         viewModelScope.launch {
             // Enforce the same safety policy: a blocked session cannot retry.
             if (behaviorGuard.isUserBlocked(SESSION_ID)) {
@@ -1045,14 +1173,15 @@ class ChatViewModel(
         private val gmailScopesProvider: suspend () -> Set<String> = { emptySet() },
         private val approvalGate: ApprovalGate = ApprovalGate(),
         private val hermesRepository: HermesRepository? = null,
-        private val hermesAudit: HermesAuditLog? = null
+        private val hermesAudit: HermesAuditLog? = null,
+        private val emailDraftStore: EmailDraftStore? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return ChatViewModel(
                 repository, preferences, knowledgeTool, webSearchTool, toolOrchestrator,
                 emotionAnalyzer, loadManager, cultureContext, neonRepository, gmailScopesProvider,
-                approvalGate, hermesRepository, hermesAudit
+                approvalGate, hermesRepository, hermesAudit, emailDraftStore
             ) as T
         }
     }

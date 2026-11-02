@@ -14,7 +14,9 @@ data class AgentTaskContract(
     val actionRequired: Boolean = false,
     val independentVerificationRequired: Boolean = false,
     val maxFailedActions: Int = 3,
-    val maxActions: Int = 12
+    val maxActions: Int = 12,
+    /** Optional exact action identity, set only by trusted caller (not model text). */
+    val requiredToolName: String? = null
 ) {
     init {
         require(!independentVerificationRequired || actionRequired) {
@@ -22,6 +24,9 @@ data class AgentTaskContract(
         }
         require(maxFailedActions in 1..3) { "failure budget cannot exceed 3" }
         require(maxActions in 1..12) { "action budget cannot exceed 12" }
+        require(requiredToolName == null || (actionRequired && requiredToolName.isNotBlank())) {
+            "required tool name requires an action task"
+        }
     }
 }
 

@@ -49,6 +49,9 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -92,6 +95,7 @@ import com.nexus.agent.data.repository.ChatRepository
 import com.nexus.agent.data.repository.ConversationMirror
 import com.nexus.agent.data.repository.NeonRepository
 import com.nexus.agent.data.repository.SecretStorageRepository
+import com.nexus.agent.data.repository.EncryptedEmailDraftStore
 import com.nexus.agent.data.repository.WebSearchRepository
 import com.nexus.agent.domain.cognitive.CognitiveLoadManager
 import com.nexus.agent.domain.culture.CultureContext
@@ -358,7 +362,8 @@ fun ChatScreen(
             },
             approvalGate = approvalGate,
             hermesRepository = hermesRepository,
-            hermesAudit = hermesAudit
+            hermesAudit = hermesAudit,
+            emailDraftStore = EncryptedEmailDraftStore(secrets)
         )
     )
 
@@ -766,11 +771,11 @@ private fun MessageBubble(message: ChatMessage, isStreaming: Boolean = false) {
                     MaterialTheme.colorScheme.surfaceVariant
             )
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp)) {
                 SelectionContainer {
                     Text(
                         text = ChatMarkdown.render(message.text),
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = if (isUser)
                             MaterialTheme.colorScheme.onPrimary
                         else
@@ -1054,11 +1059,31 @@ private fun SettingsDialog(
     onSave: () -> Unit
 ) {
     var selectedSection by remember { mutableStateOf(NexusXSettingsSection.SERVICES) }
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("NEXUS X · الإعدادات") },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+                Text(
+                    "الإعدادات · Settings",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onSave) { Text(stringResource(R.string.save)) }
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+            ) {
                 NexusXSettingsNavigation(
                     selected = selectedSection,
                     onSelect = { selectedSection = it }
@@ -1314,14 +1339,8 @@ private fun SettingsDialog(
                 )
                 }
             }
-        },
-        confirmButton = {
-            Button(onClick = onSave) { Text(stringResource(R.string.save)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
-    )
+    }
 }
 
 @Composable
