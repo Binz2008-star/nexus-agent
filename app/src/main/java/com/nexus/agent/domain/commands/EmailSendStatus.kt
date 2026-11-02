@@ -18,7 +18,10 @@ data class PendingEmailDraft(
     val recipient: String? = null,
     val subject: String? = null,
     val body: String? = null,
-    val status: EmailSendStatus = EmailSendStatus.DRAFT
+    val status: EmailSendStatus = EmailSendStatus.DRAFT,
+    /** Drafts remain bound to their source conversation across process restarts. */
+    val conversationId: Long? = null,
+    val revision: Long = 0L
 ) {
     val isComplete: Boolean
         get() = !recipient.isNullOrBlank() && !subject.isNullOrBlank() && !body.isNullOrBlank()
@@ -33,13 +36,19 @@ object EmailSendStatusResolver {
     const val GMAIL_SEND_TOOL = "gmail_send"
 
     fun resolve(evidence: List<ActionEvidence>): EmailSendStatus {
-        // The LAST gmail_send attempt decides: a later failure must not be masked by an earlier
-        // success (and vice versa), so the status reflects the current state of the send.
-        val last = evidence.lastOrNull { it.toolName == GMAIL_SEND_TOOL }
-            ?: return EmailSendStatus.UNKNOWN
-        return when (last.status) {
-            ActionEvidenceStatus.VERIFIED, ActionEvidenceStatus.EXECUTED -> EmailSendStatus.GMAIL_ACCEPTED
-            ActionEvidenceStatus.FAILED, ActionEvidenceStatus.BLOCKED -> EmailSendStatus.FAILED
+        val send = evidence.filter { it.toolName == GMAIL_SEND_TOOL }
+        if (send.isEmpty()) return EmailSendStatus.UNKNOWN
+        return when {
+            send.any { it.status == ActionEvidenceStatus.VERIFIED || it.status == ActionEvidenceStatus.EXECUTED } ->
+                EmailSendStatus.GMAIL_ACCEPTED
+            // Definitive tool failure or denied approval is NOT provider acceptance.
+            send.any { it.status == ActionEvidenceStatus.BLOCKED } ->
+                EmailSendStatus.FAILED
+            // HTTP timeouts or an interrupted response cannot prove Gmail rejected a
+            // request. UNKNOWN requires checking Sent before any new approved POST.
+            send.any { it.status == ActionEvidenceStatus.FAILED } ->
+                EmailSendStatus.UNKNOWN
+            else -> EmailSendStatus.UNKNOWN
         }
     }
 
@@ -51,5 +60,20 @@ object EmailSendStatusResolver {
         EmailSendStatus.SENDING -> "جارٍ الإرسال…"
         EmailSendStatus.DRAFT -> "مسودة محفوظة (لم تُرسل بعد)."
         EmailSendStatus.UNKNOWN -> "لا يمكن تأكيد الإرسال — لم تُسجَّل نتيجة إرسال موثوقة."
+    }
+}
+
+/**
+ * Final, model-independent response for a send intent. Never append a model answer
+ * that might falsely claim Gmail accepted or delivered a message. If a tool loop
+ * fails after Gmail accepted, preserve the explicit provider-side evidence.
+ */
+object EmailSendResponsePolicy {
+    fun status(evidence: List<ActionEvidence>): EmailSendStatus =
+        EmailSendStatusResolver.resolve(evidence)
+
+    fun response(evidence: List<ActionEvidence>, untrustedModelAnswer: String? = null): String {
+        // The untrusted answer is deliberately ignored for sensitive send completion.
+        return EmailSendStatusResolver.statusLine(status(evidence))
     }
 }
