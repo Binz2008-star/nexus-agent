@@ -54,7 +54,9 @@ class ToolLoop(
         taskContract: AgentTaskContract = AgentTaskContract(),
         independentlyVerify: suspend (ToolCall, ToolResult.Success) -> Boolean = { _, _ -> false },
         /** Persists SENDING before any COMMIT tool may invoke its external API. */
-        onApprovedActionStart: suspend (ToolCall) -> Unit = { }
+        onApprovedActionStart: suspend (ToolCall) -> Unit = { },
+        /** Caller-owned denylist; model results cannot authorize prohibited actions. */
+        forbiddenTools: Set<String> = emptySet()
     ): Outcome {
         val current = history.toMutableList()
         val sources = mutableListOf<ToolSource>()
@@ -109,6 +111,11 @@ class ToolLoop(
                             return Outcome.Failed("action_budget_exceeded", evidence.toList())
                         }
                         attemptedActions++
+                        if (call.name in forbiddenTools) {
+                            evidence += ActionEvidence(call.name, ActionEvidenceStatus.BLOCKED)
+                            notes += "Tool ${call.name} cannot run for this user intent"
+                            continue
+                        }
                         if (taskContract.requiredToolName != null &&
                             call.name != taskContract.requiredToolName) {
                             evidence += ActionEvidence(call.name, ActionEvidenceStatus.BLOCKED)
