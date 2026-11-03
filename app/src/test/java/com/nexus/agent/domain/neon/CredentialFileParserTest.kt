@@ -150,6 +150,40 @@ class CredentialFileParserTest {
     }
 
     @Test
+    fun importsUrlLineWithLabelPrefix() {
+        // The real rotation file labels the URLs; a label on the same line must not make the
+        // whole line fall through to the free-text branch (which would drop the URL).
+        val creds = CredentialFileParser.parse(
+            "Read: jdbc:postgresql://read-host/neondb?sslmode=require&user=nexus_reader&password=dbpass"
+        )
+        assertEquals(
+            "jdbc:postgresql://read-host/neondb?sslmode=require&user=nexus_reader&password=dbpass",
+            creds.readUrl
+        )
+    }
+
+    @Test
+    fun ignoresKeyShapedPasswordOnBomPrefixedLine() {
+        // A file edited on Windows starts with a BOM. Without locating the URL anywhere in the
+        // line, the BOM hides the connection string and its password would be imported as the
+        // OpenRouter key (and then sent to OpenRouter as a bearer token).
+        val creds = CredentialFileParser.parse(
+            "\uFEFFjdbc:postgresql://h/db?sslmode=require&user=nexus&password=sk-or-v1-dbpass"
+        )
+        assertNull(creds.openRouterKey)
+        assertEquals("jdbc:postgresql://h/db?sslmode=require&user=nexus&password=sk-or-v1-dbpass", creds.writeUrl)
+    }
+
+    @Test
+    fun importsKeyAfterUrlSeparatedByTab() {
+        val creds = CredentialFileParser.parse(
+            "jdbc:postgresql://h/db?sslmode=require&user=nexus_reader&password=dbpass\tsk-or-v1-tab-key"
+        )
+        assertEquals("sk-or-v1-tab-key", creds.openRouterKey)
+        assertEquals("jdbc:postgresql://h/db?sslmode=require&user=nexus_reader&password=dbpass", creds.readUrl)
+    }
+
+    @Test
     fun rejectsOversizedOpenRouterToken() {
         val token = "sk-or-v1-" + "x".repeat(CredentialFileParser.MAX_KEY_LENGTH)
         assertNull(CredentialFileParser.parse(token).openRouterKey)
