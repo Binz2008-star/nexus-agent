@@ -190,6 +190,36 @@ class FailoverChatCompletionClientTest {
         assertEquals(0, free.calls)
     }
 
+    @Test fun cancellationReturnedAsFailureIsRethrown() = runBlocking {
+        // Some clients catch CancellationException themselves and return it inside a Result.
+        // Returning that as an ordinary failure would leave the coroutine running and show the
+        // user an error after they pressed Stop.
+        val primary = object : ChatCompletionClient {
+            override suspend fun complete(history: List<ChatMessage>, model: String): Result<String> =
+                Result.failure(kotlinx.coroutines.CancellationException("cancelled"))
+            override suspend fun completeWithTools(
+                history: List<ChatMessage>,
+                model: String,
+                tools: List<kotlinx.serialization.json.JsonObject>
+            ): Result<CompletionResult> = Result.failure(IOException("unused"))
+            override suspend fun completeStream(
+                history: List<ChatMessage>,
+                model: String,
+                onDelta: suspend (String) -> Unit
+            ): Result<String> = Result.failure(IOException("unused"))
+        }
+        val free = FakeClient(response = Result.success("free answer"))
+        val router = FailoverChatCompletionClient(primary, free) { true }
+        var propagated = false
+        try {
+            router.complete(emptyList(), "deepseek-flash")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            propagated = true
+        }
+        assertTrue("a Result-wrapped cancellation must be rethrown", propagated)
+        assertEquals(0, free.calls)
+    }
+
     @Test fun failoverMatchesErrorPrefixNotExactString() = runBlocking {
         for (reason in listOf(
             "DeepSeek API error 402: Insufficient credits",

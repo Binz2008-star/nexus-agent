@@ -29,6 +29,7 @@ class FailoverChatCompletionClient(
         } catch (e: Exception) {
             Result.failure(e)
         }
+        rethrowCancellation(first)
         if (!canFailover(first.exceptionOrNull())) return first
         if (!enabled()) return first
         return freeFallback.complete(history, OpenRouterClient.FREE_MODEL)
@@ -46,6 +47,7 @@ class FailoverChatCompletionClient(
         } catch (e: Exception) {
             Result.failure(e)
         }
+        rethrowCancellation(first)
         if (!canFailover(first.exceptionOrNull())) return first
         if (!enabled()) return first
         return freeFallback.completeWithTools(history, OpenRouterClient.FREE_MODEL, tools)
@@ -68,9 +70,20 @@ class FailoverChatCompletionClient(
             Result.failure(e)
         }
         // A partially emitted completion must NEVER be replayed to another provider.
+        rethrowCancellation(first)
         if (emitted || !canFailover(first.exceptionOrNull())) return first
         if (!enabled()) return first
         return freeFallback.completeStream(history, OpenRouterClient.FREE_MODEL, onDelta)
+    }
+
+    /**
+     * A cancelled coroutine must stay cancelled even when a client turned the
+     * [CancellationException] into a failed [Result] instead of throwing it: returning it as an
+     * ordinary failure would make the UI report an error and keep the coroutine running.
+     */
+    private fun rethrowCancellation(result: Result<*>) {
+        val failure = result.exceptionOrNull()
+        if (failure is CancellationException) throw failure
     }
 
     private fun canFailover(error: Throwable?): Boolean {
