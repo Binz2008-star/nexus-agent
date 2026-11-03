@@ -37,20 +37,30 @@ object CredentialFileParser {
         for (raw in content.lineSequence()) {
             val line = raw.trim()
             if (isUrl(line)) {
+                // A URL line may carry a trailing token (e.g. an OpenRouter key pasted after the
+                // connection string). Only the URL part is used for the connection; the rest of
+                // the line is scanned for keys below.
+                val urlPart = line.substringBefore(' ').trim()
+                val trailing = line.substringAfter(' ', "").trim()
                 // URL lines are attributed only by their `user=` role, and only when they parse
                 // as a valid Neon connection (host + database + secure sslmode).
-                val user = USER.find(line)?.groupValues?.get(1)?.lowercase()
-                if (NeonConnectionParser.parse(line) == null) continue
+                val user = USER.find(urlPart)?.groupValues?.get(1)?.lowercase()
+                if (NeonConnectionParser.parse(urlPart) == null) continue
                 when (user) {
-                    "nexus_reader" -> if (read == null) read = line
-                    "nexus" -> if (write == null) write = line
+                    "nexus_reader" -> if (read == null) read = urlPart
+                    "nexus" -> if (write == null) write = urlPart
                 }
                 // Also scan URL lines for an OpenRouter key. An OpenRouter token embedded in a
                 // `password=` parameter is not attributed (it is a DB password, not an API key).
                 if (routerKey == null) {
-                    OPENROUTER_KEY.find(line)?.value?.let { candidate ->
-                        if (candidate.length <= MAX_KEY_LENGTH && !isEmbeddedInPasswordParam(line, candidate)) {
-                            routerKey = candidate
+                    for (candidateLine in listOf(urlPart, trailing)) {
+                        if (candidateLine.isEmpty()) continue
+                        OPENROUTER_KEY.find(candidateLine)?.value?.let { candidate ->
+                            if (candidate.length <= MAX_KEY_LENGTH &&
+                                !isEmbeddedInPasswordParam(candidateLine, candidate)
+                            ) {
+                                routerKey = candidate
+                            }
                         }
                     }
                 }

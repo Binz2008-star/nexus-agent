@@ -22,7 +22,11 @@ class FailoverChatCompletionClient(
         history: List<ChatMessage>,
         model: String
     ): Result<String> {
-        val first = try { primary.complete(history, model) } catch (e: Throwable) {
+        val first = try {
+            primary.complete(history, model)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             Result.failure(e)
         }
         if (!canFailover(first.exceptionOrNull())) return first
@@ -35,7 +39,11 @@ class FailoverChatCompletionClient(
         model: String,
         tools: List<JsonObject>
     ): Result<CompletionResult> {
-        val first = try { primary.completeWithTools(history, model, tools) } catch (e: Throwable) {
+        val first = try {
+            primary.completeWithTools(history, model, tools)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             Result.failure(e)
         }
         if (!canFailover(first.exceptionOrNull())) return first
@@ -54,7 +62,9 @@ class FailoverChatCompletionClient(
                 if (delta.isNotEmpty()) emitted = true
                 onDelta(delta)
             }
-        } catch (e: Throwable) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             Result.failure(e)
         }
         // A partially emitted completion must NEVER be replayed to another provider.
