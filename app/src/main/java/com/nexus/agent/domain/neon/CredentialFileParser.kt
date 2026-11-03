@@ -16,7 +16,8 @@ data class ImportedCredentials(
 /**
  * Pure parser for the credentials file the user places on their device. Extracts:
  *  - the DeepSeek key: a `sk-…` token, excluding `sk-or-…` OpenRouter keys;
- *  - the OpenRouter key: an `sk-or-…` token on a non-URL line;
+ *  - the OpenRouter key: an `sk-or-…` token on any line (URL or not), unless it is embedded
+ *    inside a JDBC `password=` parameter;
  *  - the Neon read URL: a `jdbc:postgresql://`/`postgresql://` line whose `user=` is `nexus_reader`;
  *  - the Neon write URL: the same, with `user=` = `nexus`.
  *
@@ -36,13 +37,32 @@ object CredentialFileParser {
         for (raw in content.lineSequence()) {
             val line = raw.trim()
             if (isUrl(line)) {
+                // A URL line may carry a trailing token (e.g. an OpenRouter key pasted after the
+                // connection string). Only the URL part is used for the connection; the rest of
+                // the line is scanned for keys below.
+                val urlPart = line.substringBefore(' ').trim()
+                val trailing = line.substringAfter(' ', "").trim()
                 // URL lines are attributed only by their `user=` role, and only when they parse
                 // as a valid Neon connection (host + database + secure sslmode).
-                val user = USER.find(line)?.groupValues?.get(1)?.lowercase()
-                if (NeonConnectionParser.parse(line) == null) continue
+                val user = USER.find(urlPart)?.groupValues?.get(1)?.lowercase()
+                if (NeonConnectionParser.parse(urlPart) == null) continue
                 when (user) {
-                    "nexus_reader" -> if (read == null) read = line
-                    "nexus" -> if (write == null) write = line
+                    "nexus_reader" -> if (read == null) read = urlPart
+                    "nexus" -> if (write == null) write = urlPart
+                }
+                // Also scan URL lines for an OpenRouter key. An OpenRouter token embedded in a
+                // `password=` parameter is not attributed (it is a DB password, not an API key).
+                if (routerKey == null) {
+                    for (candidateLine in listOf(urlPart, trailing)) {
+                        if (candidateLine.isEmpty()) continue
+                        OPENROUTER_KEY.find(candidateLine)?.value?.let { candidate ->
+                            if (candidate.length <= MAX_KEY_LENGTH &&
+                                !isEmbeddedInPasswordParam(candidateLine, candidate)
+                            ) {
+                                routerKey = candidate
+                            }
+                        }
+                    }
                 }
             } else {
                 // Restrict token extraction to non-URL lines. The two families are
@@ -64,6 +84,21 @@ object CredentialFileParser {
 
     private fun isUrl(line: String): Boolean =
         line.startsWith("jdbc:postgresql://") || line.startsWith("postgresql://")
+
+    /**
+     * Returns true if [candidate] occurs in [line] immediately after `password=`, i.e. it is a
+     * database password value, not an OpenRouter API key.
+     */
+    private fun isEmbeddedInPasswordParam(line: String, candidate: String): Boolean {
+        var start = 0
+        while (true) {
+            val idx = line.indexOf(candidate, start)
+            if (idx < 0) return false
+            val preceding = line.substring(0, idx)
+            if (preceding.endsWith("password=")) return true
+            start = idx + candidate.length
+        }
+    }
 
     /** Upper bound for either provider's API key token. */
     const val MAX_KEY_LENGTH = 256

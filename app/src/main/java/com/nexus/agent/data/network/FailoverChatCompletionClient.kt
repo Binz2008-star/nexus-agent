@@ -22,7 +22,13 @@ class FailoverChatCompletionClient(
         history: List<ChatMessage>,
         model: String
     ): Result<String> {
-        val first = primary.complete(history, model)
+        val first = try {
+            primary.complete(history, model)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
         if (!canFailover(first.exceptionOrNull())) return first
         if (!enabled()) return first
         return freeFallback.complete(history, OpenRouterClient.FREE_MODEL)
@@ -33,7 +39,13 @@ class FailoverChatCompletionClient(
         model: String,
         tools: List<JsonObject>
     ): Result<CompletionResult> {
-        val first = primary.completeWithTools(history, model, tools)
+        val first = try {
+            primary.completeWithTools(history, model, tools)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
         if (!canFailover(first.exceptionOrNull())) return first
         if (!enabled()) return first
         return freeFallback.completeWithTools(history, OpenRouterClient.FREE_MODEL, tools)
@@ -45,9 +57,15 @@ class FailoverChatCompletionClient(
         onDelta: suspend (String) -> Unit
     ): Result<String> {
         var emitted = false
-        val first = primary.completeStream(history, model) { delta ->
-            if (delta.isNotEmpty()) emitted = true
-            onDelta(delta)
+        val first = try {
+            primary.completeStream(history, model) { delta ->
+                if (delta.isNotEmpty()) emitted = true
+                onDelta(delta)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
         }
         // A partially emitted completion must NEVER be replayed to another provider.
         if (emitted || !canFailover(first.exceptionOrNull())) return first
@@ -60,13 +78,12 @@ class FailoverChatCompletionClient(
         if (error is IllegalStateException &&
             error.message == "No DeepSeek API key configured") return true
         if (error !is IOException) return false
-        return error.message in setOf(
-            "DeepSeek API error 402",
-            "DeepSeek API error 429",
-            "DeepSeek API error 500",
-            "DeepSeek API error 502",
-            "DeepSeek API error 503",
-            "DeepSeek API error 504"
-        )
+        val msg = error.message ?: return false
+        return msg.startsWith("DeepSeek API error 402")
+            || msg.startsWith("DeepSeek API error 429")
+            || msg.startsWith("DeepSeek API error 500")
+            || msg.startsWith("DeepSeek API error 502")
+            || msg.startsWith("DeepSeek API error 503")
+            || msg.startsWith("DeepSeek API error 504")
     }
 }
