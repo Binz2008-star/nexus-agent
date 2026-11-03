@@ -132,6 +132,24 @@ class CredentialFileParserTest {
     }
 
     @Test
+    fun ignoresOpenRouterShapedPasswordInUriUserinfo() {
+        // A Neon URI password that happens to look like an OpenRouter key must never be
+        // imported as one: it would be stored as the OpenRouter credential and sent as a bearer.
+        val creds = CredentialFileParser.parse(
+            "postgresql://nexus:sk-or-v1-db-secret@h/db?sslmode=require"
+        )
+        assertNull(creds.openRouterKey)
+    }
+
+    @Test
+    fun ignoresOpenRouterShapedTokenInsideUrlQuery() {
+        val creds = CredentialFileParser.parse(
+            "jdbc:postgresql://h/db?sslmode=require&user=nexus&api_key=sk-or-v1-query-secret"
+        )
+        assertNull(creds.openRouterKey)
+    }
+
+    @Test
     fun rejectsOversizedOpenRouterToken() {
         val token = "sk-or-v1-" + "x".repeat(CredentialFileParser.MAX_KEY_LENGTH)
         assertNull(CredentialFileParser.parse(token).openRouterKey)
